@@ -1,0 +1,72 @@
+[project]
+name = "litscribe"
+version = "0.1.0"
+description = "An autonomous academic synthesis engine using MCP and multi-agent architecture"
+authors = [
+    {name = "Arnold", email = "your.email@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+
+dependencies = [
+    "fastmcp>=2.0",
+    "langgraph",
+    "litellm",
+    "sentence-transformers",
+    "mcp",
+    "arxiv",
+    "pyzotero",
+    "biopython",
+    "serpapi",
+    "marker-pdf",
+    "pymupdf",
+    "fastapi",
+    "uvicorn",
+    "pydantic>=2.0",
+    "requests",
+    "aiohttp",
+    "tenacity",
+    "tqdm",
+    "python-dotenv",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+]
+
+[project.scripts]
+litscribe = "litscribe.cli.litscribe_cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=src --cov-report=html --cov-report=term"

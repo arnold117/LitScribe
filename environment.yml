@@ -1,0 +1,46 @@
+name: litscribe
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - pandas
+  - scikit-learn
+  - pip:
+      # Core frameworks
+      - fastmcp>=2.0
+      - langgraph
+      - litellm
+      - sentence-transformers
+
+      # MCP and API clients
+      - mcp
+      - arxiv
+      - pyzotero
+      - biopython
+      - serpapi
+
+      # PDF processing
+      - marker-pdf
+      - pymupdf
+
+      # Web frameworks (for future)
+      - fastapi
+      - uvicorn
+      - pydantic>=2.0
+
+      # Development tools
+      - pytest
+      - pytest-asyncio
+      - pytest-cov
+      - ruff
+      - mypy
+      - python-dotenv
+
+      # Utilities
+      - requests
+      - aiohttp
+      - tenacity
+      - tqdm

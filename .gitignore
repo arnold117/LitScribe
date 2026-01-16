@@ -205,3 +205,44 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ==============================================
+# LitScribe Specific
+# ==============================================
+
+# Data directories
+data/
+cache/
+
+# PDFs and documents
+*.pdf
+
+# Local LLM models
+*.gguf
+*.safetensors
+models/
+mlx_models/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Environment-specific
+.env.local
+.env.*.local
+
+# Jupyter notebooks (if adding analysis)
+*.ipynb_checkpoints/
+
+# VSCode settings (uncomment if you want to share settings)
+# .vscode/
