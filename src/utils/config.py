@@ -19,8 +19,15 @@ class Config:
     CACHE_DIR = Path(os.getenv("LITSCRIBE_CACHE_DIR", PROJECT_ROOT / "cache"))
     LOG_LEVEL = os.getenv("LITSCRIBE_LOG_LEVEL", "INFO")
 
-    # API Keys
+    # LLM Configuration (via LiteLLM)
+    LITELLM_MODEL = os.getenv("LITELLM_MODEL", "deepseek/deepseek-chat")
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "")
+
+    # Academic Search API Keys
     SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
     NCBI_API_KEY = os.getenv("NCBI_API_KEY", "")
     NCBI_EMAIL = os.getenv("NCBI_EMAIL", "")
@@ -29,8 +36,11 @@ class Config:
     ZOTERO_API_KEY = os.getenv("ZOTERO_API_KEY", "")
     ZOTERO_LIBRARY_ID = os.getenv("ZOTERO_LIBRARY_ID", "")
     ZOTERO_LIBRARY_TYPE = os.getenv("ZOTERO_LIBRARY_TYPE", "user")
+    ZOTERO_DEFAULT_COLLECTION = os.getenv("ZOTERO_DEFAULT_COLLECTION", "")  # Sandbox collection
+    ZOTERO_STORAGE_DIR = Path(os.getenv("ZOTERO_STORAGE_DIR", Path.home() / "Zotero" / "storage"))
     ZOTERO_LOCAL = os.getenv("ZOTERO_LOCAL", "false").lower() == "true"
     ZOTERO_LOCAL_PORT = int(os.getenv("ZOTERO_LOCAL_PORT", "23119"))
+    ZOTERO_LOCAL_URL = f"http://localhost:{ZOTERO_LOCAL_PORT}"
 
     # Local LLM configuration
     LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:11434")
@@ -71,6 +81,7 @@ class Config:
     def validate_api_keys(cls) -> dict[str, bool]:
         """Validate that required API keys are present."""
         keys = {
+            "deepseek": bool(cls.DEEPSEEK_API_KEY),
             "anthropic": bool(cls.ANTHROPIC_API_KEY),
             "serpapi": bool(cls.SERPAPI_KEY),
             "ncbi": bool(cls.NCBI_API_KEY),

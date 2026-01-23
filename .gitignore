@@ -220,8 +220,8 @@ cache/
 # Local LLM models
 *.gguf
 *.safetensors
-models/
-mlx_models/
+/models/
+/mlx_models/
 
 # Database files
 *.db
