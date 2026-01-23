@@ -108,6 +108,26 @@ def _zotero_to_unified(item_dict: dict) -> UnifiedPaper:
     )
 
 
+def _semantic_scholar_to_unified(paper_dict: dict) -> UnifiedPaper:
+    """Convert Semantic Scholar paper dict to UnifiedPaper."""
+    return UnifiedPaper(
+        title=paper_dict.get("title", ""),
+        authors=paper_dict.get("authors", []),
+        abstract=paper_dict.get("abstract", ""),
+        year=paper_dict.get("year") or 0,
+        sources={"semantic_scholar": paper_dict.get("paper_id", "")},
+        venue=paper_dict.get("venue", ""),
+        citations=paper_dict.get("citation_count") or 0,
+        pdf_urls=[paper_dict["pdf_url"]] if paper_dict.get("pdf_url") else [],
+        doi=paper_dict.get("doi"),
+        arxiv_id=paper_dict.get("arxiv_id"),
+        pmid=paper_dict.get("pmid"),
+        scholar_id=paper_dict.get("paper_id"),
+        keywords=paper_dict.get("fields_of_study", []),
+        url=paper_dict.get("url"),
+    )
+
+
 class UnifiedSearchAggregator:
     """
     Aggregates search results from multiple academic sources.
@@ -120,6 +140,7 @@ class UnifiedSearchAggregator:
         self._arxiv_search = None
         self._pubmed_search = None
         self._zotero_search = None
+        self._semantic_scholar_search = None
         self._initialized = False
 
     async def _lazy_init(self):
@@ -145,6 +166,12 @@ class UnifiedSearchAggregator:
             self._zotero_search = zotero_search
         except ImportError:
             print("Warning: Zotero MCP server not available")
+
+        try:
+            from mcp_servers.semantic_scholar_server import search_papers as semantic_scholar_search
+            self._semantic_scholar_search = semantic_scholar_search
+        except ImportError:
+            print("Warning: Semantic Scholar MCP server not available")
 
         self._initialized = True
 
@@ -205,6 +232,25 @@ class UnifiedSearchAggregator:
             print(f"Zotero search error: {e}")
             return []
 
+    async def search_semantic_scholar(
+        self,
+        query: str,
+        max_results: int = 20,
+    ) -> List[UnifiedPaper]:
+        """Search Semantic Scholar and return unified papers."""
+        await self._lazy_init()
+
+        if not self._semantic_scholar_search:
+            return []
+
+        try:
+            result = await self._semantic_scholar_search(query=query, limit=max_results)
+            papers = result.get("papers", [])
+            return [_semantic_scholar_to_unified(p) for p in papers]
+        except Exception as e:
+            print(f"Semantic Scholar search error: {e}")
+            return []
+
     async def search_all(
         self,
         query: str,
@@ -218,7 +264,7 @@ class UnifiedSearchAggregator:
 
         Args:
             query: Search query string
-            sources: List of sources to search ("arxiv", "pubmed", "zotero")
+            sources: List of sources to search ("arxiv", "pubmed", "zotero", "semantic_scholar")
                      Default: ["arxiv", "pubmed"]
             max_per_source: Maximum results per source
             deduplicate: Whether to merge duplicate papers
@@ -247,6 +293,10 @@ class UnifiedSearchAggregator:
         if "zotero" in sources:
             tasks.append(self.search_zotero(query, max_per_source))
             source_names.append("zotero")
+
+        if "semantic_scholar" in sources:
+            tasks.append(self.search_semantic_scholar(query, max_per_source))
+            source_names.append("semantic_scholar")
 
         # Execute searches in parallel
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -299,7 +349,7 @@ async def search_all_sources(
 
     Args:
         query: Search query string
-        sources: List of sources to search ("arxiv", "pubmed", "zotero")
+        sources: List of sources to search ("arxiv", "pubmed", "zotero", "semantic_scholar")
         max_per_source: Maximum results per source
         deduplicate: Whether to merge duplicate papers
         sort_by: Ranking criteria
