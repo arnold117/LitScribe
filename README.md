@@ -28,7 +28,7 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **Interface:** Model Context Protocol (MCP) via FastMCP 2.0
 - **Local LLM:** Qwen 3 (32B/14B) via MLX/Ollama - optimized for M4
 - **Cloud LLM:** Claude Opus 4.5 / Sonnet 4.5 for complex synthesis
-- **PDF Processing:** marker-pdf (4x faster than nougat)
+- **PDF Processing:** pymupdf4llm (default) / marker-pdf (optional, OCR support)
 
 ## ⚡ Quick Start
 
@@ -75,14 +75,14 @@ python scripts/demo_workflow.py
 - [x] Project structure and configuration
 - [x] Environment setup (mamba)
 - [x] Dependency management
+- [x] **arXiv MCP Server** - search, download PDFs, batch operations
+- [x] **PubMed MCP Server** - search, citations, MeSH terms
+- [x] **Zotero MCP Server** - library search, collections, PDF paths
+- [x] **PDF Parser MCP Server** - dual backend (pymupdf4llm/marker-pdf)
 
 ### 🚧 In Progress (MVP)
-- [ ] arXiv MCP Server
-- [ ] PubMed MCP Server
-- [ ] Google Scholar MCP Server
+- [ ] Google Scholar MCP Server (requires SerpApi)
 - [ ] Unified search aggregator
-- [ ] PDF parser MCP Server
-- [ ] Zotero integration with semantic search
 - [ ] CLI tool and demo scripts
 
 ### 📋 Future Iterations
@@ -90,6 +90,20 @@ python scripts/demo_workflow.py
 - [ ] Debate mechanism for conflicting papers
 - [ ] Web interface (FastAPI + React)
 - [ ] Advanced hallucination control
+
+## 📝 Development Notes
+
+### PDF Parsing Backend Selection
+We provide two PDF parsing backends:
+
+| Backend | Speed | OCR | Stability | Use Case |
+|---------|-------|-----|-----------|----------|
+| `pymupdf4llm` | Fast | No | Stable | Native text PDFs (most papers) |
+| `marker-pdf` | Slow | Yes | Unstable on macOS MPS | Scanned PDFs, complex layouts |
+
+**Default:** `pymupdf4llm` for stability and speed.
+
+**Known Issue:** `marker-pdf` has dependency conflicts and segfaults on macOS with MPS (Apple Silicon). If you need OCR support, consider running on Linux/CUDA or using CPU-only mode.
 
 ---
 

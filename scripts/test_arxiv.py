@@ -78,18 +78,18 @@ async def main():
         print(f"  - [{paper['arxiv_id']}] {paper['title'][:40]}...")
 
     # Test 6: Download PDF (optional - commented out to avoid actual download)
-    print_header("6. Download PDF (skipped)")
-    print("Skipping PDF download to avoid cluttering disk.")
-    print("To test, uncomment the following in test_arxiv.py:")
-    print("  download_result = await download_pdf('1706.03762')")
+    # print_header("6. Download PDF (skipped)")
+    # print("Skipping PDF download to avoid cluttering disk.")
+    # print("To test, uncomment the following in test_arxiv.py:")
+    # print("  download_result = await download_pdf('1706.03762')")
 
     # Uncomment to actually test download:
-    # print_header("6. Download PDF")
-    # download_result = await download_pdf("1706.03762")
-    # print(f"arXiv ID: {download_result.get('arxiv_id')}")
-    # print(f"Title: {download_result.get('title', 'N/A')[:50]}...")
-    # print(f"PDF Path: {download_result.get('pdf_path')}")
-    # print(f"Downloaded: {download_result.get('downloaded')}")
+    print_header("6. Download PDF")
+    download_result = await download_pdf("1706.03762")
+    print(f"arXiv ID: {download_result.get('arxiv_id')}")
+    print(f"Title: {download_result.get('title', 'N/A')[:50]}...")
+    print(f"PDF Path: {download_result.get('pdf_path')}")
+    print(f"Downloaded: {download_result.get('downloaded')}")
 
     print_header("Summary")
     print("All arXiv MCP functions tested successfully!")

@@ -12,7 +12,7 @@ dependencies:
       # Core frameworks
       - fastmcp>=2.0
       - langgraph
-      - litellm
+      - litellm==1.67.0  # pinned for marker-pdf compatibility
       - sentence-transformers
 
       # MCP and API clients
@@ -23,8 +23,17 @@ dependencies:
       - serpapi
 
       # PDF processing
-      - marker-pdf
+      - pymupdf4llm  # default backend (fast, stable)
       - pymupdf
+      - marker-pdf  # optional OCR backend (has dependency issues on macOS MPS)
+
+      # Version constraints (marker-pdf compatibility)
+      - openai>=1.68.2,<2.0.0
+      - huggingface-hub>=0.34.0,<1.0
+      - transformers>=4.40.0,<5.0.0
+      - regex>=2024.4.28,<2025.0.0
+      - packaging>=23.2.0,<26.0.0
+      - referencing<0.37.0
 
       # Web frameworks (for future)
       - fastapi
