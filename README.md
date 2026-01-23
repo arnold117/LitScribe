@@ -79,10 +79,10 @@ python scripts/demo_workflow.py
 - [x] **PubMed MCP Server** - search, citations, MeSH terms
 - [x] **Zotero MCP Server** - library search, collections, PDF paths
 - [x] **PDF Parser MCP Server** - dual backend (pymupdf4llm/marker-pdf)
+- [x] Unified search aggregator
 
 ### 🚧 In Progress (MVP)
 - [ ] Google Scholar MCP Server (requires SerpApi)
-- [ ] Unified search aggregator
 - [ ] CLI tool and demo scripts
 
 ### 📋 Future Iterations
