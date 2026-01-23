@@ -9,12 +9,13 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 
 ## 🚀 Key Features
 
-### MVP (Current Phase)
-- **Multi-Source Literature Search**: Unified search across arXiv, PubMed, and Google Scholar
+### MVP (Current Phase) ✅
+- **Multi-Source Literature Search**: Unified search across arXiv, PubMed, Semantic Scholar
 - **MCP Integration**: Standardized connectors for academic databases and Zotero
 - **Intelligent Deduplication**: Smart merging of papers from multiple sources
 - **PDF-to-Markdown Parsing**: High-fidelity conversion of academic PDFs with LaTeX support
-- **Semantic Search**: Vector-based search in your Zotero library
+- **CLI Tool**: Full-featured command line interface for all operations
+- **Semantic Scholar API**: Citation tracking, paper recommendations, TL;DR summaries
 
 ### Planned Features
 - **Multi-Agent Debate**: Resolve conflicting claims across papers
@@ -35,7 +36,7 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 ### Prerequisites
 - macOS with Apple Silicon (M4 recommended)
 - [Mamba](https://mamba.readthedocs.io/) or Conda
-- API keys for Claude, SerpApi (optional: NCBI)
+- API keys: Anthropic (Claude), optional: NCBI (PubMed), Semantic Scholar, Zotero
 
 ### Installation
 
@@ -60,18 +61,30 @@ python -c "import fastmcp; import langgraph; print('✅ LitScribe ready!')"
 
 ```bash
 # Search papers across multiple sources
-python -m litscribe.cli search "transformer architecture" --sources arxiv,pubmed,scholar
+python src/cli/litscribe_cli.py search "transformer attention" --sources arxiv,semantic_scholar
 
-# Parse a PDF
-python -m litscribe.cli parse paper.pdf --output markdown
+# Search PubMed for biomedical literature
+python src/cli/litscribe_cli.py search "CRISPR" --sources pubmed --limit 20 --sort citations
 
-# Run demo workflow
-python scripts/demo_workflow.py
+# Get detailed paper info (supports DOI, arXiv ID, PMID)
+python src/cli/litscribe_cli.py paper arXiv:1706.03762 --verbose
+
+# Get papers citing a specific paper
+python src/cli/litscribe_cli.py citations arXiv:1706.03762 --limit 10
+
+# Parse a PDF to markdown
+python src/cli/litscribe_cli.py parse paper.pdf --output paper.md
+
+# Run interactive demo
+python src/cli/litscribe_cli.py demo
+
+# Run full demo workflow
+python scripts/demo_workflow.py --demo all
 ```
 
 ## 📂 Project Status
 
-### ✅ Completed
+### ✅ MVP Complete
 - [x] Project structure and configuration
 - [x] Environment setup (mamba)
 - [x] Dependency management
@@ -79,13 +92,13 @@ python scripts/demo_workflow.py
 - [x] **PubMed MCP Server** - search, citations, MeSH terms
 - [x] **Zotero MCP Server** - library search, collections, PDF paths
 - [x] **PDF Parser MCP Server** - dual backend (pymupdf4llm/marker-pdf)
-- [x] Unified search aggregator
+- [x] **Semantic Scholar MCP Server** - citations, references, recommendations, TL;DR
+- [x] **Unified Search Aggregator** - parallel search, deduplication, ranking
+- [x] **CLI Tool** - search, paper, citations, parse, demo commands
+- [x] **Demo Workflow** - end-to-end demonstration scripts
 
-### 🚧 In Progress (MVP)
-- [ ] Google Scholar MCP Server (requires SerpApi)
-- [ ] CLI tool and demo scripts
-
-### 📋 Future Iterations
+### 📋 Next Phase
+- [ ] Semantic Scholar API key integration (pending approval)
 - [ ] Multi-agent synthesis system
 - [ ] Debate mechanism for conflicting papers
 - [ ] Web interface (FastAPI + React)

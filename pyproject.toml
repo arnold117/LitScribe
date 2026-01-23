@@ -44,7 +44,10 @@ dev = [
 ]
 
 [project.scripts]
-litscribe = "litscribe.cli.litscribe_cli:main"
+litscribe = "cli.litscribe_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
