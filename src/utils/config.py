@@ -31,6 +31,7 @@ class Config:
     SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
     NCBI_API_KEY = os.getenv("NCBI_API_KEY", "")
     NCBI_EMAIL = os.getenv("NCBI_EMAIL", "")
+    SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
 
     # Zotero configuration
     ZOTERO_API_KEY = os.getenv("ZOTERO_API_KEY", "")
@@ -55,6 +56,7 @@ class Config:
     MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "5"))
     PUBMED_RATE_LIMIT = 10 if NCBI_API_KEY else 3  # requests per second
     SERPAPI_RATE_LIMIT = 1  # requests per second
+    SEMANTIC_SCHOLAR_RATE_LIMIT = 1  # 1 request per second with API key
 
     # Development settings
     DEBUG = os.getenv("DEBUG", "false").lower() == "true"
@@ -86,6 +88,7 @@ class Config:
             "serpapi": bool(cls.SERPAPI_KEY),
             "ncbi": bool(cls.NCBI_API_KEY),
             "zotero": bool(cls.ZOTERO_API_KEY),
+            "semantic_scholar": bool(cls.SEMANTIC_SCHOLAR_API_KEY),
         }
         return keys
 

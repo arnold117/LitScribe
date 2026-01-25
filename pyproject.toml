@@ -11,7 +11,8 @@ license = {text = "MIT"}
 
 dependencies = [
     "fastmcp>=2.0",
-    "langgraph",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
     "litellm",
     "sentence-transformers",
     "mcp",
@@ -32,6 +33,7 @@ dependencies = [
     "numpy",
     "pandas",
     "scikit-learn",
+    "aiosqlite>=0.20.0",
 ]
 
 [project.optional-dependencies]
