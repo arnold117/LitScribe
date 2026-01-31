@@ -496,6 +496,11 @@ Examples:
   litscribe review "What are the latest advances in LLM reasoning?"
   litscribe review "CRISPR applications" -s pubmed -p 15 -o my_review
 
+  # Cache management
+  litscribe cache stats              # Show cache statistics
+  litscribe cache clear --expired    # Clear expired entries
+  litscribe cache vacuum             # Optimize database
+
   # Run demo
   litscribe demo --query "multi-agent systems"
         """,
@@ -623,7 +628,101 @@ Examples:
         help="Show detailed progress and debug info",
     )
 
+    # cache command - Cache management
+    cache_parser = subparsers.add_parser(
+        "cache",
+        help="Manage the local cache",
+    )
+    cache_subparsers = cache_parser.add_subparsers(dest="cache_command", help="Cache commands")
+
+    # cache stats
+    cache_stats_parser = cache_subparsers.add_parser("stats", help="Show cache statistics")
+
+    # cache clear
+    cache_clear_parser = cache_subparsers.add_parser("clear", help="Clear cache entries")
+    cache_clear_parser.add_argument(
+        "--expired",
+        action="store_true",
+        help="Only clear expired search cache entries",
+    )
+    cache_clear_parser.add_argument(
+        "--search",
+        action="store_true",
+        help="Clear all search cache",
+    )
+    cache_clear_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Clear all cache data (papers, PDFs, parsed docs)",
+    )
+
+    # cache vacuum
+    cache_vacuum_parser = cache_subparsers.add_parser("vacuum", help="Optimize database storage")
+
     return parser
+
+
+async def cmd_cache(args) -> int:
+    """Manage cache."""
+    from cache import init_cache, get_cache_db
+
+    try:
+        db = init_cache()
+    except Exception as e:
+        print(f"Error initializing cache: {e}")
+        return 1
+
+    if args.cache_command == "stats":
+        print_header("Cache Statistics")
+        stats = db.get_stats()
+        print(f"Database: {db.db_path}")
+        print(f"Size: {stats.get('db_size_mb', 0)} MB")
+        print()
+        print("Table counts:")
+        print(f"  Papers cached: {stats.get('papers_count', 0)}")
+        print(f"  PDFs tracked: {stats.get('pdfs_count', 0)}")
+        print(f"  Parsed docs: {stats.get('parsed_docs_count', 0)}")
+        print(f"  Search queries: {stats.get('search_cache_count', 0)}")
+        print(f"  LLM responses: {stats.get('llm_cache_count', 0)}")
+        print(f"  Command logs: {stats.get('command_logs_count', 0)}")
+        print()
+        print(f"Commands in last 7 days: {stats.get('commands_last_7_days', 0)}")
+
+    elif args.cache_command == "clear":
+        if args.expired:
+            count = db.clear_expired_cache()
+            print(f"Cleared {count} expired cache entries")
+        elif args.search:
+            with db.get_connection() as conn:
+                cursor = conn.execute("DELETE FROM search_cache")
+                count = cursor.rowcount
+                conn.commit()
+            print(f"Cleared {count} search cache entries")
+        elif args.all:
+            confirm = input("This will delete all cached data. Are you sure? (y/N): ")
+            if confirm.lower() == 'y':
+                with db.get_connection() as conn:
+                    for table in ["search_cache", "llm_cache", "parsed_docs", "pdfs", "papers"]:
+                        conn.execute(f"DELETE FROM {table}")
+                    conn.commit()
+                print("All cache data cleared")
+            else:
+                print("Aborted")
+        else:
+            print("Specify what to clear: --expired, --search, or --all")
+            return 1
+
+    elif args.cache_command == "vacuum":
+        print("Optimizing database...")
+        db.vacuum()
+        stats = db.get_stats()
+        print(f"Done. Database size: {stats.get('db_size_mb', 0)} MB")
+
+    else:
+        print("No cache command specified. Use: stats, clear, or vacuum")
+        return 1
+
+    return 0
 
 
 async def async_main(args) -> int:
@@ -640,6 +739,8 @@ async def async_main(args) -> int:
         return await cmd_demo(args)
     elif args.command == "review":
         return await cmd_review(args)
+    elif args.command == "cache":
+        return await cmd_cache(args)
     else:
         print("No command specified. Use --help for usage.")
         return 1

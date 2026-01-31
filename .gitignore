@@ -210,9 +210,9 @@ __marimo__/
 # LitScribe Specific
 # ==============================================
 
-# Data directories
-data/
-cache/
+# Data directories (root level only)
+/data/
+/cache/
 
 # PDFs and documents
 *.pdf
