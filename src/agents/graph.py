@@ -21,10 +21,12 @@ from agents.supervisor import supervisor_agent
 from agents.synthesis_agent import synthesis_agent
 from cache.database import get_cache_db
 
+# Note: graphrag_agent is imported inside create_review_graph() to avoid circular imports
+
 logger = logging.getLogger(__name__)
 
 
-def should_continue(state: LitScribeState) -> Literal["discovery", "critical_reading", "synthesis", "complete"]:
+def should_continue(state: LitScribeState) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "complete"]:
     """Routing function for the conditional edge.
 
     Determines which node to visit next based on current_agent in state.
@@ -42,6 +44,8 @@ def should_continue(state: LitScribeState) -> Literal["discovery", "critical_rea
         return "discovery"
     elif current == "critical_reading":
         return "critical_reading"
+    elif current == "graphrag":
+        return "graphrag"
     elif current == "synthesis":
         return "synthesis"
     else:
@@ -51,7 +55,7 @@ def should_continue(state: LitScribeState) -> Literal["discovery", "critical_rea
 def create_review_graph() -> StateGraph:
     """Create the LangGraph workflow for literature review.
 
-    The workflow follows this structure:
+    The workflow follows this structure (Phase 7.5 with GraphRAG):
 
     ```
     START
@@ -60,12 +64,15 @@ def create_review_graph() -> StateGraph:
     supervisor --> discovery --> supervisor
                       |              |
                       v              v
-              critical_reading --> synthesis --> END
+              critical_reading --> graphrag --> synthesis --> END
     ```
 
     Returns:
         Compiled StateGraph ready for execution
     """
+    # Lazy import to avoid circular dependency
+    from graphrag.integration import graphrag_agent
+
     # Initialize the graph with our state schema
     workflow = StateGraph(LitScribeState)
 
@@ -73,6 +80,7 @@ def create_review_graph() -> StateGraph:
     workflow.add_node("supervisor", supervisor_agent)
     workflow.add_node("discovery", discovery_agent)
     workflow.add_node("critical_reading", critical_reading_agent)
+    workflow.add_node("graphrag", graphrag_agent)  # Phase 7.5
     workflow.add_node("synthesis", synthesis_agent)
 
     # Set the entry point
@@ -85,6 +93,7 @@ def create_review_graph() -> StateGraph:
         {
             "discovery": "discovery",
             "critical_reading": "critical_reading",
+            "graphrag": "graphrag",
             "synthesis": "synthesis",
             "complete": END,
         }
@@ -93,6 +102,7 @@ def create_review_graph() -> StateGraph:
     # After each agent completes, return to supervisor for next decision
     workflow.add_edge("discovery", "supervisor")
     workflow.add_edge("critical_reading", "supervisor")
+    workflow.add_edge("graphrag", "supervisor")  # Phase 7.5
     workflow.add_edge("synthesis", "supervisor")
 
     return workflow
@@ -148,6 +158,8 @@ async def run_literature_review(
     thread_id: Optional[str] = None,
     checkpoint_enabled: bool = True,
     verbose: bool = True,
+    graphrag_enabled: bool = True,
+    batch_size: int = 20,
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
 
@@ -159,7 +171,7 @@ async def run_literature_review(
 
     Args:
         research_question: The research question to explore
-        max_papers: Maximum number of papers to analyze
+        max_papers: Maximum number of papers to analyze (supports up to 500)
         sources: List of sources to search (default: arxiv, semantic_scholar)
         review_type: Type of literature review
         cache_enabled: Whether to use local cache (default: True)
@@ -167,6 +179,8 @@ async def run_literature_review(
         thread_id: Optional thread ID for checkpointing (auto-generated if not provided)
         checkpoint_enabled: Whether to enable checkpointing (default: True)
         verbose: Whether to log progress
+        graphrag_enabled: Whether to enable GraphRAG knowledge graph (default: True)
+        batch_size: Batch size for processing papers (default: 20)
 
     Returns:
         Final state containing the literature review
@@ -182,6 +196,8 @@ async def run_literature_review(
         review_type=review_type,
         cache_enabled=cache_enabled,
         llm_config=llm_config or {},
+        graphrag_enabled=graphrag_enabled,
+        batch_size=batch_size,
     )
 
     logger.info(f"Starting literature review for: {research_question}")
@@ -282,6 +298,8 @@ async def run_with_streaming(
     llm_config: Optional[Dict[str, Any]] = None,
     thread_id: Optional[str] = None,
     checkpoint_enabled: bool = True,
+    graphrag_enabled: bool = True,
+    batch_size: int = 20,
 ):
     """Run literature review with streaming updates.
 
@@ -292,13 +310,15 @@ async def run_with_streaming(
 
     Args:
         research_question: The research question
-        max_papers: Maximum papers to analyze
+        max_papers: Maximum papers to analyze (supports up to 500)
         sources: Sources to search
         review_type: Type of review
         cache_enabled: Whether to use local cache
         llm_config: LLM configuration
         thread_id: Optional thread ID for checkpointing
         checkpoint_enabled: Whether to enable checkpointing
+        graphrag_enabled: Whether to enable GraphRAG knowledge graph
+        batch_size: Batch size for processing papers
 
     Yields:
         State snapshots as workflow progresses
@@ -310,6 +330,8 @@ async def run_with_streaming(
         review_type=review_type,
         cache_enabled=cache_enabled,
         llm_config=llm_config or {},
+        graphrag_enabled=graphrag_enabled,
+        batch_size=batch_size,
     )
 
     if checkpoint_enabled:
@@ -339,17 +361,21 @@ def run_review_sync(
     cache_enabled: bool = True,
     llm_config: Optional[Dict[str, Any]] = None,
     checkpoint_enabled: bool = True,
+    graphrag_enabled: bool = True,
+    batch_size: int = 20,
 ) -> Dict[str, Any]:
     """Synchronous wrapper for running literature review.
 
     Args:
         research_question: The research question
-        max_papers: Maximum papers to analyze
+        max_papers: Maximum papers to analyze (supports up to 500)
         sources: Sources to search
         review_type: Type of review
         cache_enabled: Whether to use local cache
         llm_config: LLM configuration
         checkpoint_enabled: Whether to enable checkpointing
+        graphrag_enabled: Whether to enable GraphRAG knowledge graph
+        batch_size: Batch size for processing papers
 
     Returns:
         Final state with literature review
@@ -363,6 +389,8 @@ def run_review_sync(
         cache_enabled=cache_enabled,
         llm_config=llm_config,
         checkpoint_enabled=checkpoint_enabled,
+        graphrag_enabled=graphrag_enabled,
+        batch_size=batch_size,
     ))
 
 

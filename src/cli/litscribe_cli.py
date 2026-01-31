@@ -253,9 +253,13 @@ async def cmd_review(args) -> int:
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
     research_question = args.question
-    max_papers = args.papers
+    max_papers = min(args.papers, 500)  # Cap at 500
     sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar"]
     review_type = args.type
+
+    # GraphRAG settings (Phase 7.5)
+    graphrag_enabled = not getattr(args, "disable_graphrag", False)
+    batch_size = getattr(args, "batch_size", 20)
 
     # Default output: always save to output/ directory
     if args.output:
@@ -275,12 +279,17 @@ async def cmd_review(args) -> int:
     print(f"Max Papers: {max_papers}")
     print(f"Sources: {sources}")
     print(f"Review Type: {review_type}")
+    print(f"GraphRAG: {'enabled' if graphrag_enabled else 'disabled'}")
     print(f"Output: {output_path}")
     print()
     print("Starting multi-agent workflow...")
     print("  1. Discovery Agent: Searching and selecting papers")
     print("  2. Critical Reading Agent: Analyzing papers")
-    print("  3. Synthesis Agent: Generating review")
+    if graphrag_enabled:
+        print("  3. GraphRAG Agent: Building knowledge graph")
+        print("  4. Synthesis Agent: Generating review")
+    else:
+        print("  3. Synthesis Agent: Generating review")
     print()
 
     try:
@@ -291,6 +300,8 @@ async def cmd_review(args) -> int:
             sources=sources,
             review_type=review_type,
             verbose=args.verbose,
+            graphrag_enabled=graphrag_enabled,
+            batch_size=batch_size,
         )
 
         # Check for errors
@@ -309,6 +320,16 @@ async def cmd_review(args) -> int:
 
         analyzed = final_state.get("analyzed_papers", [])
         print(f"\n📖 Papers Analyzed: {len(analyzed)}")
+
+        # Display GraphRAG results (Phase 7.5)
+        knowledge_graph = final_state.get("knowledge_graph")
+        if knowledge_graph:
+            stats = knowledge_graph.get("stats", {})
+            print(f"\n🕸 Knowledge Graph:")
+            print(f"   Entities: {stats.get('entity_count', 0)}")
+            print(f"   Communities: {stats.get('total_communities', 0)}")
+            if stats.get("entity_types"):
+                print(f"   Entity Types: {stats['entity_types']}")
 
         synthesis = final_state.get("synthesis")
         if synthesis:
@@ -353,6 +374,7 @@ async def cmd_review(args) -> int:
                     "research_question": research_question,
                     "search_results": search_results,
                     "analyzed_papers": [dict(p) for p in analyzed],
+                    "knowledge_graph": knowledge_graph,  # Phase 7.5
                     "synthesis": dict(synthesis) if synthesis else None,
                     "errors": errors,
                 }
@@ -611,7 +633,7 @@ Examples:
         "--papers", "-p",
         type=int,
         default=10,
-        help="Maximum number of papers to analyze (default: 10)",
+        help="Maximum number of papers to analyze (default: 10, max: 500)",
     )
     review_parser.add_argument(
         "--sources", "-s",
@@ -632,6 +654,24 @@ Examples:
         "--verbose", "-v",
         action="store_true",
         help="Show detailed progress and debug info",
+    )
+    # GraphRAG options (Phase 7.5)
+    review_parser.add_argument(
+        "--enable-graphrag",
+        action="store_true",
+        default=True,
+        help="Enable GraphRAG knowledge graph (default: enabled)",
+    )
+    review_parser.add_argument(
+        "--disable-graphrag",
+        action="store_true",
+        help="Disable GraphRAG for faster processing",
+    )
+    review_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help="Batch size for processing papers (default: 20)",
     )
 
     # cache command - Cache management

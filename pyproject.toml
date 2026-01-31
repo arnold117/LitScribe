@@ -35,6 +35,9 @@ dependencies = [
     "pandas",
     "scikit-learn",
     "aiosqlite>=0.20.0",
+    # GraphRAG dependencies (Phase 7.5)
+    "networkx>=3.2",
+    "graspologic>=3.4.0",
 ]
 
 [project.optional-dependencies]

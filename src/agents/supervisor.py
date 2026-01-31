@@ -28,6 +28,7 @@ def get_workflow_status(state: LitScribeState) -> Dict[str, Any]:
     search_completed = state.get("search_results") is not None
     papers_found = len(state.get("papers_to_analyze", []))
     papers_analyzed = len(state.get("analyzed_papers", []))
+    graphrag_completed = state.get("knowledge_graph") is not None
     synthesis_generated = state.get("synthesis") is not None
     errors = state.get("errors", [])
 
@@ -35,6 +36,8 @@ def get_workflow_status(state: LitScribeState) -> Dict[str, Any]:
         "search_completed": search_completed,
         "papers_found": papers_found,
         "papers_analyzed": papers_analyzed,
+        "graphrag_completed": graphrag_completed,
+        "graphrag_enabled": state.get("graphrag_enabled", True),
         "synthesis_generated": synthesis_generated,
         "error_count": len(errors),
         "latest_errors": errors[-3:] if errors else [],
@@ -43,14 +46,15 @@ def get_workflow_status(state: LitScribeState) -> Dict[str, Any]:
 
 def determine_next_agent(
     state: LitScribeState,
-) -> Literal["discovery", "critical_reading", "synthesis", "complete"]:
+) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "complete"]:
     """Determine which agent should run next based on state.
 
     Follows a linear workflow:
     1. Discovery: if no search results yet
     2. Critical Reading: if papers found but not analyzed
-    3. Synthesis: if papers analyzed but no synthesis
-    4. Complete: if synthesis done or errors prevent progress
+    3. GraphRAG: if papers analyzed but no knowledge graph (Phase 7.5)
+    4. Synthesis: if GraphRAG done (or disabled) but no synthesis
+    5. Complete: if synthesis done or errors prevent progress
 
     Args:
         state: Current workflow state
@@ -68,7 +72,7 @@ def determine_next_agent(
 
     # Check iteration limit
     iteration = state.get("iteration_count", 0)
-    if iteration > 5:
+    if iteration > 10:  # Increased from 5 to accommodate GraphRAG
         logger.warning("Iteration limit reached, ending workflow")
         return "complete"
 
@@ -76,6 +80,8 @@ def determine_next_agent(
     search_results = state.get("search_results")
     papers_to_analyze = state.get("papers_to_analyze", [])
     analyzed_papers = state.get("analyzed_papers", [])
+    knowledge_graph = state.get("knowledge_graph")
+    graphrag_enabled = state.get("graphrag_enabled", True)
     synthesis = state.get("synthesis")
 
     # Phase 1: Need to discover papers
@@ -86,7 +92,11 @@ def determine_next_agent(
     if papers_to_analyze and len(analyzed_papers) < len(papers_to_analyze):
         return "critical_reading"
 
-    # Phase 3: All papers analyzed, need synthesis
+    # Phase 3: GraphRAG (if enabled and not done)
+    if graphrag_enabled and analyzed_papers and knowledge_graph is None:
+        return "graphrag"
+
+    # Phase 4: All papers analyzed (and GraphRAG done if enabled), need synthesis
     if analyzed_papers and synthesis is None:
         return "synthesis"
 
@@ -118,10 +128,11 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
     # Determine next agent
     next_agent = determine_next_agent(state)
 
+    graphrag_status = "done" if status["graphrag_completed"] else ("pending" if status["graphrag_enabled"] else "disabled")
     logger.info(
         f"Supervisor routing: {current_agent} -> {next_agent} "
         f"(papers: {status['papers_found']}/{status['papers_analyzed']}, "
-        f"errors: {status['error_count']})"
+        f"graphrag: {graphrag_status}, errors: {status['error_count']})"
     )
 
     return {

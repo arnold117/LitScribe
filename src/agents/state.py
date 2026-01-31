@@ -75,6 +75,75 @@ class SynthesisOutput(TypedDict):
     papers_cited: int
 
 
+# === Phase 7.5: GraphRAG Types ===
+
+
+class ExtractedEntity(TypedDict):
+    """An entity extracted from a paper (method, dataset, metric, concept)."""
+
+    entity_id: str  # Unique ID (normalized name hash)
+    name: str  # Canonical name
+    entity_type: str  # "method", "dataset", "metric", "concept"
+    aliases: List[str]  # Alternative names/acronyms
+    description: str  # Brief description
+    paper_ids: List[str]  # Papers mentioning this entity
+    frequency: int  # Total mentions across papers
+
+
+class EntityMention(TypedDict):
+    """A mention of an entity in a specific paper."""
+
+    entity_id: str
+    paper_id: str
+    context: str  # Surrounding text
+    section: str  # "abstract", "methods", "results", etc.
+    confidence: float  # 0-1 extraction confidence
+
+
+class GraphEdge(TypedDict):
+    """An edge in the knowledge graph."""
+
+    source_id: str
+    target_id: str
+    edge_type: str  # "cites", "uses_method", "evaluates_on", "co_occurs"
+    weight: float  # Edge weight/strength
+    paper_ids: List[str]  # Papers supporting this relationship
+
+
+class Community(TypedDict):
+    """A detected community in the knowledge graph."""
+
+    community_id: str
+    level: int  # Hierarchy level (0=top, higher=more specific)
+    entities: List[str]  # Entity IDs in this community
+    papers: List[str]  # Paper IDs in this community
+    summary: str  # LLM-generated community summary
+    parent_id: Optional[str]  # Parent community at higher level
+    children_ids: List[str]  # Child communities
+
+
+class KnowledgeGraphData(TypedDict):
+    """Complete knowledge graph data for state storage."""
+
+    entities: Dict[str, ExtractedEntity]  # entity_id -> entity
+    mentions: List[EntityMention]
+    edges: List[GraphEdge]
+    communities: List[Community]
+    global_summary: str  # Global synthesis from community summaries
+    stats: Dict[str, Any]  # node_count, edge_count, etc.
+
+
+class BatchProcessingState(TypedDict):
+    """State for batch processing progress."""
+
+    total_papers: int
+    processed_papers: int
+    current_batch: int
+    total_batches: int
+    batch_size: int
+    batch_summaries: List[Dict[str, Any]]  # Sub-theme summaries per batch
+
+
 class LitScribeState(TypedDict):
     """Main state shared across all agents in the LitScribe workflow.
 
@@ -85,7 +154,8 @@ class LitScribeState(TypedDict):
     1. User provides research_question
     2. Discovery Agent: expands query, searches sources, selects papers
     3. Critical Reading Agent: parses PDFs, extracts findings, creates summaries
-    4. Synthesis Agent: identifies themes, finds gaps, generates review
+    4. GraphRAG Agent (Phase 7.5): builds knowledge graph, detects communities
+    5. Synthesis Agent: identifies themes, finds gaps, generates review
     """
 
     # === Core Input ===
@@ -103,14 +173,21 @@ class LitScribeState(TypedDict):
     analyzed_papers: List[PaperSummary]  # Completed paper summaries
     parsed_documents: Dict[str, Dict[str, Any]]  # paper_id -> ParsedDocument
 
+    # === GraphRAG Stage (Phase 7.5) ===
+    knowledge_graph: Optional[KnowledgeGraphData]  # Knowledge graph data
+    graphrag_enabled: bool  # Feature flag for GraphRAG processing
+    batch_state: Optional[BatchProcessingState]  # Batch processing progress
+
     # === Synthesis Stage ===
     synthesis: Optional[SynthesisOutput]  # Final synthesis output
+    technology_comparison: Optional[Dict[str, Any]]  # Tech comparison table
 
     # === Workflow Control ===
     current_agent: Literal[
         "supervisor",
         "discovery",
         "critical_reading",
+        "graphrag",
         "synthesis",
         "complete"
     ]
@@ -120,10 +197,11 @@ class LitScribeState(TypedDict):
     errors: List[str]  # Accumulated error messages
 
     # === Configuration ===
-    max_papers: int  # Maximum papers to analyze
+    max_papers: int  # Maximum papers to analyze (supports up to 500)
     sources: List[str]  # Sources to search ["arxiv", "semantic_scholar", "pubmed"]
     review_type: Literal["systematic", "narrative", "scoping"]  # Type of review
     cache_enabled: bool  # Whether to use local cache for search/PDF/parse
+    batch_size: int  # Batch size for processing papers (default: 20)
 
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
@@ -136,16 +214,20 @@ def create_initial_state(
     review_type: Literal["systematic", "narrative", "scoping"] = "narrative",
     cache_enabled: bool = True,
     llm_config: Optional[Dict[str, Any]] = None,
+    graphrag_enabled: bool = True,
+    batch_size: int = 20,
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
 
     Args:
         research_question: The research question to explore
-        max_papers: Maximum number of papers to analyze (default: 10)
+        max_papers: Maximum number of papers to analyze (default: 10, max: 500)
         sources: List of sources to search (default: arxiv, semantic_scholar)
         review_type: Type of literature review to generate
         cache_enabled: Whether to use local cache (default: True)
         llm_config: LLM configuration dict
+        graphrag_enabled: Enable GraphRAG knowledge graph (default: True)
+        batch_size: Batch size for processing papers (default: 20)
 
     Returns:
         Initialized LitScribeState ready for the workflow
@@ -156,6 +238,9 @@ def create_initial_state(
     if llm_config is None:
         llm_config = {}
 
+    # Cap max_papers at 500
+    max_papers = min(max_papers, 500)
+
     return LitScribeState(
         research_question=research_question,
         messages=[],
@@ -163,7 +248,11 @@ def create_initial_state(
         papers_to_analyze=[],
         analyzed_papers=[],
         parsed_documents={},
+        knowledge_graph=None,
+        graphrag_enabled=graphrag_enabled,
+        batch_state=None,
         synthesis=None,
+        technology_comparison=None,
         current_agent="supervisor",
         iteration_count=0,
         errors=[],
@@ -171,5 +260,6 @@ def create_initial_state(
         sources=sources,
         review_type=review_type,
         cache_enabled=cache_enabled,
+        batch_size=batch_size,
         llm_config=llm_config,
     )
