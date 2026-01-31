@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS parsed_docs (
     sections TEXT,
     tables TEXT,
     equations TEXT,
-    references TEXT,
+    paper_references TEXT,
     word_count INTEGER,
     page_count INTEGER,
     parsed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

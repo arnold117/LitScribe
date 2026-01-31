@@ -39,7 +39,7 @@ class ParseCache:
             "sections": json.dumps(parsed.get("sections", [])),
             "tables": json.dumps(parsed.get("tables", [])),
             "equations": json.dumps(parsed.get("equations", [])),
-            "references": json.dumps(parsed.get("references", [])),
+            "paper_references": json.dumps(parsed.get("references", [])),
             "word_count": parsed.get("word_count", 0),
             "page_count": parsed.get("page_count", 0),
         }
@@ -59,7 +59,7 @@ class ParseCache:
             "sections": json.loads(row["sections"]) if row["sections"] else [],
             "tables": json.loads(row["tables"]) if row["tables"] else [],
             "equations": json.loads(row["equations"]) if row["equations"] else [],
-            "references": json.loads(row["references"]) if row["references"] else [],
+            "references": json.loads(row["paper_references"]) if row["paper_references"] else [],
             "word_count": row["word_count"] or 0,
             "page_count": row["page_count"] or 0,
             "parsed_at": row["parsed_at"],
@@ -123,14 +123,14 @@ class ParseCache:
             conn.execute("""
                 INSERT INTO parsed_docs (
                     paper_id, markdown, sections, tables, equations,
-                    references, word_count, page_count
+                    paper_references, word_count, page_count
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(paper_id) DO UPDATE SET
                     markdown = excluded.markdown,
                     sections = excluded.sections,
                     tables = excluded.tables,
                     equations = excluded.equations,
-                    references = excluded.references,
+                    paper_references = excluded.paper_references,
                     word_count = excluded.word_count,
                     page_count = excluded.page_count,
                     parsed_at = datetime('now')
@@ -140,7 +140,7 @@ class ParseCache:
                 serialized["sections"],
                 serialized["tables"],
                 serialized["equations"],
-                serialized["references"],
+                serialized["paper_references"],
                 serialized["word_count"],
                 serialized["page_count"],
             ))
@@ -222,12 +222,12 @@ class ParseCache:
 
         with self.db.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT references FROM parsed_docs WHERE paper_id = ?",
+                "SELECT paper_references FROM parsed_docs WHERE paper_id = ?",
                 (paper_id,)
             )
             row = cursor.fetchone()
-            if row and row["references"]:
-                return json.loads(row["references"])
+            if row and row["paper_references"]:
+                return json.loads(row["paper_references"])
         return None
 
     def get_all(self, limit: int = 100) -> List[Dict[str, Any]]:
@@ -309,14 +309,14 @@ class ParseCache:
             await db.execute("""
                 INSERT INTO parsed_docs (
                     paper_id, markdown, sections, tables, equations,
-                    references, word_count, page_count
+                    paper_references, word_count, page_count
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(paper_id) DO UPDATE SET
                     markdown = excluded.markdown,
                     sections = excluded.sections,
                     tables = excluded.tables,
                     equations = excluded.equations,
-                    references = excluded.references,
+                    paper_references = excluded.paper_references,
                     word_count = excluded.word_count,
                     page_count = excluded.page_count,
                     parsed_at = datetime('now')
@@ -326,7 +326,7 @@ class ParseCache:
                 serialized["sections"],
                 serialized["tables"],
                 serialized["equations"],
-                serialized["references"],
+                serialized["paper_references"],
                 serialized["word_count"],
                 serialized["page_count"],
             ))
