@@ -2,11 +2,16 @@
 
 This module defines the main workflow graph that orchestrates
 the multi-agent literature review process.
+
+Supports SQLite checkpointing for breakpoint resume (Phase 6.5).
 """
 
 import logging
+import uuid
+from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, StateGraph
 
 from agents.critical_reading_agent import critical_reading_agent
@@ -14,6 +19,7 @@ from agents.discovery_agent import discovery_agent
 from agents.state import LitScribeState, create_initial_state
 from agents.supervisor import supervisor_agent
 from agents.synthesis_agent import synthesis_agent
+from cache.database import get_cache_db
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +126,27 @@ def compile_graph(
     return workflow.compile(**compile_kwargs)
 
 
+def get_checkpoint_db_path() -> str:
+    """Get the path to the checkpoint database.
+
+    Uses the same database as the cache system for consistency.
+
+    Returns:
+        Path to the SQLite database file
+    """
+    db = get_cache_db()
+    return str(db.db_path)
+
+
 async def run_literature_review(
     research_question: str,
     max_papers: int = 10,
     sources: Optional[list] = None,
     review_type: Literal["systematic", "narrative", "scoping"] = "narrative",
+    cache_enabled: bool = True,
     llm_config: Optional[Dict[str, Any]] = None,
+    thread_id: Optional[str] = None,
+    checkpoint_enabled: bool = True,
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
@@ -134,12 +155,17 @@ async def run_literature_review(
     It creates the initial state, compiles the graph, and runs
     the workflow to completion.
 
+    Supports SQLite checkpointing for breakpoint resume.
+
     Args:
         research_question: The research question to explore
         max_papers: Maximum number of papers to analyze
         sources: List of sources to search (default: arxiv, semantic_scholar)
         review_type: Type of literature review
+        cache_enabled: Whether to use local cache (default: True)
         llm_config: LLM configuration options
+        thread_id: Optional thread ID for checkpointing (auto-generated if not provided)
+        checkpoint_enabled: Whether to enable checkpointing (default: True)
         verbose: Whether to log progress
 
     Returns:
@@ -154,20 +180,97 @@ async def run_literature_review(
         max_papers=max_papers,
         sources=sources,
         review_type=review_type,
+        cache_enabled=cache_enabled,
         llm_config=llm_config or {},
     )
 
-    # Compile the graph
-    graph = compile_graph()
-
     logger.info(f"Starting literature review for: {research_question}")
 
-    # Run the workflow
-    final_state = await graph.ainvoke(initial_state)
+    # Run with or without checkpointing
+    if checkpoint_enabled:
+        # Generate thread_id if not provided
+        if thread_id is None:
+            thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        logger.info(f"Checkpointing enabled with thread_id: {thread_id}")
+
+        # Use async context manager for checkpointer
+        db_path = get_checkpoint_db_path()
+        async with AsyncSqliteSaver.from_conn_string(db_path) as checkpointer:
+            graph = compile_graph(checkpointer=checkpointer)
+            final_state = await graph.ainvoke(initial_state, config)
+    else:
+        graph = compile_graph()
+        final_state = await graph.ainvoke(initial_state)
 
     logger.info("Literature review complete")
 
+    # Include thread_id in result for resume capability
+    if checkpoint_enabled and thread_id:
+        final_state["_thread_id"] = thread_id
+
     return final_state
+
+
+async def resume_literature_review(
+    thread_id: str,
+    verbose: bool = True,
+) -> Dict[str, Any]:
+    """Resume a literature review from a checkpoint.
+
+    Args:
+        thread_id: The thread ID of the review to resume
+        verbose: Whether to log progress
+
+    Returns:
+        Final state containing the literature review
+    """
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    logger.info(f"Resuming literature review with thread_id: {thread_id}")
+
+    db_path = get_checkpoint_db_path()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async with AsyncSqliteSaver.from_conn_string(db_path) as checkpointer:
+        graph = compile_graph(checkpointer=checkpointer)
+
+        # Get the current state from checkpoint
+        state_snapshot = await graph.aget_state(config)
+
+        if state_snapshot is None or state_snapshot.values is None:
+            raise ValueError(f"No checkpoint found for thread_id: {thread_id}")
+
+        logger.info(f"Resuming from state: current_agent={state_snapshot.values.get('current_agent')}")
+
+        # Resume the workflow
+        final_state = await graph.ainvoke(None, config)
+
+    logger.info("Literature review resumed and completed")
+
+    return final_state
+
+
+async def get_review_state(thread_id: str) -> Optional[Dict[str, Any]]:
+    """Get the current state of a literature review by thread_id.
+
+    Args:
+        thread_id: The thread ID of the review
+
+    Returns:
+        Current state dict or None if not found
+    """
+    db_path = get_checkpoint_db_path()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async with AsyncSqliteSaver.from_conn_string(db_path) as checkpointer:
+        graph = compile_graph(checkpointer=checkpointer)
+        state_snapshot = await graph.aget_state(config)
+
+        if state_snapshot and state_snapshot.values:
+            return dict(state_snapshot.values)
+    return None
 
 
 async def run_with_streaming(
@@ -175,19 +278,27 @@ async def run_with_streaming(
     max_papers: int = 10,
     sources: Optional[list] = None,
     review_type: Literal["systematic", "narrative", "scoping"] = "narrative",
+    cache_enabled: bool = True,
     llm_config: Optional[Dict[str, Any]] = None,
+    thread_id: Optional[str] = None,
+    checkpoint_enabled: bool = True,
 ):
     """Run literature review with streaming updates.
 
     Yields state updates as the workflow progresses, useful for
     real-time progress tracking in UIs.
 
+    Supports SQLite checkpointing for breakpoint resume.
+
     Args:
         research_question: The research question
         max_papers: Maximum papers to analyze
         sources: Sources to search
         review_type: Type of review
+        cache_enabled: Whether to use local cache
         llm_config: LLM configuration
+        thread_id: Optional thread ID for checkpointing
+        checkpoint_enabled: Whether to enable checkpointing
 
     Yields:
         State snapshots as workflow progresses
@@ -197,13 +308,26 @@ async def run_with_streaming(
         max_papers=max_papers,
         sources=sources,
         review_type=review_type,
+        cache_enabled=cache_enabled,
         llm_config=llm_config or {},
     )
 
-    graph = compile_graph()
+    if checkpoint_enabled:
+        # Generate thread_id if not provided
+        if thread_id is None:
+            thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": thread_id}}
+        logger.info(f"Checkpointing enabled with thread_id: {thread_id}")
 
-    async for state in graph.astream(initial_state):
-        yield state
+        db_path = get_checkpoint_db_path()
+        async with AsyncSqliteSaver.from_conn_string(db_path) as checkpointer:
+            graph = compile_graph(checkpointer=checkpointer)
+            async for state in graph.astream(initial_state, config):
+                yield state
+    else:
+        graph = compile_graph()
+        async for state in graph.astream(initial_state):
+            yield state
 
 
 # Convenience function for sync usage
@@ -212,7 +336,9 @@ def run_review_sync(
     max_papers: int = 10,
     sources: Optional[list] = None,
     review_type: Literal["systematic", "narrative", "scoping"] = "narrative",
+    cache_enabled: bool = True,
     llm_config: Optional[Dict[str, Any]] = None,
+    checkpoint_enabled: bool = True,
 ) -> Dict[str, Any]:
     """Synchronous wrapper for running literature review.
 
@@ -221,7 +347,9 @@ def run_review_sync(
         max_papers: Maximum papers to analyze
         sources: Sources to search
         review_type: Type of review
+        cache_enabled: Whether to use local cache
         llm_config: LLM configuration
+        checkpoint_enabled: Whether to enable checkpointing
 
     Returns:
         Final state with literature review
@@ -232,7 +360,9 @@ def run_review_sync(
         max_papers=max_papers,
         sources=sources,
         review_type=review_type,
+        cache_enabled=cache_enabled,
         llm_config=llm_config,
+        checkpoint_enabled=checkpoint_enabled,
     ))
 
 
@@ -241,6 +371,9 @@ __all__ = [
     "create_review_graph",
     "compile_graph",
     "run_literature_review",
+    "resume_literature_review",
+    "get_review_state",
     "run_with_streaming",
     "run_review_sync",
+    "get_checkpoint_db_path",
 ]

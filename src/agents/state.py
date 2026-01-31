@@ -123,6 +123,7 @@ class LitScribeState(TypedDict):
     max_papers: int  # Maximum papers to analyze
     sources: List[str]  # Sources to search ["arxiv", "semantic_scholar", "pubmed"]
     review_type: Literal["systematic", "narrative", "scoping"]  # Type of review
+    cache_enabled: bool  # Whether to use local cache for search/PDF/parse
 
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
@@ -133,6 +134,7 @@ def create_initial_state(
     max_papers: int = 10,
     sources: Optional[List[str]] = None,
     review_type: Literal["systematic", "narrative", "scoping"] = "narrative",
+    cache_enabled: bool = True,
     llm_config: Optional[Dict[str, Any]] = None,
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
@@ -142,6 +144,7 @@ def create_initial_state(
         max_papers: Maximum number of papers to analyze (default: 10)
         sources: List of sources to search (default: arxiv, semantic_scholar)
         review_type: Type of literature review to generate
+        cache_enabled: Whether to use local cache (default: True)
         llm_config: LLM configuration dict
 
     Returns:
@@ -167,5 +170,6 @@ def create_initial_state(
         max_papers=max_papers,
         sources=sources,
         review_type=review_type,
+        cache_enabled=cache_enabled,
         llm_config=llm_config,
     )

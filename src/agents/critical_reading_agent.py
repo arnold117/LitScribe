@@ -6,10 +6,13 @@ This agent is responsible for:
 3. Finding extraction - identifying key findings using LLM
 4. Methodology analysis - summarizing research methods
 5. Quality assessment - identifying strengths and limitations
+
+Supports PDF and parse caching with SQLite (Phase 6.5).
 """
 
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agents.errors import AgentError, ErrorType, LLMError, PDFNotFoundError, PDFParseError
@@ -26,27 +29,48 @@ from agents.tools import (
     get_zotero_pdf_path,
     parse_pdf,
 )
+from cache.cached_tools import CachedTools, get_cached_tools
 
 logger = logging.getLogger(__name__)
 
 
-async def acquire_pdf(paper: Dict[str, Any]) -> Optional[str]:
+async def acquire_pdf(
+    paper: Dict[str, Any],
+    cached_tools: Optional[CachedTools] = None,
+) -> Optional[str]:
     """Acquire PDF file for a paper from available sources.
 
+    Supports caching: checks local cache first before downloading.
+
     Tries multiple sources in order:
-    1. arXiv (if arXiv ID available)
-    2. Zotero (if zotero_key available)
-    3. Direct URL download (future)
+    1. Local cache (if caching enabled)
+    2. arXiv (if arXiv ID available)
+    3. Zotero (if zotero_key available)
+    4. Direct URL download (future)
 
     Args:
         paper: Paper metadata dict
+        cached_tools: CachedTools instance for caching (optional)
 
     Returns:
         Local path to PDF file, or None if not available
     """
+    paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi", "unknown")
+
+    # Use cached tools if available
+    if cached_tools and cached_tools.cache_enabled:
+        try:
+            pdf_path = await cached_tools.get_pdf_with_cache(paper)
+            if pdf_path and pdf_path.exists():
+                logger.info(f"Got PDF for {paper_id} (cached)")
+                return str(pdf_path)
+        except Exception as e:
+            logger.warning(f"Cache lookup failed for {paper_id}: {e}")
+            # Fall through to regular acquisition
+
+    # Regular acquisition without caching
     arxiv_id = paper.get("arxiv_id")
     zotero_key = paper.get("zotero_key")
-    paper_id = paper.get("paper_id", "unknown")
 
     # Try arXiv first
     if arxiv_id:
@@ -78,15 +102,37 @@ async def acquire_pdf(paper: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-async def parse_paper_pdf(pdf_path: str) -> Dict[str, Any]:
+async def parse_paper_pdf(
+    pdf_path: str,
+    paper_id: Optional[str] = None,
+    cached_tools: Optional[CachedTools] = None,
+) -> Dict[str, Any]:
     """Parse a PDF file into structured content.
+
+    Supports caching: stores parsed results for reuse.
 
     Args:
         pdf_path: Path to the PDF file
+        paper_id: Paper identifier for caching (optional)
+        cached_tools: CachedTools instance for caching (optional)
 
     Returns:
         Parsed document with markdown, sections, tables, references
     """
+    # Use cached tools if available and paper_id provided
+    if cached_tools and cached_tools.cache_enabled and paper_id:
+        try:
+            result = await cached_tools.parse_pdf_with_cache(
+                paper_id=paper_id,
+                pdf_path=Path(pdf_path),
+            )
+            logger.info(f"Parsed PDF for {paper_id} (with cache)")
+            return result
+        except Exception as e:
+            logger.warning(f"Cached parsing failed for {paper_id}: {e}")
+            # Fall through to regular parsing
+
+    # Regular parsing without caching
     try:
         # Try pymupdf first (faster, more reliable)
         result = await parse_pdf(pdf_path, backend="pymupdf")
@@ -278,12 +324,16 @@ async def assess_quality(
 async def analyze_single_paper(
     paper: Dict[str, Any],
     model: Optional[str] = None,
+    cached_tools: Optional[CachedTools] = None,
 ) -> PaperSummary:
     """Perform complete critical reading analysis on a single paper.
+
+    Supports caching for PDF acquisition and parsing.
 
     Args:
         paper: Paper metadata dict
         model: LLM model to use
+        cached_tools: CachedTools instance for caching (optional)
 
     Returns:
         Complete PaperSummary
@@ -293,14 +343,18 @@ async def analyze_single_paper(
 
     logger.info(f"Analyzing paper: {title}")
 
-    # Step 1: Acquire PDF
-    pdf_path = await acquire_pdf(paper)
+    # Step 1: Acquire PDF (with caching if enabled)
+    pdf_path = await acquire_pdf(paper, cached_tools=cached_tools)
 
-    # Step 2: Parse PDF (if available)
+    # Step 2: Parse PDF (if available, with caching if enabled)
     parsed_doc = None
     if pdf_path:
         try:
-            parsed_doc = await parse_paper_pdf(pdf_path)
+            parsed_doc = await parse_paper_pdf(
+                pdf_path,
+                paper_id=paper_id,
+                cached_tools=cached_tools,
+            )
         except PDFParseError as e:
             logger.warning(f"PDF parsing failed for {title}: {e}")
 
@@ -342,6 +396,8 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     This function is called by the LangGraph workflow to analyze
     all papers selected in the discovery phase.
 
+    Supports PDF and parse caching when cache_enabled=True.
+
     Args:
         state: Current workflow state
 
@@ -352,6 +408,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
+    cache_enabled = state.get("cache_enabled", True)
 
     if not papers_to_analyze:
         error_msg = "No papers to analyze"
@@ -365,6 +422,10 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
         }
 
     logger.info(f"Critical Reading Agent starting: {len(papers_to_analyze)} papers")
+    logger.info(f"Cache enabled: {cache_enabled}")
+
+    # Initialize cached tools if caching is enabled
+    cached_tools = get_cached_tools(cache_enabled=cache_enabled) if cache_enabled else None
 
     analyzed_papers: List[PaperSummary] = []
     parsed_documents: Dict[str, Dict[str, Any]] = {}
@@ -374,8 +435,8 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
         title = paper.get("title", "Unknown")
 
         try:
-            # Analyze the paper
-            summary = await analyze_single_paper(paper, model=model)
+            # Analyze the paper (with caching if enabled)
+            summary = await analyze_single_paper(paper, model=model, cached_tools=cached_tools)
             analyzed_papers.append(summary)
 
             # Store parsed document reference (if parsing was done)

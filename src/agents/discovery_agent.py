@@ -5,6 +5,8 @@ This agent is responsible for:
 2. Multi-source search - searching arXiv, Semantic Scholar, PubMed, etc.
 3. Paper selection - ranking and selecting the most relevant papers
 4. Snowball sampling - finding related papers through citations and references
+
+Supports local-first search with SQLite caching (Phase 6.5).
 """
 
 import json
@@ -26,6 +28,7 @@ from agents.tools import (
     get_recommendations,
     unified_search,
 )
+from cache.cached_tools import CachedTools, get_cached_tools
 
 logger = logging.getLogger(__name__)
 
@@ -85,13 +88,20 @@ async def search_all_sources(
     queries: List[str],
     sources: List[str],
     max_per_source: int = 20,
+    cached_tools: Optional[CachedTools] = None,
 ) -> Dict[str, Any]:
     """Search multiple sources with multiple queries.
+
+    Supports local-first search with caching. When cache is enabled:
+    1. Check local cache for each source
+    2. Only fetch from sources not in cache
+    3. Cache new results for future use
 
     Args:
         queries: List of search queries
         sources: List of sources to search
         max_per_source: Maximum results per source per query
+        cached_tools: CachedTools instance for local-first search (optional)
 
     Returns:
         Combined search results with deduplication
@@ -99,16 +109,26 @@ async def search_all_sources(
     all_papers = []
     source_counts = {source: 0 for source in sources}
     errors = []
+    from_cache_count = 0
 
     # Search with each query (limit to top 3 queries to avoid rate limits)
     for query in queries[:3]:
         try:
-            result = await unified_search(
-                query=query,
-                sources=sources,
-                max_per_source=max_per_source // len(queries[:3]),
-                deduplicate=True,
-            )
+            # Use cached search if available
+            if cached_tools and cached_tools.cache_enabled:
+                result = await cached_tools.search_with_cache(
+                    query=query,
+                    sources=sources,
+                    max_per_source=max_per_source // len(queries[:3]),
+                )
+                from_cache_count += result.get("from_cache", 0)
+            else:
+                result = await unified_search(
+                    query=query,
+                    sources=sources,
+                    max_per_source=max_per_source // len(queries[:3]),
+                    deduplicate=True,
+                )
 
             papers = result.get("papers", [])
             all_papers.extend(papers)
@@ -146,13 +166,15 @@ async def search_all_sources(
             seen_titles.add(title)
         unique_papers.append(paper)
 
-    logger.info(f"Found {len(unique_papers)} unique papers from {len(all_papers)} total results")
+    cache_info = f" ({from_cache_count} from cache)" if from_cache_count > 0 else ""
+    logger.info(f"Found {len(unique_papers)} unique papers from {len(all_papers)} total results{cache_info}")
 
     return {
         "papers": unique_papers,
         "source_counts": source_counts,
         "total_found": len(unique_papers),
         "errors": errors,
+        "from_cache": from_cache_count,
     }
 
 
@@ -306,6 +328,8 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     This function is called by the LangGraph workflow to execute
     the discovery phase of the literature review.
 
+    Supports local-first search with SQLite caching when cache_enabled=True.
+
     Args:
         state: Current workflow state
 
@@ -315,19 +339,25 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     research_question = state["research_question"]
     sources = state.get("sources", ["arxiv", "semantic_scholar"])
     max_papers = state.get("max_papers", 10)
+    cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))
 
     logger.info(f"Discovery Agent starting for: {research_question}")
+    logger.info(f"Cache enabled: {cache_enabled}")
+
+    # Initialize cached tools if caching is enabled
+    cached_tools = get_cached_tools(cache_enabled=cache_enabled) if cache_enabled else None
 
     try:
         # Step 1: Expand queries
         expanded_queries = await expand_queries(research_question)
 
-        # Step 2: Search all sources
+        # Step 2: Search all sources (with caching if enabled)
         search_results = await search_all_sources(
             queries=expanded_queries,
             sources=sources,
             max_per_source=20,
+            cached_tools=cached_tools,
         )
 
         if search_results.get("errors"):
