@@ -243,6 +243,144 @@ async def cmd_citations(args) -> int:
         return 1
 
 
+async def cmd_review(args) -> int:
+    """Run complete literature review using multi-agent system."""
+    import warnings
+    from datetime import datetime
+    from agents.graph import run_literature_review
+
+    # Suppress Pydantic serialization warnings from LiteLLM
+    warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+
+    research_question = args.question
+    max_papers = args.papers
+    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar"]
+    review_type = args.type
+
+    # Default output: always save to output/ directory
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        # Auto-generate output path based on timestamp
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Sanitize question for filename
+        safe_name = "".join(c if c.isalnum() or c in " -_" else "_" for c in research_question[:30])
+        safe_name = safe_name.strip().replace(" ", "_")
+        output_path = output_dir / f"review_{safe_name}_{timestamp}"
+
+    print_header("LitScribe Literature Review")
+    print(f"Research Question: {research_question}")
+    print(f"Max Papers: {max_papers}")
+    print(f"Sources: {sources}")
+    print(f"Review Type: {review_type}")
+    print(f"Output: {output_path}")
+    print()
+    print("Starting multi-agent workflow...")
+    print("  1. Discovery Agent: Searching and selecting papers")
+    print("  2. Critical Reading Agent: Analyzing papers")
+    print("  3. Synthesis Agent: Generating review")
+    print()
+
+    try:
+        # Run the multi-agent workflow
+        final_state = await run_literature_review(
+            research_question=research_question,
+            max_papers=max_papers,
+            sources=sources,
+            review_type=review_type,
+            verbose=args.verbose,
+        )
+
+        # Check for errors
+        errors = final_state.get("errors", [])
+        if errors:
+            print(f"\n⚠ Warnings/Errors during processing:")
+            for err in errors[-5:]:
+                print(f"  - {err}")
+
+        # Display results
+        search_results = final_state.get("search_results")
+        if search_results:
+            print(f"\n📚 Papers Found: {search_results.get('total_found', 0)}")
+            print(f"   Expanded Queries: {len(search_results.get('expanded_queries', []))}")
+            print(f"   Source Distribution: {search_results.get('source_counts', {})}")
+
+        analyzed = final_state.get("analyzed_papers", [])
+        print(f"\n📖 Papers Analyzed: {len(analyzed)}")
+
+        synthesis = final_state.get("synthesis")
+        if synthesis:
+            print(f"\n✨ Review Generated:")
+            print(f"   Themes: {len(synthesis.get('themes', []))}")
+            print(f"   Research Gaps: {len(synthesis.get('gaps', []))}")
+            print(f"   Word Count: {synthesis.get('word_count', 0)}")
+            print(f"   Papers Cited: {synthesis.get('papers_cited', 0)}")
+
+            # Show themes
+            if synthesis.get("themes"):
+                print("\n📊 Identified Themes:")
+                for i, theme in enumerate(synthesis["themes"], 1):
+                    print(f"   {i}. {theme.get('theme', 'Unknown')}")
+                    if args.verbose:
+                        print(f"      {theme.get('description', '')[:100]}...")
+
+            # Show gaps
+            if synthesis.get("gaps"):
+                print("\n🔍 Research Gaps:")
+                for gap in synthesis["gaps"][:3]:
+                    print(f"   - {gap[:80]}...")
+
+            # Always save output
+            review_text = synthesis.get("review_text", "")
+
+            # Save review markdown
+            review_file = output_path.with_suffix(".md")
+            with open(review_file, "w", encoding="utf-8") as f:
+                f.write(f"# Literature Review: {research_question}\n\n")
+                f.write(review_text)
+                f.write("\n\n## References\n\n")
+                for cit in synthesis.get("citations_formatted", []):
+                    f.write(f"- {cit}\n")
+            print(f"\n📄 Review saved to: {review_file}")
+
+            # Save full state as JSON
+            json_file = output_path.with_suffix(".json")
+            with open(json_file, "w", encoding="utf-8") as f:
+                # Convert to JSON-serializable format
+                output_data = {
+                    "research_question": research_question,
+                    "search_results": search_results,
+                    "analyzed_papers": [dict(p) for p in analyzed],
+                    "synthesis": dict(synthesis) if synthesis else None,
+                    "errors": errors,
+                }
+                json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)
+            print(f"📊 Full data saved to: {json_file}")
+
+            # Show preview
+            print("\n" + "="*60)
+            print("REVIEW PREVIEW (first 500 chars)")
+            print("="*60)
+            print(review_text[:500])
+            if len(review_text) > 500:
+                print(f"\n... [full review in {review_file}]")
+
+        else:
+            print("\n❌ No synthesis generated")
+
+        print_header("Review Complete")
+        return 0
+
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 async def cmd_demo(args) -> int:
     """Run end-to-end demo pipeline."""
     from aggregators.unified_search import search_all_sources
@@ -343,11 +481,22 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Search for papers
   litscribe search "transformer attention" --sources arxiv,semantic_scholar
   litscribe search "CRISPR" --sources pubmed --limit 20 --sort citations
+
+  # Get paper details
   litscribe paper arXiv:1706.03762 --verbose
   litscribe citations arXiv:1706.03762 --limit 10
+
+  # Parse PDF
   litscribe parse paper.pdf --output paper.md
+
+  # Generate literature review (multi-agent system)
+  litscribe review "What are the latest advances in LLM reasoning?"
+  litscribe review "CRISPR applications" -s pubmed -p 15 -o my_review
+
+  # Run demo
   litscribe demo --query "multi-agent systems"
         """,
     )
@@ -438,6 +587,42 @@ Examples:
         help="Search query for demo (default: 'large language model reasoning')",
     )
 
+    # review command - Multi-agent literature review
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Generate a complete literature review using multi-agent system",
+    )
+    review_parser.add_argument(
+        "question",
+        help="Research question for the literature review",
+    )
+    review_parser.add_argument(
+        "--papers", "-p",
+        type=int,
+        default=10,
+        help="Maximum number of papers to analyze (default: 10)",
+    )
+    review_parser.add_argument(
+        "--sources", "-s",
+        default="arxiv,semantic_scholar",
+        help="Comma-separated sources: arxiv,pubmed,semantic_scholar (default: arxiv,semantic_scholar)",
+    )
+    review_parser.add_argument(
+        "--type", "-t",
+        choices=["narrative", "systematic", "scoping"],
+        default="narrative",
+        help="Type of literature review (default: narrative)",
+    )
+    review_parser.add_argument(
+        "--output", "-o",
+        help="Output file path (default: output/review_<question>_<timestamp>)",
+    )
+    review_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show detailed progress and debug info",
+    )
+
     return parser
 
 
@@ -453,6 +638,8 @@ async def async_main(args) -> int:
         return await cmd_parse(args)
     elif args.command == "demo":
         return await cmd_demo(args)
+    elif args.command == "review":
+        return await cmd_review(args)
     else:
         print("No command specified. Use --help for usage.")
         return 1
