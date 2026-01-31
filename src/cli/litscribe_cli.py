@@ -496,6 +496,12 @@ Examples:
   litscribe review "What are the latest advances in LLM reasoning?"
   litscribe review "CRISPR applications" -s pubmed -p 15 -o my_review
 
+  # Export review to different formats
+  litscribe export review.json -f docx -s apa     # Export to Word (APA style)
+  litscribe export review.json -f pdf -s ieee     # Export to PDF (IEEE style)
+  litscribe export review.json -f bibtex          # Export BibTeX citations
+  litscribe export review.json -f md -l zh        # Export Markdown in Chinese
+
   # Cache management
   litscribe cache stats              # Show cache statistics
   litscribe cache clear --expired    # Clear expired entries
@@ -659,6 +665,46 @@ Examples:
     # cache vacuum
     cache_vacuum_parser = cache_subparsers.add_parser("vacuum", help="Optimize database storage")
 
+    # export command - Export review to various formats
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export a saved review to various formats",
+    )
+    export_parser.add_argument(
+        "input",
+        help="Path to the review JSON file (from 'litscribe review' output)",
+    )
+    export_parser.add_argument(
+        "--format", "-f",
+        choices=["bibtex", "docx", "pdf", "html", "latex", "md"],
+        default="docx",
+        help="Output format (default: docx)",
+    )
+    export_parser.add_argument(
+        "--style", "-s",
+        choices=["apa", "mla", "ieee", "chicago", "gbt7714"],
+        default="apa",
+        help="Citation style (default: apa)",
+    )
+    export_parser.add_argument(
+        "--lang", "-l",
+        choices=["en", "zh"],
+        default="en",
+        help="Output language (default: en)",
+    )
+    export_parser.add_argument(
+        "--output", "-o",
+        help="Output file path (default: same as input with new extension)",
+    )
+    export_parser.add_argument(
+        "--title",
+        help="Custom title for the document",
+    )
+    export_parser.add_argument(
+        "--author",
+        help="Author name for the document",
+    )
+
     return parser
 
 
@@ -725,6 +771,120 @@ async def cmd_cache(args) -> int:
     return 0
 
 
+async def cmd_export(args) -> int:
+    """Export a saved review to various formats."""
+    from exporters.bibtex_exporter import BibTeXExporter
+    from exporters.citation_formatter import CitationStyle
+    from exporters.pandoc_exporter import ExportConfig, ExportFormat, PandocExporter
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"Error: File not found: {input_path}")
+        return 1
+
+    if input_path.suffix != ".json":
+        print(f"Error: Input file must be a JSON file (from 'litscribe review' output)")
+        return 1
+
+    # Load the review data
+    print_header("Export Literature Review")
+    print(f"Input: {input_path}")
+
+    try:
+        with open(input_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON file: {e}")
+        return 1
+
+    # Check for required data
+    if not data.get("analyzed_papers"):
+        print("Error: No analyzed papers found in the review data")
+        return 1
+
+    # Map args to enums
+    format_map = {
+        "bibtex": None,  # Special handling
+        "docx": ExportFormat.DOCX,
+        "pdf": ExportFormat.PDF,
+        "html": ExportFormat.HTML,
+        "latex": ExportFormat.LATEX,
+        "md": ExportFormat.MARKDOWN,
+    }
+    style_map = {
+        "apa": CitationStyle.APA,
+        "mla": CitationStyle.MLA,
+        "ieee": CitationStyle.IEEE,
+        "chicago": CitationStyle.CHICAGO,
+        "gbt7714": CitationStyle.GB_T_7714,
+    }
+
+    output_format = args.format
+    citation_style = style_map[args.style]
+    language = args.lang
+
+    # Determine output path
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        ext = ".bib" if output_format == "bibtex" else f".{output_format}"
+        output_path = input_path.with_suffix(ext)
+
+    print(f"Format: {output_format}")
+    print(f"Citation style: {args.style}")
+    print(f"Language: {language}")
+    print(f"Output: {output_path}")
+    print()
+
+    try:
+        if output_format == "bibtex":
+            # BibTeX export
+            papers = data.get("analyzed_papers", [])
+            exporter = BibTeXExporter(papers)
+            output_path = exporter.save(output_path)
+            print(f"BibTeX exported: {len(papers)} entries")
+            print(f"Cite keys: {', '.join(exporter.get_cite_keys()[:5])}...")
+
+        else:
+            # Pandoc export
+            export_format = format_map[output_format]
+
+            # Create state-like dict for the exporter
+            state = {
+                "research_question": data.get("research_question", "Literature Review"),
+                "analyzed_papers": data.get("analyzed_papers", []),
+                "synthesis": data.get("synthesis"),
+            }
+
+            config = ExportConfig(
+                format=export_format,
+                citation_style=citation_style,
+                language=language,
+                title=args.title,
+                author=args.author,
+            )
+
+            exporter = PandocExporter(state, config)
+
+            if output_format == "md" or not exporter._pandoc_available:
+                if not exporter._pandoc_available and output_format != "md":
+                    print(f"Warning: Pandoc not installed. Exporting as Markdown instead.")
+                    output_path = output_path.with_suffix(".md")
+
+                output_path = exporter.export_markdown(output_path)
+                print(f"Markdown exported successfully")
+            else:
+                output_path = exporter.export(output_path)
+                print(f"{output_format.upper()} exported successfully")
+
+        print(f"\nSaved to: {output_path}")
+        return 0
+
+    except Exception as e:
+        print(f"Error during export: {e}")
+        return 1
+
+
 async def async_main(args) -> int:
     """Async main entry point."""
     if args.command == "search":
@@ -741,6 +901,8 @@ async def async_main(args) -> int:
         return await cmd_review(args)
     elif args.command == "cache":
         return await cmd_cache(args)
+    elif args.command == "export":
+        return await cmd_export(args)
     else:
         print("No command specified. Use --help for usage.")
         return 1
