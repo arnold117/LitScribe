@@ -21,7 +21,90 @@ DEFAULT_CACHE_DIR = Path("cache")
 DEFAULT_DB_NAME = "litscribe.db"
 
 # Database schema version for migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+
+# Migration SQL for version 2 (add failed_papers table)
+MIGRATION_V2_SQL = """
+-- Failed papers queue for retry (added in v2)
+CREATE TABLE IF NOT EXISTS failed_papers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id TEXT NOT NULL,
+    title TEXT,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    max_retries INTEGER DEFAULT 3,
+    paper_data TEXT,
+    research_question TEXT,
+    failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_retry_at TIMESTAMP,
+    resolved_at TIMESTAMP,
+    resolution TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_failed_papers_resolved ON failed_papers(resolved_at);
+CREATE INDEX IF NOT EXISTS idx_failed_papers_paper_id ON failed_papers(paper_id);
+"""
+
+# Migration SQL for version 3 (add GraphRAG tables)
+MIGRATION_V3_SQL = """
+-- Extracted entities (GraphRAG)
+CREATE TABLE IF NOT EXISTS entities (
+    entity_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    aliases TEXT,
+    description TEXT,
+    frequency INTEGER DEFAULT 1,
+    paper_ids TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
+CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+
+-- Entity mentions (paper -> entity relationships)
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id TEXT NOT NULL,
+    paper_id TEXT NOT NULL,
+    context TEXT,
+    section TEXT,
+    confidence REAL DEFAULT 0.9,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(entity_id, paper_id, section)
+);
+CREATE INDEX IF NOT EXISTS idx_mentions_entity ON entity_mentions(entity_id);
+CREATE INDEX IF NOT EXISTS idx_mentions_paper ON entity_mentions(paper_id);
+
+-- Graph edges (entity relationships)
+CREATE TABLE IF NOT EXISTS graph_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    edge_type TEXT NOT NULL,
+    weight REAL DEFAULT 1.0,
+    paper_ids TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_id, target_id, edge_type)
+);
+CREATE INDEX IF NOT EXISTS idx_edges_source ON graph_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_edges_target ON graph_edges(target_id);
+CREATE INDEX IF NOT EXISTS idx_edges_type ON graph_edges(edge_type);
+
+-- Communities (detected from graph)
+CREATE TABLE IF NOT EXISTS communities (
+    community_id TEXT PRIMARY KEY,
+    level INTEGER NOT NULL,
+    entity_ids TEXT,
+    paper_ids TEXT,
+    summary TEXT,
+    parent_id TEXT,
+    children_ids TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_communities_level ON communities(level);
+CREATE INDEX IF NOT EXISTS idx_communities_parent ON communities(parent_id);
+"""
 
 # Core SQL schema definition (required tables)
 CORE_SCHEMA_SQL = """
@@ -108,12 +191,30 @@ CREATE TABLE IF NOT EXISTS command_logs (
     completed_at TIMESTAMP
 );
 
+-- Failed papers queue for retry
+CREATE TABLE IF NOT EXISTS failed_papers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    paper_id TEXT NOT NULL,
+    title TEXT,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    max_retries INTEGER DEFAULT 3,
+    paper_data TEXT,  -- JSON blob of original paper metadata
+    research_question TEXT,  -- Context for retry
+    failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_retry_at TIMESTAMP,
+    resolved_at TIMESTAMP,  -- NULL means still pending
+    resolution TEXT  -- 'success', 'skipped', 'permanent_failure'
+);
+
 -- Create indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_papers_source ON papers(source);
 CREATE INDEX IF NOT EXISTS idx_papers_year ON papers(year);
 CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
 CREATE INDEX IF NOT EXISTS idx_command_logs_status ON command_logs(status);
 CREATE INDEX IF NOT EXISTS idx_command_logs_started ON command_logs(started_at);
+CREATE INDEX IF NOT EXISTS idx_failed_papers_resolved ON failed_papers(resolved_at);
+CREATE INDEX IF NOT EXISTS idx_failed_papers_paper_id ON failed_papers(paper_id);
 """
 
 # FTS schema (optional, may fail on some SQLite versions)
@@ -250,18 +351,39 @@ class CacheDatabase:
 
     def _apply_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
         """Apply database migrations (sync)."""
-        # Add migration logic here as schema evolves
         logger.info(f"Migrating database from version {from_version} to {SCHEMA_VERSION}")
+
+        # Apply migrations sequentially
+        if from_version < 2:
+            logger.info("Applying migration v2: adding failed_papers table")
+            conn.executescript(MIGRATION_V2_SQL)
+
+        if from_version < 3:
+            logger.info("Applying migration v3: adding GraphRAG tables")
+            conn.executescript(MIGRATION_V3_SQL)
+
+        # Use INSERT OR IGNORE to avoid duplicate version errors
         conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)",
+            "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
             (SCHEMA_VERSION,)
         )
 
     async def _apply_migrations_async(self, db: aiosqlite.Connection, from_version: int) -> None:
         """Apply database migrations (async)."""
         logger.info(f"Migrating database from version {from_version} to {SCHEMA_VERSION}")
+
+        # Apply migrations sequentially
+        if from_version < 2:
+            logger.info("Applying migration v2: adding failed_papers table")
+            await db.executescript(MIGRATION_V2_SQL)
+
+        if from_version < 3:
+            logger.info("Applying migration v3: adding GraphRAG tables")
+            await db.executescript(MIGRATION_V3_SQL)
+
+        # Use INSERT OR IGNORE to avoid duplicate version errors
         await db.execute(
-            "INSERT INTO schema_version (version) VALUES (?)",
+            "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
             (SCHEMA_VERSION,)
         )
 
@@ -339,10 +461,18 @@ class CacheDatabase:
         self.init_schema()
         stats = {}
         with self.get_connection() as conn:
-            # Count records in each table
-            for table in ["papers", "pdfs", "parsed_docs", "search_cache", "llm_cache", "command_logs"]:
-                cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
-                stats[f"{table}_count"] = cursor.fetchone()[0]
+            # Count records in each table (including GraphRAG tables)
+            tables = [
+                "papers", "pdfs", "parsed_docs", "search_cache", "llm_cache", "command_logs",
+                "entities", "entity_mentions", "graph_edges", "communities",
+            ]
+            for table in tables:
+                try:
+                    cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                    stats[f"{table}_count"] = cursor.fetchone()[0]
+                except Exception:
+                    # Table may not exist in older databases
+                    stats[f"{table}_count"] = 0
 
             # Database file size
             stats["db_size_mb"] = round(self.db_path.stat().st_size / (1024 * 1024), 2)

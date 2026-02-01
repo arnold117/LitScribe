@@ -9,6 +9,7 @@ This agent is responsible for:
 Supports local-first search with SQLite caching (Phase 6.5).
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -111,40 +112,59 @@ async def search_all_sources(
     errors = []
     from_cache_count = 0
 
-    # Search with each query (limit to top 3 queries to avoid rate limits)
-    for query in queries[:3]:
+    # Search with each query in parallel (limit to top 3 queries to avoid rate limits)
+    queries_to_search = queries[:3]
+    max_per_query = max_per_source // len(queries_to_search)
+
+    async def search_single_query(query: str):
+        """Search a single query across all sources."""
         try:
-            # Use cached search if available
             if cached_tools and cached_tools.cache_enabled:
                 result = await cached_tools.search_with_cache(
                     query=query,
                     sources=sources,
-                    max_per_source=max_per_source // len(queries[:3]),
+                    max_per_source=max_per_query,
                 )
-                from_cache_count += result.get("from_cache", 0)
             else:
                 result = await unified_search(
                     query=query,
                     sources=sources,
-                    max_per_source=max_per_source // len(queries[:3]),
+                    max_per_source=max_per_query,
                     deduplicate=True,
                 )
-
-            papers = result.get("papers", [])
-            all_papers.extend(papers)
-
-            # Update source counts
-            for paper in papers:
-                source = paper.get("source", "unknown")
-                if source in source_counts:
-                    source_counts[source] += 1
-
+            return {"success": True, "result": result, "query": query}
         except AgentError as e:
             logger.warning(f"Search failed for query '{query}': {e}")
-            errors.append(str(e))
+            return {"success": False, "error": str(e), "query": query}
         except Exception as e:
             logger.warning(f"Unexpected error searching '{query}': {e}")
-            errors.append(str(e))
+            return {"success": False, "error": str(e), "query": query}
+
+    # Run all queries in parallel
+    search_results = await asyncio.gather(
+        *[search_single_query(q) for q in queries_to_search],
+        return_exceptions=True,
+    )
+
+    # Process results
+    for res in search_results:
+        if isinstance(res, Exception):
+            errors.append(str(res))
+            continue
+        if not res.get("success"):
+            errors.append(res.get("error", "Unknown error"))
+            continue
+
+        result = res["result"]
+        from_cache_count += result.get("from_cache", 0)
+        papers = result.get("papers", [])
+        all_papers.extend(papers)
+
+        # Update source counts
+        for paper in papers:
+            source = paper.get("source", "unknown")
+            if source in source_counts:
+                source_counts[source] += 1
 
     # Deduplicate by paper_id or title similarity
     seen_ids = set()

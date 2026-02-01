@@ -4,12 +4,82 @@
 import argparse
 import asyncio
 import json
+import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+
+
+def setup_logging(
+    log_dir: Optional[Path] = None,
+    verbose: bool = False,
+    log_file_name: Optional[str] = None,
+) -> Path:
+    """Setup logging to both console and file.
+
+    Args:
+        log_dir: Directory for log files (default: logs/)
+        verbose: If True, set DEBUG level; otherwise INFO
+        log_file_name: Custom log file name (default: auto-generated with timestamp)
+
+    Returns:
+        Path to the log file
+    """
+    # Create log directory
+    if log_dir is None:
+        log_dir = Path("logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate log file name
+    if log_file_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file_name = f"litscribe_{timestamp}.log"
+    log_file = log_dir / log_file_name
+
+    # Set log level
+    log_level = logging.DEBUG if verbose else logging.INFO
+
+    # Create formatters
+    file_formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    console_formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    # Setup root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Remove existing handlers
+    root_logger.handlers.clear()
+
+    # File handler (always DEBUG to capture everything)
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(file_formatter)
+    root_logger.addHandler(file_handler)
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
+
+    # Reduce noise from third-party libraries
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+
+    logging.info(f"Logging initialized. Log file: {log_file}")
+    return log_file
 
 
 def print_header(title: str) -> None:
@@ -246,8 +316,10 @@ async def cmd_citations(args) -> int:
 async def cmd_review(args) -> int:
     """Run complete literature review using multi-agent system."""
     import warnings
-    from datetime import datetime
     from agents.graph import run_literature_review
+
+    # Setup logging (to console and file)
+    log_file = setup_logging(verbose=args.verbose)
 
     # Suppress Pydantic serialization warnings from LiteLLM
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -281,6 +353,7 @@ async def cmd_review(args) -> int:
     print(f"Review Type: {review_type}")
     print(f"GraphRAG: {'enabled' if graphrag_enabled else 'disabled'}")
     print(f"Output: {output_path}")
+    print(f"Log File: {log_file}")
     print()
     print("Starting multi-agent workflow...")
     print("  1. Discovery Agent: Searching and selecting papers")

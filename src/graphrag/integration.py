@@ -3,18 +3,23 @@
 This module provides the graphrag_agent node for the LangGraph workflow,
 orchestrating the full GraphRAG pipeline: entity extraction, linking,
 graph construction, community detection, and hierarchical summarization.
+
+Supports persistent caching: entities extracted from papers are stored in
+SQLite and reused across runs for efficiency and consistency.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from agents.state import (
     Community,
+    EntityMention,
     ExtractedEntity,
     KnowledgeGraphData,
     LitScribeState,
     PaperSummary,
 )
+from cache.graphrag_cache import GraphRAGCache, get_graphrag_cache
 from graphrag.community_detector import (
     build_community_hierarchy,
     compute_community_stats,
@@ -36,6 +41,50 @@ from graphrag.summarizer import (
 logger = logging.getLogger(__name__)
 
 
+def _merge_entity_lists(
+    existing: List[ExtractedEntity],
+    new: List[ExtractedEntity],
+) -> List[ExtractedEntity]:
+    """Merge two lists of entities, combining duplicates.
+
+    Args:
+        existing: Existing entities (e.g., from cache)
+        new: New entities to merge
+
+    Returns:
+        Merged list of entities
+    """
+    merged: Dict[str, ExtractedEntity] = {}
+
+    # Add existing entities
+    for entity in existing:
+        eid = entity["entity_id"]
+        merged[eid] = entity.copy()
+
+    # Merge new entities
+    for entity in new:
+        eid = entity["entity_id"]
+        if eid in merged:
+            # Combine paper_ids and frequency
+            existing_entity = merged[eid]
+            existing_entity["paper_ids"] = list(
+                set(existing_entity.get("paper_ids", []))
+                | set(entity.get("paper_ids", []))
+            )
+            existing_entity["frequency"] = (
+                existing_entity.get("frequency", 1) + entity.get("frequency", 1)
+            )
+            # Merge aliases
+            existing_entity["aliases"] = list(
+                set(existing_entity.get("aliases", []))
+                | set(entity.get("aliases", []))
+            )
+        else:
+            merged[eid] = entity.copy()
+
+    return list(merged.values())
+
+
 async def run_graphrag_pipeline(
     papers: List[PaperSummary],
     parsed_documents: Dict[str, Dict[str, Any]],
@@ -46,16 +95,19 @@ async def run_graphrag_pipeline(
     similarity_threshold: float = 0.85,
     community_resolutions: List[float] = [0.5, 1.0, 2.0],
     min_community_size: int = 2,
+    cache_enabled: bool = True,
 ) -> KnowledgeGraphData:
     """Run the complete GraphRAG pipeline.
 
     Pipeline steps:
-    1. Extract entities from all papers (batched)
-    2. Link equivalent entities across papers
-    3. Build knowledge graph
-    4. Detect communities at multiple resolutions
-    5. Generate hierarchical summaries
-    6. Generate global summary
+    1. Check cache for existing entities (incremental extraction)
+    2. Extract entities from NEW papers only (batched)
+    3. Link equivalent entities across papers
+    4. Build knowledge graph
+    5. Detect communities at multiple resolutions
+    6. Generate hierarchical summaries
+    7. Generate global summary
+    8. Save results to cache
 
     Args:
         papers: List of analyzed paper summaries
@@ -67,22 +119,89 @@ async def run_graphrag_pipeline(
         similarity_threshold: Threshold for entity linking
         community_resolutions: Resolution parameters for community detection
         min_community_size: Minimum community size
+        cache_enabled: Whether to use GraphRAG caching
 
     Returns:
         KnowledgeGraphData with all extracted information
     """
     logger.info(f"Starting GraphRAG pipeline for {len(papers)} papers")
 
-    # Step 1: Extract entities
-    logger.info("Step 1/6: Extracting entities from papers...")
-    entities, mentions = await extract_entities_batch(
-        papers,
-        parsed_documents,
-        batch_size=entity_batch_size,
-        max_concurrent=max_concurrent,
-        llm_config=llm_config,
+    # Initialize cache
+    cache = get_graphrag_cache(cache_enabled=cache_enabled)
+
+    # Filter out papers with None paper_id
+    valid_papers = [p for p in papers if p.get("paper_id") is not None]
+    if len(valid_papers) < len(papers):
+        logger.warning(
+            f"Filtered out {len(papers) - len(valid_papers)} papers with None paper_id"
+        )
+    papers = valid_papers
+
+    if not papers:
+        logger.warning("No valid papers after filtering, returning empty graph")
+        return KnowledgeGraphData(
+            entities={},
+            mentions=[],
+            edges=[],
+            communities=[],
+            global_summary="No valid papers were available for analysis.",
+            stats={"node_count": 0, "edge_count": 0},
+        )
+
+    # Step 1: Check cache for existing entities (incremental extraction)
+    logger.info("Step 1/7: Checking cache for existing entities...")
+    paper_ids = [p["paper_id"] for p in papers]
+    cached_papers: Set[str] = set()
+    cached_entities: List[ExtractedEntity] = []
+    cached_mentions: List[EntityMention] = []
+
+    if cache_enabled:
+        cached_papers = await cache.get_papers_with_entities()
+        # Get entities for papers we already have
+        papers_in_cache = [pid for pid in paper_ids if pid in cached_papers]
+        if papers_in_cache:
+            cached_entities, cached_mentions = await cache.get_entities_for_papers(
+                papers_in_cache
+            )
+            logger.info(
+                f"Found {len(cached_entities)} cached entities for "
+                f"{len(papers_in_cache)} papers"
+            )
+
+    # Identify papers that need extraction
+    new_papers = [p for p in papers if p["paper_id"] not in cached_papers]
+    logger.info(
+        f"Papers: {len(papers)} total, {len(papers) - len(new_papers)} cached, "
+        f"{len(new_papers)} need extraction"
     )
-    logger.info(f"Extracted {len(entities)} entities with {len(mentions)} mentions")
+
+    # Step 2: Extract entities from NEW papers only
+    new_entities: List[ExtractedEntity] = []
+    new_mentions: List[EntityMention] = []
+
+    if new_papers:
+        logger.info(f"Step 2/7: Extracting entities from {len(new_papers)} new papers...")
+        new_entities, new_mentions = await extract_entities_batch(
+            new_papers,
+            parsed_documents,
+            batch_size=entity_batch_size,
+            max_concurrent=max_concurrent,
+            llm_config=llm_config,
+        )
+        logger.info(
+            f"Extracted {len(new_entities)} entities with {len(new_mentions)} mentions"
+        )
+
+        # Save new entities to cache
+        if cache_enabled and new_entities:
+            await cache.save_entities(new_entities, new_mentions)
+    else:
+        logger.info("Step 2/7: Skipping extraction (all papers cached)")
+
+    # Merge cached and new entities
+    entities = _merge_entity_lists(cached_entities, new_entities)
+    mentions = cached_mentions + new_mentions
+    logger.info(f"Total: {len(entities)} entities, {len(mentions)} mentions")
 
     if not entities:
         logger.warning("No entities extracted, returning empty graph")
@@ -95,8 +214,8 @@ async def run_graphrag_pipeline(
             stats={"node_count": 0, "edge_count": 0},
         )
 
-    # Step 2: Link entities
-    logger.info("Step 2/6: Linking equivalent entities...")
+    # Step 3: Link entities
+    logger.info("Step 3/7: Linking equivalent entities...")
     id_mapping, linked_entities = await link_entities(
         entities, similarity_threshold=similarity_threshold
     )
@@ -106,8 +225,8 @@ async def run_graphrag_pipeline(
     # Build entity lookup
     entities_by_id = {e["entity_id"]: e for e in linked_entities}
 
-    # Step 3: Build knowledge graph
-    logger.info("Step 3/6: Building knowledge graph...")
+    # Step 4: Build knowledge graph
+    logger.info("Step 4/7: Building knowledge graph...")
     graph = build_knowledge_graph(linked_entities, linked_mentions, papers)
     graph_stats = compute_graph_statistics(graph)
     logger.info(
@@ -115,8 +234,8 @@ async def run_graphrag_pipeline(
         f"{graph_stats['edge_count']} edges"
     )
 
-    # Step 4: Detect communities
-    logger.info("Step 4/6: Detecting communities...")
+    # Step 5: Detect communities
+    logger.info("Step 5/7: Detecting communities...")
     entity_graph = get_entity_subgraph(graph)
 
     # Add paper_ids to entity nodes for community paper tracking
@@ -136,9 +255,9 @@ async def run_graphrag_pipeline(
         f"across {community_stats['levels']} levels"
     )
 
-    # Step 5: Generate community summaries
-    logger.info("Step 5/6: Generating community summaries...")
-    papers_by_id = {p["paper_id"]: p for p in papers}
+    # Step 6: Generate community summaries
+    logger.info("Step 6/7: Generating community summaries...")
+    papers_by_id = {p["paper_id"]: p for p in papers if p.get("paper_id") is not None}
 
     communities = await summarize_all_communities(
         communities,
@@ -149,8 +268,8 @@ async def run_graphrag_pipeline(
         llm_config=llm_config,
     )
 
-    # Step 6: Generate global summary
-    logger.info("Step 6/6: Generating global summary...")
+    # Step 7: Generate global summary
+    logger.info("Step 7/7: Generating global summary...")
     global_summary = await generate_global_summary(
         communities,
         entities_by_id,
@@ -162,11 +281,18 @@ async def run_graphrag_pipeline(
     # Export edges
     edges = export_graph_edges(graph)
 
+    # Save edges and communities to cache
+    if cache_enabled:
+        await cache.save_edges(edges)
+        await cache.save_communities(communities)
+
     # Compile statistics
     stats = {
         **graph_stats,
         **community_stats,
         "entity_types": graph_stats.get("entity_types", {}),
+        "cached_papers": len(papers) - len(new_papers),
+        "new_papers": len(new_papers),
     }
 
     logger.info("GraphRAG pipeline complete")
@@ -217,6 +343,7 @@ async def graphrag_agent(state: LitScribeState) -> Dict[str, Any]:
     research_question = state.get("research_question", "")
     llm_config = state.get("llm_config", {})
     batch_size = state.get("batch_size", 20)
+    cache_enabled = state.get("cache_enabled", True)
 
     try:
         knowledge_graph = await run_graphrag_pipeline(
@@ -226,6 +353,7 @@ async def graphrag_agent(state: LitScribeState) -> Dict[str, Any]:
             llm_config=llm_config,
             entity_batch_size=min(batch_size, 10),  # Smaller batches for entity extraction
             max_concurrent=5,
+            cache_enabled=cache_enabled,
         )
 
         # Log summary

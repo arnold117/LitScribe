@@ -6,7 +6,9 @@
 
 ENTITY_EXTRACTION_SYSTEM = """You are an expert at extracting structured entities from academic papers.
 Your task is to identify key entities that represent important concepts, methods, datasets, and metrics.
-Be precise and consistent in naming - use the most canonical/common name for each entity."""
+Be precise and consistent in naming - use the most canonical/common name for each entity.
+
+IMPORTANT: You MUST respond with ONLY valid JSON. No markdown, no explanations, no code blocks. Just pure JSON."""
 
 ENTITY_EXTRACTION_PROMPT = """Extract all significant entities from this academic paper.
 

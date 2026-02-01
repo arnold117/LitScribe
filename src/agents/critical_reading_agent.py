@@ -8,15 +8,20 @@ This agent is responsible for:
 5. Quality assessment - identifying strengths and limitations
 
 Supports PDF and parse caching with SQLite (Phase 6.5).
+Includes automatic retry with exponential backoff for LLM calls.
 """
 
+import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+T = TypeVar("T")
 
 from agents.errors import AgentError, ErrorType, LLMError, PDFNotFoundError, PDFParseError
 from agents.prompts import (
+    COMBINED_PAPER_ANALYSIS_PROMPT,
     KEY_FINDINGS_PROMPT,
     METHODOLOGY_ANALYSIS_PROMPT,
     QUALITY_ASSESSMENT_PROMPT,
@@ -30,8 +35,61 @@ from agents.tools import (
     parse_pdf,
 )
 from cache.cached_tools import CachedTools, get_cached_tools
+from cache.failed_papers import (
+    mark_resolved_by_paper_id,
+    record_failed_paper,
+)
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+MAX_RETRIES = 3
+BASE_DELAY = 1.0  # seconds
+MAX_DELAY = 10.0  # seconds
+
+
+async def retry_async(
+    func: Callable[..., T],
+    *args,
+    max_retries: int = MAX_RETRIES,
+    base_delay: float = BASE_DELAY,
+    max_delay: float = MAX_DELAY,
+    **kwargs,
+) -> T:
+    """Execute an async function with exponential backoff retry.
+
+    Args:
+        func: Async function to execute
+        *args: Positional arguments for func
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay between retries (seconds)
+        max_delay: Maximum delay between retries (seconds)
+        **kwargs: Keyword arguments for func
+
+    Returns:
+        Result of the function call
+
+    Raises:
+        Last exception if all retries fail
+    """
+    last_exception = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries:
+                delay = min(base_delay * (2 ** attempt), max_delay)
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries + 1} failed: {e}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"All {max_retries + 1} attempts failed: {e}")
+
+    raise last_exception
 
 
 async def acquire_pdf(
@@ -55,7 +113,12 @@ async def acquire_pdf(
     Returns:
         Local path to PDF file, or None if not available
     """
-    paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi", "unknown")
+    paper_id = (
+        paper.get("paper_id")
+        or paper.get("arxiv_id")
+        or paper.get("doi")
+        or "unknown"
+    )
 
     # Use cached tools if available
     if cached_tools and cached_tools.cache_enabled:
@@ -201,7 +264,7 @@ async def extract_key_findings(
         if isinstance(findings, list):
             return findings[:5]  # Max 5 findings
 
-    except (json.JSONDecodeError, LLMError) as e:
+    except Exception as e:
         logger.warning(f"Failed to extract findings for {title}: {e}")
 
     # Fallback: return abstract as single finding if parsing fails
@@ -252,7 +315,7 @@ async def analyze_methodology(
     try:
         response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=800)
         return response.strip()
-    except LLMError as e:
+    except Exception as e:
         logger.warning(f"Failed to analyze methodology for {title}: {e}")
         return "Methodology analysis not available"
 
@@ -313,9 +376,83 @@ async def assess_quality(
             "limitations": result.get("limitations", [])[:4],
         }
 
-    except (json.JSONDecodeError, LLMError) as e:
+    except Exception as e:
         logger.warning(f"Failed to assess quality for {title}: {e}")
         return {
+            "strengths": ["Unable to assess"],
+            "limitations": ["Unable to assess"],
+        }
+
+
+async def analyze_paper_combined(
+    paper: Dict[str, Any],
+    parsed_doc: Optional[Dict[str, Any]] = None,
+    model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Perform combined analysis using a single LLM call.
+
+    This is faster than 3 separate calls (findings, methodology, quality).
+
+    Args:
+        paper: Paper metadata with abstract
+        parsed_doc: Parsed PDF content (optional)
+        model: LLM model to use
+
+    Returns:
+        Dict with key_findings, methodology, strengths, limitations
+    """
+    title = paper.get("title", "Unknown")
+    authors = paper.get("authors", [])
+    if isinstance(authors, list):
+        authors = ", ".join(authors[:5])
+    year = paper.get("year", "N/A")
+    abstract = paper.get("abstract", "")
+
+    # Use parsed content if available, otherwise just abstract
+    full_text = ""
+    if parsed_doc:
+        full_text = parsed_doc.get("markdown", "")[:8000]
+    if not full_text:
+        full_text = abstract
+
+    prompt = COMBINED_PAPER_ANALYSIS_PROMPT.format(
+        title=title,
+        authors=authors,
+        year=year,
+        abstract=abstract,
+        full_text=full_text,
+    )
+
+    try:
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2000)
+
+        # Parse JSON response
+        response = response.strip()
+        if response.startswith("```"):
+            parts = response.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:].strip()
+                if part.startswith("{"):
+                    response = part
+                    break
+
+        result = json.loads(response)
+
+        return {
+            "key_findings": result.get("key_findings", [])[:5],
+            "methodology": result.get("methodology", "Methodology not analyzed"),
+            "strengths": result.get("strengths", [])[:4],
+            "limitations": result.get("limitations", [])[:4],
+        }
+
+    except Exception as e:
+        logger.warning(f"Combined analysis failed for {title}: {e}")
+        # Return defaults
+        return {
+            "key_findings": [f"Study abstract: {abstract[:500]}..."] if abstract else ["Unable to extract findings"],
+            "methodology": "Methodology analysis not available",
             "strengths": ["Unable to assess"],
             "limitations": ["Unable to assess"],
         }
@@ -325,20 +462,28 @@ async def analyze_single_paper(
     paper: Dict[str, Any],
     model: Optional[str] = None,
     cached_tools: Optional[CachedTools] = None,
+    use_combined_prompt: bool = True,
 ) -> PaperSummary:
     """Perform complete critical reading analysis on a single paper.
 
     Supports caching for PDF acquisition and parsing.
+    Uses combined prompt by default for faster analysis (1 LLM call vs 3).
 
     Args:
         paper: Paper metadata dict
         model: LLM model to use
         cached_tools: CachedTools instance for caching (optional)
+        use_combined_prompt: Use single combined LLM call (faster)
 
     Returns:
         Complete PaperSummary
     """
-    paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi", "unknown")
+    paper_id = (
+        paper.get("paper_id")
+        or paper.get("arxiv_id")
+        or paper.get("doi")
+        or "unknown"
+    )
     title = paper.get("title", "Unknown Title")
 
     logger.info(f"Analyzing paper: {title}")
@@ -358,14 +503,18 @@ async def analyze_single_paper(
         except PDFParseError as e:
             logger.warning(f"PDF parsing failed for {title}: {e}")
 
-    # Step 3: Extract key findings
-    key_findings = await extract_key_findings(paper, parsed_doc, model)
-
-    # Step 4: Analyze methodology
-    methodology = await analyze_methodology(paper, parsed_doc, model)
-
-    # Step 5: Assess quality
-    quality = await assess_quality(paper, key_findings, parsed_doc, model)
+    # Step 3: Analyze paper (combined or separate)
+    if use_combined_prompt:
+        # Single LLM call for all analysis
+        analysis = await analyze_paper_combined(paper, parsed_doc, model)
+        key_findings = analysis["key_findings"]
+        methodology = analysis["methodology"]
+        quality = {"strengths": analysis["strengths"], "limitations": analysis["limitations"]}
+    else:
+        # Original 3 separate calls
+        key_findings = await extract_key_findings(paper, parsed_doc, model)
+        methodology = await analyze_methodology(paper, parsed_doc, model)
+        quality = await assess_quality(paper, key_findings, parsed_doc, model)
 
     # Build PaperSummary
     authors = paper.get("authors", [])
@@ -397,6 +546,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     all papers selected in the discovery phase.
 
     Supports PDF and parse caching when cache_enabled=True.
+    Uses parallel processing for faster analysis.
 
     Args:
         state: Current workflow state
@@ -409,6 +559,8 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
     cache_enabled = state.get("cache_enabled", True)
+    research_question = state.get("research_question", "")
+    max_concurrent = state.get("max_concurrent", 3)  # Limit concurrent LLM calls
 
     if not papers_to_analyze:
         error_msg = "No papers to analyze"
@@ -422,60 +574,140 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
         }
 
     logger.info(f"Critical Reading Agent starting: {len(papers_to_analyze)} papers")
-    logger.info(f"Cache enabled: {cache_enabled}")
+    logger.info(f"Cache enabled: {cache_enabled}, Max concurrent: {max_concurrent}")
 
     # Initialize cached tools if caching is enabled
     cached_tools = get_cached_tools(cache_enabled=cache_enabled) if cache_enabled else None
 
-    analyzed_papers: List[PaperSummary] = []
-    parsed_documents: Dict[str, Dict[str, Any]] = {}
+    # Use semaphore to limit concurrent analysis
+    semaphore = asyncio.Semaphore(max_concurrent)
 
-    for i, paper in enumerate(papers_to_analyze):
-        paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi", f"paper_{i}")
-        title = paper.get("title", "Unknown")
+    async def analyze_with_fallback(i: int, paper: Dict[str, Any]) -> PaperSummary:
+        """Analyze a single paper with error handling and fallback."""
+        async with semaphore:
+            paper_id = (
+                paper.get("paper_id")
+                or paper.get("arxiv_id")
+                or paper.get("doi")
+                or f"paper_{i}"
+            )
+            title = paper.get("title", "Unknown")
 
+            try:
+                # Analyze the paper (with caching if enabled, with retry)
+                summary = await retry_async(
+                    analyze_single_paper,
+                    paper,
+                    model=model,
+                    cached_tools=cached_tools,
+                    use_combined_prompt=True,  # Use optimized combined prompt
+                    max_retries=MAX_RETRIES,
+                )
+
+                # Mark any previous failures as resolved
+                if cache_enabled:
+                    try:
+                        await mark_resolved_by_paper_id(paper_id, resolution="success")
+                    except Exception:
+                        pass
+
+                logger.info(f"Analyzed paper {i+1}/{len(papers_to_analyze)}: {title}")
+                return summary
+
+            except Exception as e:
+                error_msg = f"Failed to analyze paper '{title}': {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+
+                # Record failure to retry queue (non-blocking)
+                if cache_enabled:
+                    try:
+                        await record_failed_paper(
+                            paper_id=paper_id,
+                            title=title,
+                            error_message=str(e),
+                            paper_data=paper,
+                            research_question=research_question,
+                            max_retries=MAX_RETRIES,
+                        )
+                    except Exception as queue_err:
+                        logger.warning(f"Failed to record to retry queue: {queue_err}")
+
+                # Return minimal summary for failed papers
+                return _create_fallback_summary(i, paper, paper_id, title)
+
+    def _create_fallback_summary(
+        i: int, paper: Dict[str, Any], paper_id: str, title: str
+    ) -> PaperSummary:
+        """Create minimal summary for failed papers."""
         try:
-            # Analyze the paper (with caching if enabled)
-            summary = await analyze_single_paper(paper, model=model, cached_tools=cached_tools)
-            analyzed_papers.append(summary)
+            authors_raw = paper.get("authors")
+            if authors_raw is None:
+                authors = []
+            elif isinstance(authors_raw, str):
+                authors = [authors_raw]
+            else:
+                authors = list(authors_raw)[:10]
 
-            # Store parsed document reference (if parsing was done)
-            if summary["pdf_available"]:
-                parsed_documents[paper_id] = {
-                    "paper_id": paper_id,
-                    "title": title,
-                    "analyzed": True,
-                }
+            abstract_raw = paper.get("abstract")
+            abstract = str(abstract_raw)[:500] if abstract_raw else ""
 
-            logger.info(f"Analyzed paper {i+1}/{len(papers_to_analyze)}: {title}")
-
-        except Exception as e:
-            error_msg = f"Failed to analyze paper '{title}': {e}"
-            logger.error(error_msg)
-            errors.append(error_msg)
-
-            # Create minimal summary for failed papers
-            analyzed_papers.append(PaperSummary(
+            return PaperSummary(
                 paper_id=paper_id,
-                title=title,
-                authors=paper.get("authors", [])[:10],
-                year=paper.get("year", 0),
-                abstract=paper.get("abstract", "")[:500],
+                title=title or "Unknown",
+                authors=authors,
+                year=paper.get("year") or 0,
+                abstract=abstract,
                 key_findings=["Analysis failed - using abstract only"],
                 methodology="Not analyzed",
                 strengths=[],
                 limitations=["Full analysis not available"],
-                relevance_score=paper.get("relevance_score", 0.3),
-                citations=paper.get("citations", 0),
-                venue=paper.get("venue", ""),
+                relevance_score=paper.get("relevance_score") or 0.3,
+                citations=paper.get("citations") or 0,
+                venue=paper.get("venue") or "",
                 pdf_available=False,
-                source=paper.get("source", "unknown"),
-            ))
+                source=paper.get("source") or "unknown",
+            )
+        except Exception as inner_e:
+            logger.error(f"Even minimal summary failed for '{title}': {inner_e}")
+            return PaperSummary(
+                paper_id=paper_id or f"unknown_{i}",
+                title=str(title) if title else "Unknown",
+                authors=[],
+                year=0,
+                abstract="",
+                key_findings=["Analysis failed"],
+                methodology="Not analyzed",
+                strengths=[],
+                limitations=["Analysis not available"],
+                relevance_score=0.3,
+                citations=0,
+                venue="",
+                pdf_available=False,
+                source="unknown",
+            )
+
+    # Analyze all papers in parallel (with semaphore limiting concurrency)
+    logger.info(f"Starting parallel analysis of {len(papers_to_analyze)} papers...")
+    analyzed_papers = await asyncio.gather(
+        *[analyze_with_fallback(i, paper) for i, paper in enumerate(papers_to_analyze)],
+        return_exceptions=False,  # Exceptions handled inside analyze_with_fallback
+    )
+
+    # Build parsed_documents dict
+    parsed_documents: Dict[str, Dict[str, Any]] = {}
+    for summary in analyzed_papers:
+        if summary["pdf_available"]:
+            parsed_documents[summary["paper_id"]] = {
+                "paper_id": summary["paper_id"],
+                "title": summary["title"],
+                "analyzed": True,
+            }
 
     logger.info(f"Critical Reading complete: {len(analyzed_papers)} papers analyzed")
 
     return {
-        "analyzed_papers": analyzed_papers,
+        "analyzed_papers": list(analyzed_papers),
         "parsed_documents": parsed_documents,
         "errors": errors,
         "current_agent": "synthesis",  # Next stage

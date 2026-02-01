@@ -323,8 +323,16 @@ async def call_llm(
             max_tokens=max_tokens,
         )
 
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if content is None:
+            raise LLMError(
+                "LLM returned empty content",
+                context={"model": model, "prompt_length": len(prompt)}
+            )
+        return content
 
+    except LLMError:
+        raise
     except Exception as e:
         raise LLMError(
             f"LLM call failed: {e}",

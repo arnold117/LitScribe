@@ -20,6 +20,66 @@ from graphrag.prompts import (
 logger = logging.getLogger(__name__)
 
 
+def _clean_json_response(response: str) -> str:
+    """Clean LLM response to extract valid JSON.
+
+    Handles common issues like markdown code blocks, leading/trailing text.
+
+    Args:
+        response: Raw LLM response
+
+    Returns:
+        Cleaned JSON string, or empty string if no JSON found
+    """
+    if not response:
+        return ""
+
+    text = response.strip()
+
+    # Handle markdown code blocks: ```json ... ``` or ``` ... ```
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            # Skip empty parts
+            if not part:
+                continue
+            # Remove optional language identifier
+            if part.startswith("json"):
+                part = part[4:].strip()
+            # Check if it looks like JSON
+            if part.startswith("{") or part.startswith("["):
+                text = part
+                break
+
+    # Find JSON object boundaries
+    start_idx = -1
+    end_idx = -1
+
+    # Try to find JSON object
+    for i, char in enumerate(text):
+        if char == "{":
+            start_idx = i
+            break
+
+    if start_idx >= 0:
+        # Find matching closing brace
+        depth = 0
+        for i, char in enumerate(text[start_idx:], start_idx):
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = i + 1
+                    break
+
+    if start_idx >= 0 and end_idx > start_idx:
+        return text[start_idx:end_idx]
+
+    return text if text.startswith("{") else ""
+
+
 def generate_entity_id(name: str, entity_type: str) -> str:
     """Generate a unique entity ID from name and type.
 
@@ -82,7 +142,7 @@ async def extract_entities_from_paper(
     Returns:
         Tuple of (extracted entities, entity mentions)
     """
-    from agents.tools import call_llm
+    from agents.tools import call_llm_with_system
 
     # Build content section if we have parsed doc
     content_section = ""
@@ -99,23 +159,28 @@ async def extract_entities_from_paper(
         content_section=content_section,
     )
 
-    # Call LLM
+    # Call LLM with system prompt
     try:
-        response = await call_llm(
-            messages=[
-                {"role": "system", "content": ENTITY_EXTRACTION_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
+        response = await call_llm_with_system(
+            system_prompt=ENTITY_EXTRACTION_SYSTEM,
+            user_prompt=prompt,
             model=llm_config.get("model") if llm_config else None,
-            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=2000,
         )
 
-        # Parse response
-        result = json.loads(response)
-        raw_entities = result.get("entities", [])
+        # Clean and parse response
+        cleaned = _clean_json_response(response)
+        if not cleaned:
+            logger.warning(f"Empty response for entity extraction")
+            raw_entities = []
+        else:
+            result = json.loads(cleaned)
+            raw_entities = result.get("entities", [])
 
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse entity extraction response: {e}")
+        logger.debug(f"Raw response was: {response[:200] if response else 'None'}...")
         raw_entities = []
     except Exception as e:
         logger.error(f"Entity extraction failed for {paper.get('paper_id')}: {e}")

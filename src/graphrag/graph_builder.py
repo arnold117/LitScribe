@@ -43,19 +43,43 @@ def build_knowledge_graph(
     """
     G = nx.MultiDiGraph()
 
+    # Filter out papers with None paper_id
+    valid_papers = [p for p in papers if p.get("paper_id") is not None]
+    if len(valid_papers) < len(papers):
+        logger.warning(
+            f"Filtered out {len(papers) - len(valid_papers)} papers with None paper_id"
+        )
+
+    # Filter out entities with None entity_id
+    valid_entities = [e for e in entities if e.get("entity_id") is not None]
+    if len(valid_entities) < len(entities):
+        logger.warning(
+            f"Filtered out {len(entities) - len(valid_entities)} entities with None entity_id"
+        )
+
+    # Filter out mentions with None paper_id or entity_id
+    valid_mentions = [
+        m for m in mentions
+        if m.get("paper_id") is not None and m.get("entity_id") is not None
+    ]
+    if len(valid_mentions) < len(mentions):
+        logger.warning(
+            f"Filtered out {len(mentions) - len(valid_mentions)} mentions with None IDs"
+        )
+
     # Build entity lookup
-    entities_by_id = {e["entity_id"]: e for e in entities}
+    entities_by_id = {e["entity_id"]: e for e in valid_entities}
 
     # Build paper lookup
-    papers_by_id = {p["paper_id"]: p for p in papers}
+    papers_by_id = {p["paper_id"]: p for p in valid_papers}
 
     # Build mentions lookup: paper_id -> list of entity_ids
     mentions_by_paper: Dict[str, List[str]] = defaultdict(list)
-    for mention in mentions:
+    for mention in valid_mentions:
         mentions_by_paper[mention["paper_id"]].append(mention["entity_id"])
 
     # Add paper nodes
-    for paper in papers:
+    for paper in valid_papers:
         paper_id = paper["paper_id"]
         G.add_node(
             paper_id,
@@ -68,7 +92,7 @@ def build_knowledge_graph(
         )
 
     # Add entity nodes
-    for entity in entities:
+    for entity in valid_entities:
         entity_id = entity["entity_id"]
         G.add_node(
             entity_id,
@@ -150,12 +174,15 @@ def _add_citation_edges(
         G: Graph to add edges to
         papers: List of papers
     """
-    # Group papers by year
+    # Group papers by year (skip papers with None paper_id)
     by_year: Dict[int, List[str]] = defaultdict(list)
     for paper in papers:
+        paper_id = paper.get("paper_id")
+        if paper_id is None:
+            continue
         year = paper.get("year", 0)
         if year > 0:
-            by_year[year].append(paper["paper_id"])
+            by_year[year].append(paper_id)
 
     # For each paper, check if it likely cites older papers with shared entities
     paper_entities: Dict[str, Set[str]] = defaultdict(set)
@@ -230,12 +257,12 @@ def compute_graph_statistics(G: nx.MultiDiGraph) -> Dict[str, Any]:
     else:
         top_entities = []
 
-    # Get entity names for top entities
+    # Get entity names for top entities (convert centrality to Python float)
     top_entity_names = []
     for eid, centrality in top_entities:
         name = G.nodes[eid].get("name", eid)
         etype = G.nodes[eid].get("entity_type", "")
-        top_entity_names.append((name, etype, centrality))
+        top_entity_names.append((name, etype, float(centrality)))
 
     return {
         "node_count": G.number_of_nodes(),
@@ -245,7 +272,7 @@ def compute_graph_statistics(G: nx.MultiDiGraph) -> Dict[str, Any]:
         "entity_types": dict(entity_type_counts),
         "edge_types": dict(edge_type_counts),
         "top_entities": top_entity_names,
-        "density": nx.density(G) if G.number_of_nodes() > 1 else 0,
+        "density": float(nx.density(G)) if G.number_of_nodes() > 1 else 0.0,
     }
 
 
@@ -300,11 +327,15 @@ def export_graph_edges(G: nx.MultiDiGraph) -> List[GraphEdge]:
     edges = []
 
     for u, v, data in G.edges(data=True):
+        weight = data.get("weight", 1.0)
+        # Ensure weight is Python float, not numpy
+        if hasattr(weight, "item"):
+            weight = weight.item()
         edge = GraphEdge(
             source_id=u,
             target_id=v,
             edge_type=data.get("edge_type", "unknown"),
-            weight=data.get("weight", 1.0),
+            weight=float(weight),
             paper_ids=data.get("paper_ids", []),
         )
         edges.append(edge)

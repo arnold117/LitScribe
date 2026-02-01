@@ -163,7 +163,7 @@ async def summarize_community(
     Returns:
         Summary text
     """
-    from agents.tools import call_llm
+    from agents.tools import call_llm_with_system
 
     # Format inputs
     entities_list = _format_entities_for_prompt(
@@ -185,11 +185,9 @@ async def summarize_community(
     )
 
     try:
-        response = await call_llm(
-            messages=[
-                {"role": "system", "content": COMMUNITY_SUMMARY_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
+        response = await call_llm_with_system(
+            system_prompt=COMMUNITY_SUMMARY_SYSTEM,
+            user_prompt=prompt,
             model=llm_config.get("model") if llm_config else None,
         )
         return response.strip()
@@ -286,7 +284,7 @@ async def generate_global_summary(
     Returns:
         Global summary text
     """
-    from agents.tools import call_llm
+    from agents.tools import call_llm_with_system
 
     # Get root communities (or all if hierarchy is flat)
     root_communities = [c for c in communities if c["parent_id"] is None]
@@ -333,11 +331,9 @@ async def generate_global_summary(
     )
 
     try:
-        response = await call_llm(
-            messages=[
-                {"role": "system", "content": GLOBAL_SUMMARY_SYSTEM},
-                {"role": "user", "content": prompt},
-            ],
+        response = await call_llm_with_system(
+            system_prompt=GLOBAL_SUMMARY_SYSTEM,
+            user_prompt=prompt,
             model=llm_config.get("model") if llm_config else None,
         )
         return response.strip()

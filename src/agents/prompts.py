@@ -127,6 +127,51 @@ Output as JSON:
 
 
 # =============================================================================
+# Combined Critical Reading Prompt (Optimized for Speed)
+# =============================================================================
+
+COMBINED_PAPER_ANALYSIS_PROMPT = """You are an expert academic researcher performing critical reading of a research paper.
+
+Paper Title: {title}
+Authors: {authors}
+Year: {year}
+
+Abstract:
+{abstract}
+
+Full Text (or available sections):
+{full_text}
+
+Perform a complete critical analysis of this paper. Provide:
+
+1. KEY FINDINGS (3-5 findings):
+   - Specific and measurable where possible
+   - Supported by evidence from the paper
+   - Written as complete, self-contained sentences
+
+2. METHODOLOGY SUMMARY (2-3 paragraphs):
+   - Study design and approach
+   - Data collection methods and sources
+   - Analysis techniques and key parameters
+
+3. QUALITY ASSESSMENT:
+   - STRENGTHS (2-4 points): What the paper does well, contributions, methodological strengths
+   - LIMITATIONS (2-4 points): Weaknesses, gaps, biases, threats to validity
+
+Output as JSON:
+{{
+  "key_findings": [
+    "Finding 1: ...",
+    "Finding 2: ...",
+    "Finding 3: ..."
+  ],
+  "methodology": "Study design paragraph...\\n\\nData collection paragraph...\\n\\nAnalysis techniques paragraph...",
+  "strengths": ["strength1", "strength2", ...],
+  "limitations": ["limitation1", "limitation2", ...]
+}}"""
+
+
+# =============================================================================
 # Synthesis Agent Prompts
 # =============================================================================
 

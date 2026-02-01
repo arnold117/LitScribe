@@ -290,9 +290,9 @@ def compute_community_stats(
         "communities_per_level": {
             level: len(get_communities_at_level(communities, level)) for level in levels
         },
-        "avg_size": np.mean(sizes) if sizes else 0,
-        "min_size": min(sizes) if sizes else 0,
-        "max_size": max(sizes) if sizes else 0,
+        "avg_size": float(np.mean(sizes)) if sizes else 0.0,  # Convert to Python float
+        "min_size": int(min(sizes)) if sizes else 0,
+        "max_size": int(max(sizes)) if sizes else 0,
         "root_communities": len(get_root_communities(communities)),
         "leaf_communities": len(get_leaf_communities(communities)),
     }
