@@ -13,6 +13,8 @@ from typing import List, Optional
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from cli.output import OutputManager, get_output
+
 
 def setup_logging(
     log_dir: Optional[Path] = None,
@@ -82,58 +84,82 @@ def setup_logging(
     return log_file
 
 
-def print_header(title: str) -> None:
-    """Print a formatted header."""
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print(f"{'='*60}\n")
+def print_header(title: str, out: Optional[OutputManager] = None) -> None:
+    """Print a formatted header.
+
+    Args:
+        title: Header title
+        out: Optional OutputManager (uses print only if None)
+    """
+    if out:
+        out.header(title)
+    else:
+        print(f"\n{'='*60}")
+        print(f"  {title}")
+        print(f"{'='*60}\n")
 
 
-def print_paper(paper: dict, index: int, verbose: bool = False) -> None:
-    """Print a paper summary."""
-    title = paper.get("title", "Unknown")
-    if len(title) > 70:
-        title = title[:67] + "..."
+def print_paper(
+    paper: dict,
+    index: int,
+    verbose: bool = False,
+    out: Optional[OutputManager] = None,
+) -> None:
+    """Print a paper summary.
 
-    print(f"{index}. {title}")
+    Args:
+        paper: Paper dictionary
+        index: Paper index
+        verbose: Show detailed info
+        out: Optional OutputManager (uses print only if None)
+    """
+    if out:
+        out.paper(paper, index, verbose)
+    else:
+        title = paper.get("title", "Unknown")
+        if len(title) > 70:
+            title = title[:67] + "..."
 
-    authors = paper.get("authors", [])
-    if authors:
-        author_str = ", ".join(authors[:3])
-        if len(authors) > 3:
-            author_str += " ..."
-        print(f"   Authors: {author_str}")
+        print(f"{index}. {title}")
 
-    year = paper.get("year", "N/A")
-    citations = paper.get("citations", 0)
-    sources = list(paper.get("sources", {}).keys())
-    print(f"   Year: {year} | Citations: {citations} | Sources: {sources}")
+        authors = paper.get("authors", [])
+        if authors:
+            author_str = ", ".join(authors[:3])
+            if len(authors) > 3:
+                author_str += " ..."
+            print(f"   Authors: {author_str}")
 
-    if verbose:
-        if paper.get("doi"):
-            print(f"   DOI: {paper['doi']}")
-        if paper.get("arxiv_id"):
-            print(f"   arXiv: {paper['arxiv_id']}")
-        if paper.get("pmid"):
-            print(f"   PMID: {paper['pmid']}")
-        if paper.get("abstract"):
-            abstract = paper["abstract"][:200] + "..." if len(paper.get("abstract", "")) > 200 else paper.get("abstract", "")
-            print(f"   Abstract: {abstract}")
+        year = paper.get("year", "N/A")
+        citations = paper.get("citations", 0)
+        sources = list(paper.get("sources", {}).keys())
+        print(f"   Year: {year} | Citations: {citations} | Sources: {sources}")
 
-    print()
+        if verbose:
+            if paper.get("doi"):
+                print(f"   DOI: {paper['doi']}")
+            if paper.get("arxiv_id"):
+                print(f"   arXiv: {paper['arxiv_id']}")
+            if paper.get("pmid"):
+                print(f"   PMID: {paper['pmid']}")
+            if paper.get("abstract"):
+                abstract = paper["abstract"][:200] + "..." if len(paper.get("abstract", "")) > 200 else paper.get("abstract", "")
+                print(f"   Abstract: {abstract}")
+
+        print()
 
 
 async def cmd_search(args) -> int:
     """Execute search command."""
     from aggregators.unified_search import search_all_sources
 
+    out = get_output("litscribe.search")
     sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar"]
 
-    print_header(f"Searching: '{args.query}'")
-    print(f"Sources: {sources}")
-    print(f"Max results per source: {args.limit}")
-    print(f"Sort by: {args.sort}")
-    print()
+    out.header(f"Searching: '{args.query}'")
+    out.stat("Sources", sources)
+    out.stat("Max results per source", args.limit)
+    out.stat("Sort by", args.sort)
+    out.blank()
 
     try:
         result = await search_all_sources(
@@ -144,31 +170,31 @@ async def cmd_search(args) -> int:
             sort_by=args.sort,
         )
 
-        print(f"Results per source: {result['source_counts']}")
-        print(f"Total before dedup: {result['total_before_dedup']}")
-        print(f"Total after dedup: {result['total_after_dedup']}")
-        print()
+        out.stat("Results per source", result["source_counts"])
+        out.stat("Total before dedup", result["total_before_dedup"])
+        out.stat("Total after dedup", result["total_after_dedup"])
+        out.blank()
 
         papers = result["papers"]
         if not papers:
-            print("No papers found.")
+            out.info("No papers found.")
             return 0
 
-        print_header("Results")
+        out.header("Results")
         for i, paper in enumerate(papers[: args.limit], 1):
-            print_paper(paper, i, verbose=args.verbose)
+            out.paper(paper, i, verbose=args.verbose)
 
         # Save to file if requested
         if args.output:
             output_path = Path(args.output)
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
-            print(f"\nResults saved to: {output_path}")
+            out.success(f"Results saved to: {output_path}")
 
         return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        out.error(f"Error: {e}")
         return 1
 
 
@@ -176,31 +202,32 @@ async def cmd_parse(args) -> int:
     """Execute parse command."""
     from mcp_servers.pdf_parser_server import parse_pdf
 
+    out = get_output("litscribe.parse")
     pdf_path = Path(args.pdf_path)
     if not pdf_path.exists():
-        print(f"Error: File not found: {pdf_path}")
+        out.error(f"File not found: {pdf_path}")
         return 1
 
-    print_header(f"Parsing: {pdf_path.name}")
+    out.header(f"Parsing: {pdf_path.name}")
 
     try:
         result = await parse_pdf(str(pdf_path))
 
         if "error" in result:
-            print(f"Error: {result['error']}")
+            out.error(result["error"])
             return 1
 
-        print(f"Title: {result.get('title', 'Unknown')}")
-        print(f"Pages: {result.get('pages', 'N/A')}")
-        print(f"Sections: {len(result.get('sections', []))}")
-        print(f"Tables: {len(result.get('tables', []))}")
-        print(f"References: {len(result.get('references', []))}")
+        out.stat("Title", result.get("title", "Unknown"))
+        out.stat("Pages", result.get("pages", "N/A"))
+        out.stat("Sections", len(result.get("sections", [])))
+        out.stat("Tables", len(result.get("tables", [])))
+        out.stat("References", len(result.get("references", [])))
 
         # Show sections
         if args.verbose and result.get("sections"):
-            print("\nSections:")
+            out.subheader("Sections")
             for sec in result["sections"][:10]:
-                print(f"  - {sec.get('title', 'Untitled')} (p.{sec.get('start_page', '?')})")
+                out.bullet(f"{sec.get('title', 'Untitled')} (p.{sec.get('start_page', '?')})")
 
         # Save markdown output
         if args.output:
@@ -208,20 +235,17 @@ async def cmd_parse(args) -> int:
             content = result.get("markdown", "")
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            print(f"\nMarkdown saved to: {output_path}")
+            out.success(f"Markdown saved to: {output_path}")
         else:
             # Print first 500 chars of markdown
             markdown = result.get("markdown", "")
             if markdown:
-                print("\n--- Preview (first 500 chars) ---")
-                print(markdown[:500])
-                if len(markdown) > 500:
-                    print("...")
+                out.preview("Preview", markdown, max_chars=500)
 
         return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        out.error(f"Error: {e}")
         return 1
 
 
@@ -229,57 +253,60 @@ async def cmd_paper(args) -> int:
     """Get detailed information about a specific paper."""
     from mcp_servers.semantic_scholar_server import get_paper
 
-    print_header(f"Fetching: {args.paper_id}")
+    out = get_output("litscribe.paper")
+    out.header(f"Fetching: {args.paper_id}")
 
     try:
         result = await get_paper(args.paper_id)
 
         if "error" in result:
-            print(f"Error: {result['error']}")
+            out.error(result["error"])
             return 1
 
-        print(f"Title: {result.get('title', 'Unknown')}")
-        print(f"Authors: {', '.join(result.get('authors', [])[:5])}")
-        print(f"Year: {result.get('year', 'N/A')}")
-        print(f"Venue: {result.get('venue', 'N/A')}")
-        print(f"Citations: {result.get('citation_count', 0)}")
-        print(f"References: {result.get('reference_count', 0)}")
+        out.stat("Title", result.get("title", "Unknown"))
+        out.stat("Authors", ", ".join(result.get("authors", [])[:5]))
+        out.stat("Year", result.get("year", "N/A"))
+        out.stat("Venue", result.get("venue", "N/A"))
+        out.stat("Citations", result.get("citation_count", 0))
+        out.stat("References", result.get("reference_count", 0))
 
         if result.get("doi"):
-            print(f"DOI: {result['doi']}")
+            out.stat("DOI", result["doi"])
         if result.get("arxiv_id"):
-            print(f"arXiv: {result['arxiv_id']}")
+            out.stat("arXiv", result["arxiv_id"])
         if result.get("pdf_url"):
-            print(f"PDF: {result['pdf_url']}")
+            out.stat("PDF", result["pdf_url"])
 
         if result.get("tldr"):
-            print(f"\nTL;DR: {result['tldr']}")
+            out.subheader("TL;DR")
+            out.info(f"   {result['tldr']}")
 
         if args.verbose:
             if result.get("abstract"):
-                print(f"\nAbstract:\n{result['abstract']}")
+                out.subheader("Abstract")
+                out.info(result["abstract"])
 
             if result.get("top_citations"):
-                print(f"\nTop Citations ({len(result['top_citations'])}):")
+                out.subheader(f"Top Citations ({len(result['top_citations'])})")
                 for c in result["top_citations"][:5]:
-                    print(f"  - {c.get('title', 'Untitled')[:60]}...")
+                    out.bullet(f"{c.get('title', 'Untitled')[:60]}...")
 
             if result.get("top_references"):
-                print(f"\nTop References ({len(result['top_references'])}):")
+                out.subheader(f"Top References ({len(result['top_references'])})")
                 for r in result["top_references"][:5]:
-                    print(f"  - {r.get('title', 'Untitled')[:60]}...")
+                    out.bullet(f"{r.get('title', 'Untitled')[:60]}...")
 
         # Save to file
         if args.output:
             output_path = Path(args.output)
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
-            print(f"\nSaved to: {output_path}")
+            out.success(f"Saved to: {output_path}")
 
         return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        out.error(f"Error: {e}")
         return 1
 
 
@@ -287,29 +314,30 @@ async def cmd_citations(args) -> int:
     """Get citations for a paper."""
     from mcp_servers.semantic_scholar_server import get_paper_citations
 
-    print_header(f"Citations for: {args.paper_id}")
+    out = get_output("litscribe.citations")
+    out.header(f"Citations for: {args.paper_id}")
 
     try:
         result = await get_paper_citations(args.paper_id, limit=args.limit)
 
         if "error" in result:
-            print(f"Error: {result['error']}")
+            out.error(result["error"])
             return 1
 
-        print(f"Total citations: {result.get('total', 0)}")
-        print(f"Showing: {result.get('count', 0)}")
-        print()
+        out.stat("Total citations", result.get("total", 0))
+        out.stat("Showing", result.get("count", 0))
+        out.blank()
 
         for i, paper in enumerate(result.get("citations", []), 1):
             title = paper.get("title", "Unknown")[:60]
             year = paper.get("year", "N/A")
             cites = paper.get("citation_count", 0)
-            print(f"{i}. [{year}] {title}... ({cites} cites)")
+            out.info(f"{i}. [{year}] {title}... ({cites} cites)")
 
         return 0
 
     except Exception as e:
-        print(f"Error: {e}")
+        out.error(f"Error: {e}")
         return 1
 
 
@@ -320,6 +348,9 @@ async def cmd_review(args) -> int:
 
     # Setup logging (to console and file)
     log_file = setup_logging(verbose=args.verbose)
+
+    # Create OutputManager for unified output
+    out = get_output("litscribe.review")
 
     # Suppress Pydantic serialization warnings from LiteLLM
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
@@ -346,24 +377,24 @@ async def cmd_review(args) -> int:
         safe_name = safe_name.strip().replace(" ", "_")
         output_path = output_dir / f"review_{safe_name}_{timestamp}"
 
-    print_header("LitScribe Literature Review")
-    print(f"Research Question: {research_question}")
-    print(f"Max Papers: {max_papers}")
-    print(f"Sources: {sources}")
-    print(f"Review Type: {review_type}")
-    print(f"GraphRAG: {'enabled' if graphrag_enabled else 'disabled'}")
-    print(f"Output: {output_path}")
-    print(f"Log File: {log_file}")
-    print()
-    print("Starting multi-agent workflow...")
-    print("  1. Discovery Agent: Searching and selecting papers")
-    print("  2. Critical Reading Agent: Analyzing papers")
+    out.header("LitScribe Literature Review")
+    out.stat("Research Question", research_question)
+    out.stat("Max Papers", max_papers)
+    out.stat("Sources", sources)
+    out.stat("Review Type", review_type)
+    out.stat("GraphRAG", "enabled" if graphrag_enabled else "disabled")
+    out.stat("Output", output_path)
+    out.stat("Log File", log_file)
+    out.blank()
+    out.info("Starting multi-agent workflow...")
+    out.bullet("Discovery Agent: Searching and selecting papers")
+    out.bullet("Critical Reading Agent: Analyzing papers")
     if graphrag_enabled:
-        print("  3. GraphRAG Agent: Building knowledge graph")
-        print("  4. Synthesis Agent: Generating review")
+        out.bullet("GraphRAG Agent: Building knowledge graph")
+        out.bullet("Synthesis Agent: Generating review")
     else:
-        print("  3. Synthesis Agent: Generating review")
-    print()
+        out.bullet("Synthesis Agent: Generating review")
+    out.blank()
 
     try:
         # Run the multi-agent workflow
@@ -380,51 +411,54 @@ async def cmd_review(args) -> int:
         # Check for errors
         errors = final_state.get("errors", [])
         if errors:
-            print(f"\n⚠ Warnings/Errors during processing:")
+            out.subheader("Warnings/Errors during processing", "⚠")
             for err in errors[-5:]:
-                print(f"  - {err}")
+                out.bullet(str(err))
 
         # Display results
         search_results = final_state.get("search_results")
         if search_results:
-            print(f"\n📚 Papers Found: {search_results.get('total_found', 0)}")
-            print(f"   Expanded Queries: {len(search_results.get('expanded_queries', []))}")
-            print(f"   Source Distribution: {search_results.get('source_counts', {})}")
+            out.subheader("Papers Found", "📚")
+            out.stat("Total Found", search_results.get("total_found", 0))
+            out.stat("Expanded Queries", len(search_results.get("expanded_queries", [])))
+            out.stat("Source Distribution", search_results.get("source_counts", {}))
 
         analyzed = final_state.get("analyzed_papers", [])
-        print(f"\n📖 Papers Analyzed: {len(analyzed)}")
+        out.subheader("Papers Analyzed", "📖")
+        out.stat("Count", len(analyzed))
 
         # Display GraphRAG results (Phase 7.5)
         knowledge_graph = final_state.get("knowledge_graph")
         if knowledge_graph:
             stats = knowledge_graph.get("stats", {})
-            print(f"\n🕸 Knowledge Graph:")
-            print(f"   Entities: {stats.get('entity_count', 0)}")
-            print(f"   Communities: {stats.get('total_communities', 0)}")
+            out.subheader("Knowledge Graph", "🕸")
+            out.stat("Entities", stats.get("entity_count", 0))
+            out.stat("Communities", stats.get("total_communities", 0))
             if stats.get("entity_types"):
-                print(f"   Entity Types: {stats['entity_types']}")
+                out.stat("Entity Types", stats["entity_types"])
 
         synthesis = final_state.get("synthesis")
         if synthesis:
-            print(f"\n✨ Review Generated:")
-            print(f"   Themes: {len(synthesis.get('themes', []))}")
-            print(f"   Research Gaps: {len(synthesis.get('gaps', []))}")
-            print(f"   Word Count: {synthesis.get('word_count', 0)}")
-            print(f"   Papers Cited: {synthesis.get('papers_cited', 0)}")
+            out.subheader("Review Generated", "✨")
+            out.stat("Themes", len(synthesis.get("themes", [])))
+            out.stat("Research Gaps", len(synthesis.get("gaps", [])))
+            out.stat("Word Count", synthesis.get("word_count", 0))
+            out.stat("Papers Cited", synthesis.get("papers_cited", 0))
 
             # Show themes
             if synthesis.get("themes"):
-                print("\n📊 Identified Themes:")
+                out.subheader("Identified Themes", "📊")
                 for i, theme in enumerate(synthesis["themes"], 1):
-                    print(f"   {i}. {theme.get('theme', 'Unknown')}")
-                    if args.verbose:
-                        print(f"      {theme.get('description', '')[:100]}...")
+                    theme_name = theme.get("theme", "Unknown")
+                    out.stat(f"{i}", theme_name)
+                    if args.verbose and theme.get("description"):
+                        out.bullet(theme["description"][:100] + "...")
 
             # Show gaps
             if synthesis.get("gaps"):
-                print("\n🔍 Research Gaps:")
+                out.subheader("Research Gaps", "🔍")
                 for gap in synthesis["gaps"][:3]:
-                    print(f"   - {gap[:80]}...")
+                    out.bullet(gap[:80] + "..." if len(gap) > 80 else gap)
 
             # Always save output
             review_text = synthesis.get("review_text", "")
@@ -437,7 +471,7 @@ async def cmd_review(args) -> int:
                 f.write("\n\n## References\n\n")
                 for cit in synthesis.get("citations_formatted", []):
                     f.write(f"- {cit}\n")
-            print(f"\n📄 Review saved to: {review_file}")
+            out.success(f"Review saved to: {review_file}", "📄")
 
             # Save full state as JSON
             json_file = output_path.with_suffix(".json")
@@ -452,24 +486,25 @@ async def cmd_review(args) -> int:
                     "errors": errors,
                 }
                 json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)
-            print(f"📊 Full data saved to: {json_file}")
+            out.success(f"Full data saved to: {json_file}", "📊")
 
             # Show preview
-            print("\n" + "="*60)
-            print("REVIEW PREVIEW (first 500 chars)")
-            print("="*60)
-            print(review_text[:500])
+            out.preview(
+                "REVIEW PREVIEW",
+                review_text,
+                max_chars=500,
+            )
             if len(review_text) > 500:
-                print(f"\n... [full review in {review_file}]")
+                out.info(f"[full review in {review_file}]")
 
         else:
-            print("\n❌ No synthesis generated")
+            out.error("No synthesis generated")
 
-        print_header("Review Complete")
+        out.header("Review Complete")
         return 0
 
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        out.error(f"Error: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
@@ -480,14 +515,15 @@ async def cmd_demo(args) -> int:
     """Run end-to-end demo pipeline."""
     from aggregators.unified_search import search_all_sources
 
+    out = get_output("litscribe.demo")
     query = args.query or "large language model reasoning"
 
-    print_header("LitScribe Demo Pipeline")
-    print(f"Query: '{query}'")
-    print()
+    out.header("LitScribe Demo Pipeline")
+    out.stat("Query", query)
+    out.blank()
 
     # Step 1: Multi-source search
-    print("Step 1: Searching multiple sources...")
+    out.info("Step 1: Searching multiple sources...")
     try:
         result = await search_all_sources(
             query=query,
@@ -497,26 +533,26 @@ async def cmd_demo(args) -> int:
             sort_by="citations",
         )
 
-        print(f"  Found {result['total_after_dedup']} unique papers")
-        print(f"  Sources: {result['source_counts']}")
+        out.stat("Found", f"{result['total_after_dedup']} unique papers")
+        out.stat("Sources", result["source_counts"])
 
         papers = result["papers"]
         if not papers:
-            print("  No papers found. Demo cannot continue.")
+            out.warning("No papers found. Demo cannot continue.")
             return 1
 
-        print("\n  Top 3 papers:")
+        out.info("\n  Top 3 papers:")
         for i, paper in enumerate(papers[:3], 1):
             title = paper.get("title", "Unknown")[:50]
             cites = paper.get("citations", 0)
-            print(f"    {i}. {title}... ({cites} cites)")
+            out.stat(f"  {i}", f"{title}... ({cites} cites)")
 
     except Exception as e:
-        print(f"  Error in search: {e}")
+        out.error(f"Error in search: {e}")
         return 1
 
     # Step 2: Get detailed info for top paper
-    print("\nStep 2: Fetching detailed metadata...")
+    out.info("\nStep 2: Fetching detailed metadata...")
     top_paper = papers[0]
     paper_id = None
 
@@ -534,36 +570,36 @@ async def cmd_demo(args) -> int:
 
             detail = await get_paper(paper_id)
             if "error" not in detail:
-                print(f"  Title: {detail.get('title', 'Unknown')[:60]}...")
-                print(f"  Citations: {detail.get('citation_count', 0)}")
-                print(f"  References: {detail.get('reference_count', 0)}")
+                out.stat("Title", f"{detail.get('title', 'Unknown')[:60]}...")
+                out.stat("Citations", detail.get("citation_count", 0))
+                out.stat("References", detail.get("reference_count", 0))
                 if detail.get("tldr"):
-                    print(f"  TL;DR: {detail['tldr'][:100]}...")
+                    out.stat("TL;DR", f"{detail['tldr'][:100]}...")
             else:
-                print(f"  Could not fetch details: {detail['error']}")
+                out.warning(f"Could not fetch details: {detail['error']}")
         except Exception as e:
-            print(f"  Error fetching details: {e}")
+            out.error(f"Error fetching details: {e}")
     else:
-        print("  No valid paper ID found for detailed fetch")
+        out.warning("No valid paper ID found for detailed fetch")
 
     # Step 3: Show deduplication in action
-    print("\nStep 3: Deduplication analysis...")
+    out.info("\nStep 3: Deduplication analysis...")
     multi_source = [p for p in papers if len(p.get("sources", {})) > 1]
     if multi_source:
-        print(f"  Found {len(multi_source)} papers from multiple sources (merged)")
+        out.success(f"Found {len(multi_source)} papers from multiple sources (merged)")
         for p in multi_source[:2]:
-            print(f"    - {p['title'][:40]}... (sources: {list(p['sources'].keys())})")
+            out.bullet(f"{p['title'][:40]}... (sources: {list(p['sources'].keys())})")
     else:
-        print("  No duplicate papers found across sources")
+        out.info("No duplicate papers found across sources")
 
     # Summary
-    print_header("Demo Complete")
-    print("LitScribe can:")
-    print("  - Search arXiv, PubMed, Semantic Scholar in parallel")
-    print("  - Deduplicate and merge papers from multiple sources")
-    print("  - Fetch detailed metadata including citations and TL;DR")
-    print("  - Parse PDFs to extract structured content")
-    print()
+    out.header("Demo Complete")
+    out.info("LitScribe can:")
+    out.bullet("Search arXiv, PubMed, Semantic Scholar in parallel")
+    out.bullet("Deduplicate and merge papers from multiple sources")
+    out.bullet("Fetch detailed metadata including citations and TL;DR")
+    out.bullet("Parse PDFs to extract structured content")
+    out.blank()
 
     return 0
 
@@ -825,60 +861,67 @@ async def cmd_cache(args) -> int:
     """Manage cache."""
     from cache import init_cache, get_cache_db
 
+    out = get_output("litscribe.cache")
+
     try:
         db = init_cache()
     except Exception as e:
-        print(f"Error initializing cache: {e}")
+        out.error(f"Error initializing cache: {e}")
         return 1
 
     if args.cache_command == "stats":
-        print_header("Cache Statistics")
+        out.header("Cache Statistics")
         stats = db.get_stats()
-        print(f"Database: {db.db_path}")
-        print(f"Size: {stats.get('db_size_mb', 0)} MB")
-        print()
-        print("Table counts:")
-        print(f"  Papers cached: {stats.get('papers_count', 0)}")
-        print(f"  PDFs tracked: {stats.get('pdfs_count', 0)}")
-        print(f"  Parsed docs: {stats.get('parsed_docs_count', 0)}")
-        print(f"  Search queries: {stats.get('search_cache_count', 0)}")
-        print(f"  LLM responses: {stats.get('llm_cache_count', 0)}")
-        print(f"  Command logs: {stats.get('command_logs_count', 0)}")
-        print()
-        print(f"Commands in last 7 days: {stats.get('commands_last_7_days', 0)}")
+        out.stat("Database", db.db_path)
+        out.stat("Size", f"{stats.get('db_size_mb', 0)} MB")
+        out.blank()
+        out.info("Table counts:")
+        out.stat("Papers cached", stats.get("papers_count", 0))
+        out.stat("PDFs tracked", stats.get("pdfs_count", 0))
+        out.stat("Parsed docs", stats.get("parsed_docs_count", 0))
+        out.stat("Search queries", stats.get("search_cache_count", 0))
+        out.stat("LLM responses", stats.get("llm_cache_count", 0))
+        out.stat("Command logs", stats.get("command_logs_count", 0))
+        # GraphRAG stats (Phase 7.5)
+        out.stat("Entities", stats.get("entities_count", 0))
+        out.stat("Entity mentions", stats.get("entity_mentions_count", 0))
+        out.stat("Graph edges", stats.get("graph_edges_count", 0))
+        out.stat("Communities", stats.get("communities_count", 0))
+        out.blank()
+        out.stat("Commands in last 7 days", stats.get("commands_last_7_days", 0))
 
     elif args.cache_command == "clear":
         if args.expired:
             count = db.clear_expired_cache()
-            print(f"Cleared {count} expired cache entries")
+            out.success(f"Cleared {count} expired cache entries")
         elif args.search:
             with db.get_connection() as conn:
                 cursor = conn.execute("DELETE FROM search_cache")
                 count = cursor.rowcount
                 conn.commit()
-            print(f"Cleared {count} search cache entries")
+            out.success(f"Cleared {count} search cache entries")
         elif args.all:
             confirm = input("This will delete all cached data. Are you sure? (y/N): ")
-            if confirm.lower() == 'y':
+            if confirm.lower() == "y":
                 with db.get_connection() as conn:
                     for table in ["search_cache", "llm_cache", "parsed_docs", "pdfs", "papers"]:
                         conn.execute(f"DELETE FROM {table}")
                     conn.commit()
-                print("All cache data cleared")
+                out.success("All cache data cleared")
             else:
-                print("Aborted")
+                out.info("Aborted")
         else:
-            print("Specify what to clear: --expired, --search, or --all")
+            out.warning("Specify what to clear: --expired, --search, or --all")
             return 1
 
     elif args.cache_command == "vacuum":
-        print("Optimizing database...")
+        out.info("Optimizing database...")
         db.vacuum()
         stats = db.get_stats()
-        print(f"Done. Database size: {stats.get('db_size_mb', 0)} MB")
+        out.success(f"Done. Database size: {stats.get('db_size_mb', 0)} MB")
 
     else:
-        print("No cache command specified. Use: stats, clear, or vacuum")
+        out.warning("No cache command specified. Use: stats, clear, or vacuum")
         return 1
 
     return 0
@@ -890,29 +933,30 @@ async def cmd_export(args) -> int:
     from exporters.citation_formatter import CitationStyle
     from exporters.pandoc_exporter import ExportConfig, ExportFormat, PandocExporter
 
+    out = get_output("litscribe.export")
     input_path = Path(args.input)
     if not input_path.exists():
-        print(f"Error: File not found: {input_path}")
+        out.error(f"File not found: {input_path}")
         return 1
 
     if input_path.suffix != ".json":
-        print(f"Error: Input file must be a JSON file (from 'litscribe review' output)")
+        out.error("Input file must be a JSON file (from 'litscribe review' output)")
         return 1
 
     # Load the review data
-    print_header("Export Literature Review")
-    print(f"Input: {input_path}")
+    out.header("Export Literature Review")
+    out.stat("Input", input_path)
 
     try:
         with open(input_path, "r", encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON file: {e}")
+        out.error(f"Invalid JSON file: {e}")
         return 1
 
     # Check for required data
     if not data.get("analyzed_papers"):
-        print("Error: No analyzed papers found in the review data")
+        out.error("No analyzed papers found in the review data")
         return 1
 
     # Map args to enums
@@ -943,11 +987,11 @@ async def cmd_export(args) -> int:
         ext = ".bib" if output_format == "bibtex" else f".{output_format}"
         output_path = input_path.with_suffix(ext)
 
-    print(f"Format: {output_format}")
-    print(f"Citation style: {args.style}")
-    print(f"Language: {language}")
-    print(f"Output: {output_path}")
-    print()
+    out.stat("Format", output_format)
+    out.stat("Citation style", args.style)
+    out.stat("Language", language)
+    out.stat("Output", output_path)
+    out.blank()
 
     try:
         if output_format == "bibtex":
@@ -955,8 +999,8 @@ async def cmd_export(args) -> int:
             papers = data.get("analyzed_papers", [])
             exporter = BibTeXExporter(papers)
             output_path = exporter.save(output_path)
-            print(f"BibTeX exported: {len(papers)} entries")
-            print(f"Cite keys: {', '.join(exporter.get_cite_keys()[:5])}...")
+            out.success(f"BibTeX exported: {len(papers)} entries")
+            out.stat("Cite keys", ", ".join(exporter.get_cite_keys()[:5]) + "...")
 
         else:
             # Pandoc export
@@ -981,20 +1025,20 @@ async def cmd_export(args) -> int:
 
             if output_format == "md" or not exporter._pandoc_available:
                 if not exporter._pandoc_available and output_format != "md":
-                    print(f"Warning: Pandoc not installed. Exporting as Markdown instead.")
+                    out.warning("Pandoc not installed. Exporting as Markdown instead.")
                     output_path = output_path.with_suffix(".md")
 
                 output_path = exporter.export_markdown(output_path)
-                print(f"Markdown exported successfully")
+                out.success("Markdown exported successfully")
             else:
                 output_path = exporter.export(output_path)
-                print(f"{output_format.upper()} exported successfully")
+                out.success(f"{output_format.upper()} exported successfully")
 
-        print(f"\nSaved to: {output_path}")
+        out.success(f"Saved to: {output_path}")
         return 0
 
     except Exception as e:
-        print(f"Error during export: {e}")
+        out.error(f"Error during export: {e}")
         return 1
 
 
