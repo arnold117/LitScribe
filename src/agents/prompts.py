@@ -288,6 +288,77 @@ Include all available information (authors, year, title, journal/venue, DOI if a
 
 
 # =============================================================================
+# GraphRAG-Enhanced Synthesis Prompts (Phase 7.5)
+# =============================================================================
+
+GRAPHRAG_LITERATURE_REVIEW_PROMPT = """You are an expert academic writer creating a literature review enhanced with knowledge graph insights.
+
+Review Type: {review_type}
+Research Question: {research_question}
+
+## Knowledge Graph Context
+The following entities, relationships, and research clusters were automatically extracted from the literature. Use these to identify cross-paper connections and ensure comprehensive coverage.
+
+{knowledge_graph_context}
+
+## Global Research Landscape
+{global_summary}
+
+## Papers ({num_papers} papers):
+{paper_summaries}
+
+## Research Clusters (Themes):
+{themes}
+
+## Research Gaps:
+{gaps}
+
+Write a comprehensive {review_type} literature review that:
+
+1. INTRODUCTION (1-2 paragraphs)
+   - Introduce the research question and its significance
+   - Preview the key research clusters/themes you will discuss
+   - Briefly mention the knowledge landscape (key methods, datasets, concepts)
+
+2. THEMATIC ANALYSIS (main body, organized by research clusters)
+   For each research cluster:
+   * Synthesize findings across papers (don't just summarize each paper)
+   * Highlight connections between methods, datasets, and concepts identified in the knowledge graph
+   * Compare and contrast different approaches
+   * Reference specific papers with [Author, Year] citations
+   * Note how entities (methods, datasets, metrics) flow between papers
+
+3. CROSS-CUTTING ANALYSIS (1-2 paragraphs)
+   - Discuss patterns and connections across research clusters
+   - Identify key methodological trends
+   - Note which entities (methods, datasets) appear across multiple clusters
+   - Address areas of agreement and disagreement
+
+4. CRITICAL DISCUSSION (1-2 paragraphs)
+   - Discuss methodological considerations
+   - Note limitations in the current body of research
+   - Identify understudied entities or relationships
+
+5. GAPS AND FUTURE DIRECTIONS (1 paragraph)
+   - Summarize key research gaps
+   - Suggest future research directions based on the knowledge graph analysis
+   - Identify promising entity combinations not yet explored
+
+6. CONCLUSION (1 paragraph)
+   - Summarize main insights from the knowledge graph perspective
+   - Restate significance of findings
+
+Requirements:
+- Use in-text citations in the format [Author, Year]
+- Write in formal academic prose
+- Target approximately {word_count} words
+- Leverage the knowledge graph context to make explicit connections between papers
+- Maintain objectivity while being analytical
+
+Write the review now:"""
+
+
+# =============================================================================
 # Supervisor Agent Prompts
 # =============================================================================
 

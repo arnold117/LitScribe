@@ -5,6 +5,11 @@ This agent is responsible for:
 2. Gap analysis - identifying research gaps and future directions
 3. Literature review generation - writing the final review narrative
 4. Citation formatting - generating proper citations
+
+Phase 7.5 Enhancement:
+- GraphRAG deep integration: uses knowledge graph communities as themes
+- Skips redundant LLM theme identification when GraphRAG data available
+- Leverages entity relationships for richer synthesis
 """
 
 import json
@@ -15,14 +20,171 @@ from agents.errors import LLMError
 from agents.prompts import (
     CITATION_FORMAT_PROMPT,
     GAP_ANALYSIS_PROMPT,
+    GRAPHRAG_LITERATURE_REVIEW_PROMPT,
     LITERATURE_REVIEW_PROMPT,
     THEME_IDENTIFICATION_PROMPT,
     format_summaries_for_prompt,
 )
-from agents.state import LitScribeState, PaperSummary, SynthesisOutput, ThemeCluster
+from agents.state import (
+    Community,
+    ExtractedEntity,
+    KnowledgeGraphData,
+    LitScribeState,
+    PaperSummary,
+    SynthesisOutput,
+    ThemeCluster,
+)
 from agents.tools import call_llm
 
 logger = logging.getLogger(__name__)
+
+
+def communities_to_themes(
+    communities: List[Community],
+    entities: Dict[str, ExtractedEntity],
+    analyzed_papers: List[PaperSummary],
+) -> List[ThemeCluster]:
+    """Convert GraphRAG communities to ThemeCluster format.
+
+    This enables deep integration: GraphRAG communities become themes directly,
+    skipping redundant LLM theme identification.
+
+    Args:
+        communities: List of detected communities from GraphRAG
+        entities: Entity dictionary for looking up entity names
+        analyzed_papers: List of analyzed papers for extracting key points
+
+    Returns:
+        List of ThemeCluster objects derived from communities
+    """
+    themes = []
+    paper_findings_map = {
+        p["paper_id"]: p.get("key_findings", [])
+        for p in analyzed_papers
+    }
+
+    # Sort communities by level (lower = higher hierarchy) and size
+    sorted_communities = sorted(
+        communities,
+        key=lambda c: (c.get("level", 0), -len(c.get("papers", []))),
+    )
+
+    # Use top-level communities as themes (level 0 or 1)
+    top_communities = [c for c in sorted_communities if c.get("level", 0) <= 1]
+
+    # Limit to 6 themes max
+    for community in top_communities[:6]:
+        community_id = community.get("community_id") or "unknown"
+        entity_ids = community.get("entities") or []
+        paper_ids = community.get("papers") or []
+        summary = community.get("summary") or ""
+
+        # Build theme name from top entities (defensive access)
+        entity_names = []
+        for eid in entity_ids[:3]:
+            if eid and eid in entities:
+                entity = entities[eid]
+                entity_names.append(entity.get("name") or eid)
+            elif eid:
+                entity_names.append(str(eid))
+
+        if entity_names:
+            theme_name = " / ".join(entity_names)
+        else:
+            theme_name = f"Research Cluster {community_id[:8]}"
+
+        # Use community summary as description
+        description = summary if summary else f"Papers exploring {theme_name}"
+
+        # Extract key points from papers in this community
+        key_points = []
+        for pid in paper_ids[:5]:
+            findings = paper_findings_map.get(pid, [])
+            key_points.extend(findings[:2])
+        key_points = key_points[:8]  # Limit key points
+
+        themes.append(ThemeCluster(
+            theme=theme_name,
+            description=description,
+            paper_ids=paper_ids,
+            key_points=key_points,
+        ))
+
+    # If no communities, return empty list (will trigger fallback)
+    if not themes:
+        logger.warning("No communities found for theme conversion")
+
+    logger.info(f"Converted {len(themes)} communities to themes")
+    return themes
+
+
+def format_knowledge_graph_context(
+    knowledge_graph: KnowledgeGraphData,
+    max_entities: int = 20,
+) -> str:
+    """Format knowledge graph data for inclusion in prompts.
+
+    Args:
+        knowledge_graph: The knowledge graph data
+        max_entities: Maximum entities to include
+
+    Returns:
+        Formatted string with key entities and relationships
+    """
+    lines = []
+
+    # Global summary
+    global_summary = knowledge_graph.get("global_summary", "")
+    if global_summary:
+        lines.append("## Knowledge Graph Summary")
+        lines.append(global_summary)
+        lines.append("")
+
+    # Key entities by type
+    entities = knowledge_graph.get("entities", {})
+    if entities:
+        lines.append("## Key Entities")
+
+        # Group by type
+        by_type: Dict[str, List[ExtractedEntity]] = {}
+        for entity in entities.values():
+            etype = entity.get("entity_type", "other")
+            if etype not in by_type:
+                by_type[etype] = []
+            by_type[etype].append(entity)
+
+        # Sort each group by frequency and take top entities
+        entity_count = 0
+        for etype in ["method", "dataset", "metric", "concept", "other"]:
+            if etype not in by_type:
+                continue
+            sorted_entities = sorted(
+                by_type[etype],
+                key=lambda e: e.get("frequency", 0),
+                reverse=True,
+            )
+            lines.append(f"\n### {etype.title()}s")
+            for entity in sorted_entities[:5]:
+                name = entity.get("name") or "Unknown"
+                desc = (entity.get("description") or "")[:100]
+                freq = entity.get("frequency") or 0
+                lines.append(f"- **{name}** (freq: {freq}): {desc}")
+                entity_count += 1
+                if entity_count >= max_entities:
+                    break
+            if entity_count >= max_entities:
+                break
+
+    # Community summaries
+    communities = knowledge_graph.get("communities") or []
+    if communities:
+        lines.append("\n## Research Clusters")
+        for comm in communities[:5]:
+            summary = comm.get("summary") or "Unnamed cluster"
+            paper_count = len(comm.get("papers") or [])
+            lines.append(f"- {summary} ({paper_count} papers)")
+
+    return "\n".join(lines)
 
 
 async def identify_themes(
@@ -229,6 +391,83 @@ async def generate_review(
         return "".join(summary_parts)
 
 
+async def generate_graphrag_review(
+    analyzed_papers: List[PaperSummary],
+    themes: List[ThemeCluster],
+    gaps: List[str],
+    research_question: str,
+    knowledge_graph_context: str,
+    global_summary: str,
+    review_type: str = "narrative",
+    target_words: int = 2500,
+    model: Optional[str] = None,
+) -> str:
+    """Generate literature review enhanced with GraphRAG knowledge.
+
+    This function uses the knowledge graph context (entities, relationships,
+    community summaries) to produce a richer, more connected synthesis.
+
+    Args:
+        analyzed_papers: List of analyzed paper summaries
+        themes: Theme clusters (derived from GraphRAG communities)
+        gaps: Research gaps
+        research_question: The original research question
+        knowledge_graph_context: Formatted knowledge graph data
+        global_summary: GraphRAG global summary
+        review_type: Type of review (narrative, systematic, scoping)
+        target_words: Target word count
+        model: LLM model to use
+
+    Returns:
+        Generated review text with GraphRAG enhancement
+    """
+    if not analyzed_papers:
+        return "No papers available for literature review."
+
+    paper_summaries = format_summaries_for_prompt(analyzed_papers)
+    themes_text = "\n\n".join(
+        f"**{t['theme']}**\n{t['description']}\nKey points:\n"
+        + "\n".join(f"  - {p}" for p in t["key_points"][:5])
+        for t in themes
+    )
+    gaps_text = "\n".join(f"- {g}" for g in gaps)
+
+    prompt = GRAPHRAG_LITERATURE_REVIEW_PROMPT.format(
+        review_type=review_type,
+        research_question=research_question,
+        num_papers=len(analyzed_papers),
+        paper_summaries=paper_summaries,
+        themes=themes_text,
+        gaps=gaps_text,
+        knowledge_graph_context=knowledge_graph_context,
+        global_summary=global_summary,
+        word_count=target_words,
+    )
+
+    try:
+        response = await call_llm(
+            prompt,
+            model=model,
+            temperature=0.5,
+            max_tokens=min(5000, target_words * 2),
+        )
+        logger.info(f"Generated GraphRAG-enhanced review with {len(response.split())} words")
+        return response.strip()
+
+    except LLMError as e:
+        logger.error(f"GraphRAG review generation failed: {e}, falling back to standard")
+        # Fallback to standard review
+        return await generate_review(
+            analyzed_papers=analyzed_papers,
+            themes=themes,
+            gaps=gaps,
+            research_question=research_question,
+            review_type=review_type,
+            target_words=target_words,
+            model=model,
+        )
+
+
 async def format_citations(
     analyzed_papers: List[PaperSummary],
     style: str = "APA",
@@ -297,6 +536,11 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     This function is called by the LangGraph workflow to generate
     the final literature review synthesis.
 
+    Phase 7.5 Enhancement:
+    - When knowledge_graph is available from GraphRAG, uses communities
+      directly as themes (skipping redundant LLM theme identification)
+    - Enriches review with entity relationships and community summaries
+
     Args:
         state: Current workflow state
 
@@ -309,6 +553,14 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
+
+    # Phase 7.5: Check for GraphRAG knowledge graph
+    knowledge_graph = state.get("knowledge_graph")
+    use_graphrag = (
+        knowledge_graph is not None
+        and knowledge_graph.get("communities")
+        and len(knowledge_graph.get("communities", [])) > 0
+    )
 
     if not analyzed_papers:
         error_msg = "No analyzed papers available for synthesis"
@@ -329,26 +581,66 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
         }
 
     logger.info(f"Synthesis Agent starting: {len(analyzed_papers)} papers to synthesize")
+    if use_graphrag:
+        logger.info(
+            f"GraphRAG enabled: {len(knowledge_graph.get('communities', []))} communities, "
+            f"{len(knowledge_graph.get('entities', {}))} entities"
+        )
 
     try:
-        # Step 1: Identify themes
-        themes = await identify_themes(analyzed_papers, research_question, model)
+        # Step 1: Identify themes (or use GraphRAG communities)
+        kg_context = None
+        if use_graphrag:
+            # Deep integration: convert communities to themes directly
+            themes = communities_to_themes(
+                communities=knowledge_graph.get("communities", []),
+                entities=knowledge_graph.get("entities", {}),
+                analyzed_papers=analyzed_papers,
+            )
 
-        # Step 2: Analyze gaps
+            if themes:
+                logger.info(f"Using {len(themes)} themes from GraphRAG communities")
+                # Prepare knowledge graph context for review generation
+                kg_context = format_knowledge_graph_context(knowledge_graph)
+            else:
+                # GraphRAG communities existed but produced no themes (e.g., all level > 1)
+                # Fall back to LLM theme identification
+                logger.warning("GraphRAG produced no usable themes, falling back to LLM")
+                use_graphrag = False
+                themes = await identify_themes(analyzed_papers, research_question, model)
+        else:
+            # Fallback: LLM-based theme identification
+            themes = await identify_themes(analyzed_papers, research_question, model)
+            kg_context = None
+
+        # Step 2: Analyze gaps (enhanced with GraphRAG context if available)
         gap_analysis = await analyze_gaps(analyzed_papers, themes, research_question, model)
         gaps = gap_analysis["gaps"]
         future_directions = gap_analysis["future_directions"]
 
-        # Step 3: Generate review
-        review_text = await generate_review(
-            analyzed_papers=analyzed_papers,
-            themes=themes,
-            gaps=gaps,
-            research_question=research_question,
-            review_type=review_type,
-            target_words=2000,
-            model=model,
-        )
+        # Step 3: Generate review (with GraphRAG enhancement if available)
+        if use_graphrag and kg_context:
+            review_text = await generate_graphrag_review(
+                analyzed_papers=analyzed_papers,
+                themes=themes,
+                gaps=gaps,
+                research_question=research_question,
+                knowledge_graph_context=kg_context,
+                global_summary=knowledge_graph.get("global_summary", ""),
+                review_type=review_type,
+                target_words=2500,  # Slightly longer for richer synthesis
+                model=model,
+            )
+        else:
+            review_text = await generate_review(
+                analyzed_papers=analyzed_papers,
+                themes=themes,
+                gaps=gaps,
+                research_question=research_question,
+                review_type=review_type,
+                target_words=2000,
+                model=model,
+            )
 
         # Step 4: Format citations
         citations = await format_citations(analyzed_papers, style="APA", model=model)
@@ -364,8 +656,9 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
             papers_cited=len(analyzed_papers),
         )
 
+        mode_str = "GraphRAG-enhanced" if use_graphrag else "standard"
         logger.info(
-            f"Synthesis complete: {synthesis['word_count']} words, "
+            f"Synthesis complete ({mode_str}): {synthesis['word_count']} words, "
             f"{len(themes)} themes, {len(gaps)} gaps"
         )
 
@@ -400,5 +693,9 @@ __all__ = [
     "identify_themes",
     "analyze_gaps",
     "generate_review",
+    "generate_graphrag_review",
     "format_citations",
+    # GraphRAG integration helpers
+    "communities_to_themes",
+    "format_knowledge_graph_context",
 ]
