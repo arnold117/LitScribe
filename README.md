@@ -11,10 +11,11 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 ## Key Features
 
 ### Multi-Agent Literature Review
-- **Discovery Agent**: Query expansion, multi-source search, snowball sampling
-- **Critical Reading Agent**: PDF parsing, key findings extraction, methodology analysis
-- **Synthesis Agent**: Theme identification, gap analysis, review generation
-- **Supervisor Agent**: LangGraph-based workflow orchestration
+- **Discovery Agent**: Query expansion, multi-source search (parallel), snowball sampling
+- **Critical Reading Agent**: PDF parsing, key findings extraction, methodology analysis (batched)
+- **GraphRAG Agent**: Knowledge graph construction, entity extraction, community detection
+- **Synthesis Agent**: GraphRAG-enhanced theme identification, gap analysis, review generation
+- **Supervisor Agent**: LangGraph-based workflow orchestration with state routing
 
 ### Multi-Source Search
 - Unified search across **arXiv**, **PubMed**, **Semantic Scholar**
@@ -30,20 +31,32 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 
 ### Caching & Persistence
 - **SQLite cache**: Local-first search, PDF caching, parse results
+- **GraphRAG cache**: Entity extraction results, graph edges, community data
 - **Checkpointing**: Resume interrupted reviews via `thread_id`
-- **Incremental updates**: Only fetch what's missing
+- **Incremental updates**: Only fetch what's missing, reuse cached entities
 
 ### PDF Processing
 - High-fidelity PDF-to-Markdown conversion
 - LaTeX equation preservation
 - Dual backend: `pymupdf4llm` (fast) / `marker-pdf` (OCR)
 
+### GraphRAG Knowledge Synthesis (Phase 7.5) ✨
+- **Entity extraction**: Automatic identification of methods, datasets, metrics, concepts
+- **Entity linking**: Cross-paper entity deduplication using embeddings
+- **Knowledge graph**: NetworkX-based graph with papers, entities, and relationships
+- **Community detection**: Leiden algorithm for hierarchical clustering
+- **Global synthesis**: Multi-level summarization from entity → community → global
+- **Deep integration**: Communities used directly as themes in synthesis
+
 ## Tech Stack
 
 - **Language:** Python 3.12+
-- **Orchestration:** LangGraph (multi-agent framework)
-- **Interface:** Model Context Protocol (MCP) via FastMCP 2.0
-- **Storage:** SQLite (cache, checkpointing)
+- **Orchestration:** LangGraph (multi-agent framework with state management)
+- **Async Processing:** asyncio with concurrent batching and semaphore control
+- **Interface:** FastMCP 2.0 (direct import, not protocol-based)
+- **Storage:** SQLite (cache, checkpointing, GraphRAG data)
+- **Knowledge Graph:** NetworkX + graspologic (Leiden community detection)
+- **Embeddings:** sentence-transformers (entity linking)
 - **Cloud LLM:** Claude Opus 4.5 / Sonnet 4.5 / DeepSeek-R1
 - **PDF Processing:** pymupdf4llm (default) / marker-pdf (OCR)
 
@@ -171,6 +184,10 @@ litscribe --help
 litscribe review "What are the latest advances in LLM reasoning?"
 litscribe review "CRISPR applications" -s pubmed,arxiv -p 15
 
+# === GraphRAG-Enhanced Review (Default) ===
+litscribe review "LLM fine-tuning methods" -p 10 --enable-graphrag
+litscribe review "transformer architectures" -p 20 --disable-graphrag  # Skip GraphRAG
+
 # === Export ===
 litscribe export review.json -f docx -s apa      # Word (APA style)
 litscribe export review.json -f pdf -s ieee      # PDF (IEEE style)
@@ -211,18 +228,18 @@ Export generates additional formats:
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| MVP | MCP servers, unified search, CLI | Done |
-| Iteration 2 | Multi-agent system, LangGraph | Done |
-| Phase 6.5 | SQLite cache, checkpointing | Done |
-| Phase 7 | BibTeX, export, multi-language | Done |
+| MVP | MCP servers, unified search, CLI | ✅ Done |
+| Iteration 2 | Multi-agent system, LangGraph | ✅ Done |
+| Phase 6.5 | SQLite cache, checkpointing | ✅ Done |
+| Phase 7 | BibTeX, export, multi-language | ✅ Done |
+| **Phase 7.5** | **GraphRAG, scale-up (50-500 papers)** | **✅ Done** |
 
 ### Planned
 
 | Phase | Description | Priority |
 |-------|-------------|----------|
-| Phase 7.5 | GraphRAG, scale-up (50-500 papers) | Next |
-| Phase 8 | Claude Code plugin (MCP Server) | Medium |
-| Phase 9 | Visualization (plots, networks) | Medium |
+| Phase 8 | True MCP protocol integration | Medium |
+| Phase 9 | Visualization (knowledge graph, plots) | Medium |
 | Phase 10 | Peer Review Agent | Low |
 
 ## Development Notes
@@ -248,8 +265,20 @@ Export generates additional formats:
 |------|-------|--------|
 | Query expansion | Haiku | Simple, low cost |
 | Paper analysis | Sonnet 4.5 | Balance quality/cost |
+| Entity extraction | Sonnet 4.5 | Structured output |
+| Community summary | Sonnet 4.5 | Synthesis quality |
 | Review synthesis | Opus 4.5 | Complex reasoning |
 | Batch processing | DeepSeek-R3 | Cost-effective |
+
+### Architecture Notes
+
+**MCP Integration**: The project uses FastMCP decorators but **directly imports** functions rather than using MCP protocol (stdio/HTTP). This design prioritizes:
+- Lower latency (no IPC overhead)
+- Simpler error handling
+- Easier debugging
+- Tighter integration with LangGraph
+
+Future work may add true MCP server mode for external client access.
 
 ---
 
