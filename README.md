@@ -27,7 +27,6 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **BibTeX** export with auto-detected entry types
 - **5 citation styles**: APA, MLA, IEEE, Chicago, GB/T 7714
 - **Multi-format export**: Word (.docx), PDF, HTML, LaTeX, Markdown
-- **Multi-language**: English and Chinese output
 
 ### Caching & Persistence
 - **SQLite cache**: Local-first search, PDF caching, parse results
@@ -39,6 +38,18 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - High-fidelity PDF-to-Markdown conversion
 - LaTeX equation preservation
 - Dual backend: `pymupdf4llm` (fast) / `marker-pdf` (OCR)
+
+### Local-First Search & Zotero Integration
+- **Local-first**: SQLite cache → Zotero library → external APIs (only fetch what's missing)
+- **Zotero bidirectional sync**: Import from collections, auto-save discoveries, write analysis notes back
+- **Local PDF injection**: Include your own PDFs alongside searched papers
+- **User config**: Persistent preferences via `~/.litscribe/config.yaml`
+
+### Multi-Language Review Generation
+- **Direct generation**: Write reviews in the target language (not translate after)
+- `--lang zh`: Chinese academic writing with formal scholarly tone
+- Generic fallback for other languages
+- Search queries always in English for optimal database coverage
 
 ### GraphRAG Knowledge Synthesis (Phase 7.5) ✨
 - **Entity extraction**: Automatic identification of methods, datasets, metrics, concepts
@@ -183,10 +194,12 @@ litscribe --help
 # === Literature Review ===
 litscribe review "What are the latest advances in LLM reasoning?"
 litscribe review "CRISPR applications" -s pubmed,arxiv -p 15
+litscribe review "石杉碱甲生物合成" --lang zh           # Chinese review
+litscribe review "topic" --local-files a.pdf b.pdf      # Include local PDFs
 
 # === GraphRAG-Enhanced Review (Default) ===
 litscribe review "LLM fine-tuning methods" -p 10 --enable-graphrag
-litscribe review "transformer architectures" -p 20 --disable-graphrag  # Skip GraphRAG
+litscribe review "transformer architectures" -p 20 --disable-graphrag
 
 # === Export ===
 litscribe export review.json -f docx -s apa      # Word (APA style)
@@ -198,17 +211,15 @@ litscribe export review.json -f md -l zh         # Chinese Markdown
 litscribe search "transformer attention" --sources arxiv,semantic_scholar
 litscribe search "CRISPR" --sources pubmed --limit 20 --sort citations
 
-# === Paper Info ===
+# === Paper / PDF ===
 litscribe paper arXiv:1706.03762 --verbose
-litscribe citations arXiv:1706.03762 --limit 10
-
-# === PDF Processing ===
 litscribe parse paper.pdf --output paper.md
 
-# === Cache Management ===
-litscribe cache stats              # Show statistics
-litscribe cache clear --expired    # Clear expired entries
-litscribe cache vacuum             # Optimize database
+# === Config & Cache ===
+litscribe config show                 # Show current config
+litscribe config set max_papers 20    # Set default
+litscribe cache stats                 # Cache statistics
+litscribe cache clear --expired       # Clear expired entries
 ```
 
 ### Output Files
@@ -231,16 +242,17 @@ Export generates additional formats:
 | MVP | MCP servers, unified search, CLI | ✅ Done |
 | Iteration 2 | Multi-agent system, LangGraph | ✅ Done |
 | Phase 6.5 | SQLite cache, checkpointing | ✅ Done |
-| Phase 7 | BibTeX, export, multi-language | ✅ Done |
-| **Phase 7.5** | **GraphRAG, scale-up (50-500 papers)** | **✅ Done** |
+| Phase 7 | BibTeX, export, citation styles | ✅ Done |
+| Phase 7.5 | GraphRAG, scale-up (50-500 papers) | ✅ Done |
+| **Phase 8** | **Zotero sync, local files, multi-lang generation, user config** | **✅ Done** |
 
 ### Planned
 
 | Phase | Description | Priority |
 |-------|-------------|----------|
-| Phase 8 | True MCP protocol integration | Medium |
-| Phase 9 | Visualization (knowledge graph, plots) | Medium |
-| Phase 10 | Peer Review Agent | Low |
+| Phase 9 | Self-Review Agent, Planning Agent, iterative refinement | High |
+| Phase 10 | MCP architecture cleanup, GraphRAG optimization | Medium |
+| Phase 11 | Local LLM support (Ollama/MLX/vLLM) | Medium |
 
 ## Development Notes
 
