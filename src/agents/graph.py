@@ -6,6 +6,7 @@ the multi-agent literature review process.
 Supports SQLite checkpointing for breakpoint resume (Phase 6.5).
 """
 
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -243,6 +244,29 @@ async def run_literature_review(
     if checkpoint_enabled and thread_id:
         final_state["_thread_id"] = thread_id
 
+    # Auto-create session for iterative refinement (Phase 9.3)
+    synthesis = final_state.get("synthesis")
+    if synthesis and synthesis.get("review_text"):
+        try:
+            from versioning.review_versions import create_session, save_version
+            session_id = create_session(
+                research_question=research_question,
+                review_type=review_type,
+                language=language,
+                thread_id=thread_id if checkpoint_enabled else None,
+                state_snapshot=_serialize_state(final_state),
+            )
+            save_version(
+                session_id=session_id,
+                review_text=synthesis["review_text"],
+                word_count=synthesis.get("word_count", 0),
+                papers_cited=synthesis.get("papers_cited", 0),
+            )
+            final_state["_session_id"] = session_id
+            logger.info(f"Session created: {session_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create session: {e}")
+
     return final_state
 
 
@@ -418,6 +442,124 @@ def run_review_sync(
     ))
 
 
+def _serialize_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize state for session storage, excluding non-JSON fields.
+
+    Skips LangGraph message objects and internal fields that are
+    not JSON-serializable.
+
+    Args:
+        state: Full LitScribeState dict
+
+    Returns:
+        JSON-serializable subset of state
+    """
+    import json as _json
+    serializable = {}
+    skip_keys = {"messages"}
+    for key, value in state.items():
+        if key in skip_keys or key.startswith("_"):
+            continue
+        try:
+            _json.dumps(value, default=str)
+            serializable[key] = value
+        except (TypeError, ValueError):
+            continue
+    return serializable
+
+
+async def run_refinement(
+    session_id: str,
+    instruction_text: str,
+    verbose: bool = True,
+) -> Dict[str, Any]:
+    """Run a refinement on an existing review session.
+
+    Loads the session state, classifies the instruction, executes
+    the refinement, saves a new version, and returns the result.
+
+    Args:
+        session_id: Session ID to refine
+        instruction_text: User's refinement instruction
+        verbose: Whether to log progress
+
+    Returns:
+        Dict with session_id, version_number, review_text, word_count, instruction
+    """
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    from agents.refinement_agent import classify_instruction, execute_refinement
+    from versioning.review_versions import (
+        get_session,
+        get_latest_version,
+        save_version,
+        update_session_state,
+    )
+
+    # 1. Load session
+    session = get_session(session_id)
+    if session is None:
+        raise ValueError(f"Session not found: {session_id}")
+
+    # 2. Load state from session's state_snapshot
+    state_json = session.get("state_snapshot")
+    if state_json is None:
+        raise ValueError(f"No state snapshot for session: {session_id}")
+    state = json.loads(state_json)
+
+    # 3. Get latest version text
+    resolved_id = session["session_id"]
+    latest = get_latest_version(resolved_id)
+    if latest is None:
+        raise ValueError(f"No versions found for session: {resolved_id}")
+
+    current_review = latest["review_text"]
+
+    logger.info(f"Starting refinement for session {resolved_id}: {instruction_text[:50]}")
+
+    # 4. Classify instruction
+    instruction = await classify_instruction(instruction_text, current_review)
+
+    if instruction["action_type"] == "add_papers":
+        raise ValueError("add_papers is not supported yet. Run a new review with additional queries.")
+
+    # 5. Execute refinement
+    new_review = await execute_refinement(
+        instruction=instruction,
+        current_review=current_review,
+        analyzed_papers=state.get("analyzed_papers", []),
+        research_question=state["research_question"],
+        language=state.get("language", "en"),
+    )
+
+    # 6. Save new version
+    new_version_num = save_version(
+        session_id=resolved_id,
+        review_text=new_review,
+        word_count=len(new_review.split()),
+        papers_cited=state.get("synthesis", {}).get("papers_cited", 0),
+        instruction=instruction_text,
+        previous_text=current_review,
+    )
+
+    # 7. Update synthesis in state snapshot
+    if state.get("synthesis"):
+        state["synthesis"]["review_text"] = new_review
+        state["synthesis"]["word_count"] = len(new_review.split())
+    update_session_state(resolved_id, state)
+
+    logger.info(f"Refinement complete: session={resolved_id}, version={new_version_num}")
+
+    return {
+        "session_id": resolved_id,
+        "version_number": new_version_num,
+        "review_text": new_review,
+        "word_count": len(new_review.split()),
+        "instruction": instruction,
+    }
+
+
 # Export
 __all__ = [
     "create_review_graph",
@@ -427,5 +569,6 @@ __all__ = [
     "get_review_state",
     "run_with_streaming",
     "run_review_sync",
+    "run_refinement",
     "get_checkpoint_db_path",
 ]

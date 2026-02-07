@@ -567,6 +567,13 @@ async def cmd_review(args) -> int:
         else:
             out.error("No synthesis generated")
 
+        # Show session ID for refinement (Phase 9.3)
+        session_id = final_state.get("_session_id")
+        if session_id:
+            out.blank()
+            out.stat("Session ID", session_id)
+            out.info(f"Refine: litscribe session refine {session_id[:12]} -i \"your instruction\"")
+
         out.header("Review Complete")
         return 0
 
@@ -899,6 +906,58 @@ Examples:
     # cache vacuum
     cache_vacuum_parser = cache_subparsers.add_parser("vacuum", help="Optimize database storage")
 
+    # session command - Review session management (Phase 9.3)
+    session_parser = subparsers.add_parser(
+        "session",
+        help="Manage review sessions for iterative refinement",
+    )
+    session_subparsers = session_parser.add_subparsers(
+        dest="session_command", help="Session commands"
+    )
+
+    # session list
+    session_list_parser = session_subparsers.add_parser(
+        "list", help="List all review sessions"
+    )
+    session_list_parser.add_argument(
+        "--limit", "-l", type=int, default=20,
+        help="Maximum sessions to show (default: 20)",
+    )
+
+    # session show <id>
+    session_show_parser = session_subparsers.add_parser(
+        "show", help="Show session details and version history"
+    )
+    session_show_parser.add_argument("session_id", help="Session ID (or prefix)")
+
+    # session refine <id> -i "instruction"
+    session_refine_parser = session_subparsers.add_parser(
+        "refine", help="Refine a review with a natural language instruction"
+    )
+    session_refine_parser.add_argument("session_id", help="Session ID to refine")
+    session_refine_parser.add_argument(
+        "--instruction", "-i", required=True,
+        help='Refinement instruction (e.g., "Add discussion about LoRA")',
+    )
+    session_refine_parser.add_argument(
+        "--output", "-o", help="Save refined review to file",
+    )
+
+    # session diff <id> <v1> <v2>
+    session_diff_parser = session_subparsers.add_parser(
+        "diff", help="Show diff between two versions"
+    )
+    session_diff_parser.add_argument("session_id", help="Session ID")
+    session_diff_parser.add_argument("v1", type=int, help="First version number")
+    session_diff_parser.add_argument("v2", type=int, help="Second version number")
+
+    # session rollback <id> <version>
+    session_rollback_parser = session_subparsers.add_parser(
+        "rollback", help="Rollback to a previous version"
+    )
+    session_rollback_parser.add_argument("session_id", help="Session ID")
+    session_rollback_parser.add_argument("version", type=int, help="Version number to rollback to")
+
     # export command - Export review to various formats
     export_parser = subparsers.add_parser(
         "export",
@@ -1010,6 +1069,113 @@ async def cmd_cache(args) -> int:
         return 1
 
     return 0
+
+
+async def cmd_session(args) -> int:
+    """Manage review sessions for iterative refinement (Phase 9.3)."""
+    out = get_output("litscribe.session")
+
+    if not hasattr(args, "session_command") or args.session_command is None:
+        out.warning("No session command specified. Use: list, show, refine, diff, rollback")
+        return 1
+
+    if args.session_command == "list":
+        from versioning.review_versions import list_sessions
+
+        sessions = list_sessions(limit=args.limit)
+        if not sessions:
+            out.info("No sessions found. Run 'litscribe review' to create one.")
+            return 0
+
+        out.header(f"Review Sessions ({len(sessions)})")
+        for s in sessions:
+            sid = s["session_id"]
+            question = s.get("research_question", "?")[:60]
+            created = s.get("created_at", "?")
+            rtype = s.get("review_type", "?")
+            out.stat(sid[:12] + "...", question)
+            out.bullet(f"Created: {created}, Type: {rtype}, Lang: {s.get('language', '?')}")
+        return 0
+
+    elif args.session_command == "show":
+        from versioning.review_versions import get_session, get_all_versions
+
+        session = get_session(args.session_id)
+        if not session:
+            out.error(f"Session not found: {args.session_id}")
+            return 1
+
+        out.header("Session Details")
+        out.stat("ID", session["session_id"])
+        out.stat("Question", session["research_question"])
+        out.stat("Type", session.get("review_type", "?"))
+        out.stat("Language", session.get("language", "?"))
+        out.stat("Created", session.get("created_at", "?"))
+        out.stat("Updated", session.get("updated_at", "?"))
+
+        versions = get_all_versions(session["session_id"])
+        out.blank()
+        out.subheader(f"Versions ({len(versions)})", "📋")
+        for v in versions:
+            instr = v.get("instruction") or "(original)"
+            wc = v.get("word_count", "?")
+            out.stat(f"v{v['version_number']}", f"{wc} words — {instr[:60]}")
+        return 0
+
+    elif args.session_command == "refine":
+        from agents.graph import run_refinement
+
+        out.header("Refining Review")
+        out.stat("Session", args.session_id)
+        out.stat("Instruction", args.instruction)
+        out.blank()
+
+        try:
+            result = await run_refinement(
+                session_id=args.session_id,
+                instruction_text=args.instruction,
+            )
+            out.success(f"Version {result['version_number']} created", "✅")
+            out.stat("Word Count", result["word_count"])
+            out.stat("Action", result["instruction"].get("action_type", "unknown"))
+
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as f:
+                    f.write(result["review_text"])
+                out.success(f"Saved to: {args.output}", "📄")
+            else:
+                out.preview("REFINED REVIEW", result["review_text"], max_chars=500)
+            return 0
+        except Exception as e:
+            out.error(f"Refinement failed: {e}")
+            return 1
+
+    elif args.session_command == "diff":
+        from versioning.review_versions import get_diff
+
+        diff_text = get_diff(args.session_id, args.v1, args.v2)
+        if not diff_text:
+            out.info("No differences found (or versions do not exist).")
+            return 0
+
+        out.header(f"Diff: v{args.v1} → v{args.v2}")
+        print(diff_text)
+        return 0
+
+    elif args.session_command == "rollback":
+        from versioning.review_versions import rollback
+
+        try:
+            new_version = rollback(args.session_id, args.version)
+            out.success(f"Rolled back to v{args.version}. New version: v{new_version}", "✅")
+            return 0
+        except Exception as e:
+            out.error(f"Rollback failed: {e}")
+            return 1
+
+    else:
+        out.warning("Unknown session command. Use: list, show, refine, diff, rollback")
+        return 1
 
 
 async def cmd_export(args) -> int:
@@ -1143,6 +1309,8 @@ async def async_main(args) -> int:
         return await cmd_review(args)
     elif args.command == "cache":
         return await cmd_cache(args)
+    elif args.command == "session":
+        return await cmd_session(args)
     elif args.command == "export":
         return await cmd_export(args)
     else:

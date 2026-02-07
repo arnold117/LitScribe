@@ -21,7 +21,7 @@ DEFAULT_CACHE_DIR = Path("cache")
 DEFAULT_DB_NAME = "litscribe.db"
 
 # Database schema version for migrations
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Migration SQL for version 2 (add failed_papers table)
 MIGRATION_V2_SQL = """
@@ -104,6 +104,39 @@ CREATE TABLE IF NOT EXISTS communities (
 );
 CREATE INDEX IF NOT EXISTS idx_communities_level ON communities(level);
 CREATE INDEX IF NOT EXISTS idx_communities_parent ON communities(parent_id);
+"""
+
+# Migration SQL for version 4 (add review sessions and versions for Phase 9.3)
+MIGRATION_V4_SQL = """
+-- Review sessions (Phase 9.3: iterative refinement)
+CREATE TABLE IF NOT EXISTS review_sessions (
+    session_id TEXT PRIMARY KEY,
+    research_question TEXT NOT NULL,
+    review_type TEXT DEFAULT 'narrative',
+    language TEXT DEFAULT 'en',
+    thread_id TEXT,
+    state_snapshot TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_created ON review_sessions(created_at);
+
+-- Review versions (Phase 9.3: version snapshots with diff tracking)
+CREATE TABLE IF NOT EXISTS review_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL,
+    review_text TEXT NOT NULL,
+    word_count INTEGER,
+    papers_cited INTEGER,
+    instruction TEXT,
+    diff_text TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES review_sessions(session_id),
+    UNIQUE(session_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS idx_versions_session ON review_versions(session_id);
+CREATE INDEX IF NOT EXISTS idx_versions_number ON review_versions(session_id, version_number);
 """
 
 # Core SQL schema definition (required tables)
@@ -295,6 +328,11 @@ class CacheDatabase:
                 except Exception as e:
                     logger.warning(f"FTS5 not available: {e}")
 
+                # Apply all migration SQL for tables not in core schema
+                conn.executescript(MIGRATION_V2_SQL)
+                conn.executescript(MIGRATION_V3_SQL)
+                conn.executescript(MIGRATION_V4_SQL)
+
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,)
@@ -333,6 +371,11 @@ class CacheDatabase:
                 except Exception as e:
                     logger.warning(f"FTS5 not available: {e}")
 
+                # Apply all migration SQL for tables not in core schema
+                await db.executescript(MIGRATION_V2_SQL)
+                await db.executescript(MIGRATION_V3_SQL)
+                await db.executescript(MIGRATION_V4_SQL)
+
                 await db.execute(
                     "INSERT INTO schema_version (version) VALUES (?)",
                     (SCHEMA_VERSION,)
@@ -362,6 +405,10 @@ class CacheDatabase:
             logger.info("Applying migration v3: adding GraphRAG tables")
             conn.executescript(MIGRATION_V3_SQL)
 
+        if from_version < 4:
+            logger.info("Applying migration v4: adding review sessions and versions")
+            conn.executescript(MIGRATION_V4_SQL)
+
         # Use INSERT OR IGNORE to avoid duplicate version errors
         conn.execute(
             "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
@@ -380,6 +427,10 @@ class CacheDatabase:
         if from_version < 3:
             logger.info("Applying migration v3: adding GraphRAG tables")
             await db.executescript(MIGRATION_V3_SQL)
+
+        if from_version < 4:
+            logger.info("Applying migration v4: adding review sessions and versions")
+            await db.executescript(MIGRATION_V4_SQL)
 
         # Use INSERT OR IGNORE to avoid duplicate version errors
         await db.execute(
@@ -465,6 +516,7 @@ class CacheDatabase:
             tables = [
                 "papers", "pdfs", "parsed_docs", "search_cache", "llm_cache", "command_logs",
                 "entities", "entity_mentions", "graph_edges", "communities",
+                "review_sessions", "review_versions",
             ]
             for table in tables:
                 try:

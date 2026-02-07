@@ -132,6 +132,30 @@ class ReviewAssessment(TypedDict):
     additional_queries: List[str]  # Suggested queries for missing coverage
 
 
+# === Phase 9.3: Refinement Types ===
+
+
+class RefinementInstruction(TypedDict):
+    """A classified user instruction for refining an existing review."""
+
+    instruction_text: str  # Raw user instruction
+    action_type: str  # "add_content"|"remove_content"|"modify_content"|"rewrite_section"|"add_papers"
+    target_section: Optional[str]  # Which section to target (if applicable)
+    details: str  # LLM-parsed detailed specification
+
+
+class ReviewVersion(TypedDict):
+    """A snapshot of the review at a point in time."""
+
+    version_number: int
+    review_text: str
+    word_count: int
+    papers_cited: int
+    instruction: Optional[str]  # Instruction that produced this version (None for v1)
+    diff_from_previous: Optional[str]  # Unified diff from previous version
+    created_at: str  # ISO timestamp
+
+
 # === Phase 7.5: GraphRAG Types ===
 
 
@@ -247,6 +271,11 @@ class LitScribeState(TypedDict):
     # === Self-Review Stage (Phase 9.1) ===
     self_review: Optional[ReviewAssessment]  # Quality assessment
 
+    # === Refinement Stage (Phase 9.3) ===
+    session_id: Optional[str]  # Session UUID for version tracking
+    refinement_instruction: Optional[RefinementInstruction]  # Current instruction
+    review_versions: List[ReviewVersion]  # Version history
+
     # === Workflow Control ===
     current_agent: Literal[
         "supervisor",
@@ -331,6 +360,9 @@ def create_initial_state(
         synthesis=None,
         technology_comparison=None,
         self_review=None,
+        session_id=None,
+        refinement_instruction=None,
+        review_versions=[],
         current_agent="supervisor",
         iteration_count=0,
         errors=[],
