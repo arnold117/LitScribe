@@ -471,6 +471,228 @@ async def add_item_by_identifier(
     }
 
 
+@mcp.tool()
+async def create_or_get_collection(
+    name: str,
+    parent_collection: Optional[str] = None,
+) -> dict:
+    """Create a Zotero collection or return it if it already exists.
+
+    Args:
+        name: Collection name (e.g., "LitScribe")
+        parent_collection: Parent collection key (optional)
+
+    Returns:
+        Dictionary with collection key and name
+    """
+    loop = asyncio.get_event_loop()
+
+    def do_create():
+        zot = _get_zotero_client()
+
+        # Check if collection already exists
+        if parent_collection:
+            existing = zot.collections_sub(parent_collection)
+        else:
+            existing = zot.collections()
+
+        for col in existing:
+            if col.get("data", {}).get("name") == name:
+                return {
+                    "key": col["data"]["key"],
+                    "name": name,
+                    "created": False,
+                }
+
+        # Create new collection
+        payload = {"name": name}
+        if parent_collection:
+            payload["parentCollection"] = parent_collection
+
+        result = zot.create_collections([payload])
+        if result.get("successful"):
+            created = result["successful"]["0"]
+            return {
+                "key": created.get("key", ""),
+                "name": name,
+                "created": True,
+            }
+        return {"error": result.get("failed", "Unknown error")}
+
+    return await loop.run_in_executor(None, do_create)
+
+
+@mcp.tool()
+async def save_papers_to_collection(
+    papers: List[dict],
+    collection_key: Optional[str] = None,
+) -> dict:
+    """Save papers to a Zotero collection by their identifiers (DOI/arXiv ID).
+
+    Args:
+        papers: List of paper dicts with at least 'doi' or 'arxiv_id' field
+        collection_key: Target collection key (default: ZOTERO_DEFAULT_COLLECTION)
+
+    Returns:
+        Dictionary with success/failure counts
+    """
+    loop = asyncio.get_event_loop()
+
+    if collection_key is None:
+        collection_key = Config.ZOTERO_DEFAULT_COLLECTION
+
+    def do_save():
+        zot = _get_zotero_client()
+
+        saved = 0
+        failed = 0
+        skipped = 0
+        results = []
+
+        for paper in papers:
+            identifier = paper.get("doi") or paper.get("arxiv_id")
+            if not identifier:
+                skipped += 1
+                continue
+
+            try:
+                result = zot.add_by_id(identifier)
+                if result.get("successful"):
+                    item_key = result["successful"]["0"]["key"]
+                    if collection_key:
+                        try:
+                            zot.addto_collection(collection_key, [{"key": item_key}])
+                        except Exception:
+                            pass
+                    saved += 1
+                    results.append({
+                        "identifier": identifier,
+                        "item_key": item_key,
+                        "status": "saved",
+                    })
+                else:
+                    failed += 1
+                    results.append({
+                        "identifier": identifier,
+                        "status": "failed",
+                        "error": str(result.get("failed", "")),
+                    })
+            except Exception as e:
+                failed += 1
+                results.append({
+                    "identifier": identifier,
+                    "status": "failed",
+                    "error": str(e),
+                })
+
+        return {
+            "saved": saved,
+            "failed": failed,
+            "skipped": skipped,
+            "total": len(papers),
+            "collection_key": collection_key,
+            "details": results,
+        }
+
+    return await loop.run_in_executor(None, do_save)
+
+
+@mcp.tool()
+async def import_collection_papers(
+    collection_key: Optional[str] = None,
+    limit: int = 100,
+) -> dict:
+    """Import all papers from a Zotero collection as unified paper dicts.
+
+    Used to seed a literature review from an existing Zotero collection.
+
+    Args:
+        collection_key: Zotero collection key (default: ZOTERO_DEFAULT_COLLECTION)
+        limit: Maximum papers to import
+
+    Returns:
+        Dictionary with papers in unified format
+    """
+    import re as _re
+
+    loop = asyncio.get_event_loop()
+
+    if collection_key is None:
+        collection_key = Config.ZOTERO_DEFAULT_COLLECTION
+
+    def do_import():
+        zot = _get_zotero_client()
+
+        if collection_key:
+            items = zot.collection_items(collection_key, limit=limit)
+        else:
+            items = zot.top(limit=limit)
+
+        return items
+
+    items = await loop.run_in_executor(None, do_import)
+
+    # Filter out attachments and notes
+    items = [i for i in items if i.get("data", {}).get("itemType") not in ("attachment", "note")]
+
+    parsed = [_parse_zotero_item(i) for i in items]
+
+    # Convert to unified paper format
+    papers = []
+    for item in parsed:
+        item_dict = item.to_dict()
+
+        authors = []
+        for creator in item_dict.get("creators", []):
+            if creator.get("creatorType") == "author":
+                name = f"{creator.get('firstName', '')} {creator.get('lastName', '')}".strip()
+                if name:
+                    authors.append(name)
+
+        year = 0
+        date_str = item_dict.get("date", "")
+        if date_str:
+            year_match = _re.search(r"(\d{4})", date_str)
+            if year_match:
+                year = int(year_match.group(1))
+
+        paper_id = item_dict.get("doi") or f"zotero:{item_dict.get('key', '')}"
+
+        papers.append({
+            "paper_id": paper_id,
+            "title": item_dict.get("title", ""),
+            "authors": authors,
+            "abstract": item_dict.get("abstract", ""),
+            "year": year,
+            "venue": item_dict.get("publication_title", ""),
+            "citations": 0,
+            "doi": item_dict.get("doi"),
+            "arxiv_id": item_dict.get("arxiv_id"),
+            "url": item_dict.get("url", ""),
+            "source": "zotero",
+            "zotero_key": item_dict.get("key", ""),
+            "search_origin": "zotero_import",
+        })
+
+    collection_name = ""
+    if collection_key:
+        try:
+            def get_name():
+                zot = _get_zotero_client()
+                col = zot.collection(collection_key)
+                return col.get("data", {}).get("name", "")
+            collection_name = await loop.run_in_executor(None, get_name)
+        except Exception:
+            pass
+
+    return {
+        "collection_key": collection_key,
+        "collection_name": collection_name,
+        "count": len(papers),
+        "papers": papers,
+    }
+
+
 def main():
     """Run the Zotero MCP server."""
     import argparse

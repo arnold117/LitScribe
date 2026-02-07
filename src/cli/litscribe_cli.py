@@ -153,7 +153,7 @@ async def cmd_search(args) -> int:
     from aggregators.unified_search import search_all_sources
 
     out = get_output("litscribe.search")
-    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar"]
+    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar", "pubmed"]
 
     out.header(f"Searching: '{args.query}'")
     out.stat("Sources", sources)
@@ -357,7 +357,7 @@ async def cmd_review(args) -> int:
 
     research_question = args.question
     max_papers = min(args.papers, 500)  # Cap at 500
-    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar"]
+    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar", "pubmed"]
     review_type = args.type
 
     # GraphRAG settings (Phase 7.5)
@@ -398,6 +398,7 @@ async def cmd_review(args) -> int:
 
     try:
         # Run the multi-agent workflow
+        local_files = getattr(args, "local_files", []) or []
         final_state = await run_literature_review(
             research_question=research_question,
             max_papers=max_papers,
@@ -406,6 +407,7 @@ async def cmd_review(args) -> int:
             verbose=args.verbose,
             graphrag_enabled=graphrag_enabled,
             batch_size=batch_size,
+            local_files=local_files,
         )
 
         # Check for errors
@@ -527,7 +529,7 @@ async def cmd_demo(args) -> int:
     try:
         result = await search_all_sources(
             query=query,
-            sources=["arxiv", "semantic_scholar"],
+            sources=["arxiv", "semantic_scholar", "pubmed"],
             max_per_source=5,
             deduplicate=True,
             sort_by="citations",
@@ -650,8 +652,8 @@ Examples:
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument(
         "--sources", "-s",
-        default="arxiv,semantic_scholar",
-        help="Comma-separated sources: arxiv,pubmed,semantic_scholar,zotero (default: arxiv,semantic_scholar)",
+        default="arxiv,semantic_scholar,pubmed",
+        help="Comma-separated sources: arxiv,pubmed,semantic_scholar,zotero (default: arxiv,semantic_scholar,pubmed)",
     )
     search_parser.add_argument(
         "--limit", "-l",
@@ -746,8 +748,8 @@ Examples:
     )
     review_parser.add_argument(
         "--sources", "-s",
-        default="arxiv,semantic_scholar",
-        help="Comma-separated sources: arxiv,pubmed,semantic_scholar (default: arxiv,semantic_scholar)",
+        default="arxiv,semantic_scholar,pubmed",
+        help="Comma-separated sources: arxiv,pubmed,semantic_scholar (default: arxiv,semantic_scholar,pubmed)",
     )
     review_parser.add_argument(
         "--type", "-t",
@@ -781,6 +783,12 @@ Examples:
         type=int,
         default=20,
         help="Batch size for processing papers (default: 20)",
+    )
+    review_parser.add_argument(
+        "--local-files", "-f",
+        nargs="+",
+        default=[],
+        help="Local PDF files to include in review (paths)",
     )
 
     # cache command - Cache management

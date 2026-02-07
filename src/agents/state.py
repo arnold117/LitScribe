@@ -202,6 +202,7 @@ class LitScribeState(TypedDict):
     review_type: Literal["systematic", "narrative", "scoping"]  # Type of review
     cache_enabled: bool  # Whether to use local cache for search/PDF/parse
     batch_size: int  # Batch size for processing papers (default: 20)
+    local_files: List[str]  # Local PDF file paths to include in review
 
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
@@ -216,27 +217,32 @@ def create_initial_state(
     llm_config: Optional[Dict[str, Any]] = None,
     graphrag_enabled: bool = True,
     batch_size: int = 20,
+    local_files: Optional[List[str]] = None,
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
 
     Args:
         research_question: The research question to explore
         max_papers: Maximum number of papers to analyze (default: 10, max: 500)
-        sources: List of sources to search (default: arxiv, semantic_scholar)
+        sources: List of sources to search (default: arxiv, semantic_scholar, pubmed)
         review_type: Type of literature review to generate
         cache_enabled: Whether to use local cache (default: True)
         llm_config: LLM configuration dict
         graphrag_enabled: Enable GraphRAG knowledge graph (default: True)
         batch_size: Batch size for processing papers (default: 20)
+        local_files: List of local PDF file paths to include in review
 
     Returns:
         Initialized LitScribeState ready for the workflow
     """
     if sources is None:
-        sources = ["arxiv", "semantic_scholar"]
+        sources = ["arxiv", "semantic_scholar", "pubmed"]
 
     if llm_config is None:
         llm_config = {}
+
+    if local_files is None:
+        local_files = []
 
     # Cap max_papers at 500
     max_papers = min(max_papers, 500)
@@ -261,5 +267,6 @@ def create_initial_state(
         review_type=review_type,
         cache_enabled=cache_enabled,
         batch_size=batch_size,
+        local_files=local_files,
         llm_config=llm_config,
     )

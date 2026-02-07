@@ -49,7 +49,7 @@ async def unified_search(
         Dictionary with papers, source_counts, and metadata
     """
     if sources is None:
-        sources = ["arxiv", "semantic_scholar"]
+        sources = ["arxiv", "semantic_scholar", "pubmed"]
 
     try:
         from aggregators.unified_search import search_all_sources
@@ -412,6 +412,137 @@ async def search_zotero(query: str, limit: int = 20) -> Dict[str, Any]:
         )
 
 
+async def create_or_get_zotero_collection(
+    name: str,
+    parent_collection: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create a Zotero collection or return existing one.
+
+    Args:
+        name: Collection name
+        parent_collection: Parent collection key (optional)
+
+    Returns:
+        Dictionary with collection key and name
+    """
+    try:
+        from mcp_servers.zotero_server import create_or_get_collection
+        return await create_or_get_collection(name, parent_collection)
+    except Exception as e:
+        raise AgentError(
+            ErrorType.NETWORK_ERROR,
+            f"Zotero collection operation failed: {e}",
+            original_error=e
+        )
+
+
+async def save_papers_to_zotero(
+    papers: List[Dict[str, Any]],
+    collection_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Save papers to a Zotero collection.
+
+    Args:
+        papers: List of paper dicts with doi or arxiv_id
+        collection_key: Target collection key
+
+    Returns:
+        Dictionary with save results
+    """
+    try:
+        from mcp_servers.zotero_server import save_papers_to_collection
+        return await save_papers_to_collection(papers, collection_key)
+    except Exception as e:
+        raise AgentError(
+            ErrorType.NETWORK_ERROR,
+            f"Zotero save failed: {e}",
+            original_error=e
+        )
+
+
+async def import_zotero_collection(
+    collection_key: Optional[str] = None,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """Import papers from a Zotero collection.
+
+    Args:
+        collection_key: Zotero collection key
+        limit: Maximum papers to import
+
+    Returns:
+        Dictionary with papers in unified format
+    """
+    try:
+        from mcp_servers.zotero_server import import_collection_papers
+        return await import_collection_papers(collection_key, limit=limit)
+    except Exception as e:
+        raise AgentError(
+            ErrorType.NETWORK_ERROR,
+            f"Zotero import failed: {e}",
+            original_error=e
+        )
+
+
+async def write_analysis_to_zotero(
+    item_key: str,
+    analysis: Dict[str, Any],
+    tags: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Write LitScribe analysis results as a Zotero note.
+
+    Args:
+        item_key: Zotero item key
+        analysis: Analysis dict with key_findings, methodology, etc.
+        tags: Optional tags for the note
+
+    Returns:
+        Dictionary with note creation result
+    """
+    try:
+        from mcp_servers.zotero_server import add_note
+
+        # Format analysis as HTML note
+        findings = analysis.get("key_findings", [])
+        methodology = analysis.get("methodology", "")
+        strengths = analysis.get("strengths", [])
+        limitations = analysis.get("limitations", [])
+
+        html_parts = ["<h2>LitScribe Analysis</h2>"]
+
+        if findings:
+            html_parts.append("<h3>Key Findings</h3><ul>")
+            for f in findings:
+                html_parts.append(f"<li>{f}</li>")
+            html_parts.append("</ul>")
+
+        if methodology:
+            html_parts.append(f"<h3>Methodology</h3><p>{methodology}</p>")
+
+        if strengths:
+            html_parts.append("<h3>Strengths</h3><ul>")
+            for s in strengths:
+                html_parts.append(f"<li>{s}</li>")
+            html_parts.append("</ul>")
+
+        if limitations:
+            html_parts.append("<h3>Limitations</h3><ul>")
+            for l in limitations:
+                html_parts.append(f"<li>{l}</li>")
+            html_parts.append("</ul>")
+
+        note_content = "\n".join(html_parts)
+        note_tags = (tags or []) + ["LitScribe"]
+
+        return await add_note(item_key, note_content, tags=note_tags)
+    except Exception as e:
+        raise AgentError(
+            ErrorType.NETWORK_ERROR,
+            f"Zotero note write failed: {e}",
+            original_error=e
+        )
+
+
 # =============================================================================
 # Tool Registry - For agent access
 # =============================================================================
@@ -423,6 +554,14 @@ DISCOVERY_TOOLS = [
     get_paper_citations,
     get_paper_references,
     get_recommendations,
+]
+
+ZOTERO_TOOLS = [
+    search_zotero,
+    create_or_get_zotero_collection,
+    save_papers_to_zotero,
+    import_zotero_collection,
+    write_analysis_to_zotero,
 ]
 
 CRITICAL_READING_TOOLS = [
@@ -438,4 +577,4 @@ SYNTHESIS_TOOLS = [
     call_llm_with_system,
 ]
 
-ALL_TOOLS = DISCOVERY_TOOLS + CRITICAL_READING_TOOLS + SYNTHESIS_TOOLS
+ALL_TOOLS = DISCOVERY_TOOLS + ZOTERO_TOOLS + CRITICAL_READING_TOOLS + SYNTHESIS_TOOLS

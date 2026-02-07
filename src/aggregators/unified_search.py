@@ -274,7 +274,7 @@ class UnifiedSearchAggregator:
             Dictionary with search results and metadata
         """
         if sources is None:
-            sources = ["arxiv", "pubmed"]
+            sources = ["arxiv", "semantic_scholar", "pubmed"]
 
         await self._lazy_init()
 
@@ -365,3 +365,72 @@ async def search_all_sources(
         deduplicate=deduplicate,
         sort_by=sort_by,
     )
+
+
+async def search_local_first(
+    query: str,
+    sources: Optional[List[str]] = None,
+    max_per_source: int = 20,
+    zotero_collection: Optional[str] = None,
+    deduplicate: bool = True,
+    sort_by: str = "relevance",
+) -> Dict[str, Any]:
+    """Search with local-first strategy: Zotero library first, then external APIs.
+
+    This function always searches Zotero first (if configured), then searches
+    the specified external sources. Zotero results are prioritized during dedup.
+
+    Args:
+        query: Search query string
+        sources: External sources to search ("arxiv", "pubmed", "semantic_scholar")
+        max_per_source: Maximum results per source
+        zotero_collection: Specific Zotero collection to search (optional)
+        deduplicate: Whether to merge duplicate papers
+        sort_by: Ranking criteria
+
+    Returns:
+        Dictionary with search results including Zotero origin tracking
+    """
+    aggregator = UnifiedSearchAggregator()
+
+    # Search Zotero first
+    zotero_papers = await aggregator.search_zotero(query, limit=max_per_source)
+    zotero_count = len(zotero_papers)
+
+    # Then search external sources (excluding "zotero" to avoid double-search)
+    external_sources = [s for s in (sources or []) if s != "zotero"]
+    external_result = await aggregator.search_all(
+        query=query,
+        sources=external_sources or None,
+        max_per_source=max_per_source,
+        deduplicate=deduplicate,
+        sort_by=sort_by,
+    )
+
+    # Merge: Zotero papers first for dedup priority
+    all_papers = zotero_papers
+    external_papers_raw = external_result.get("papers", [])
+    for p in external_papers_raw:
+        if isinstance(p, dict):
+            all_papers.append(p)
+        else:
+            all_papers.append(p)
+
+    # Deduplicate
+    if deduplicate:
+        all_papers = deduplicate_papers(all_papers)
+
+    all_papers = rank_papers(all_papers, sort_by)
+
+    source_counts = external_result.get("source_counts", {})
+    source_counts["zotero"] = zotero_count
+
+    return {
+        "query": query,
+        "sources_searched": external_result.get("sources_searched", []) + (["zotero"] if zotero_count > 0 else []),
+        "source_counts": source_counts,
+        "total_before_dedup": external_result.get("total_before_dedup", 0) + zotero_count,
+        "total_after_dedup": len(all_papers),
+        "from_zotero": zotero_count,
+        "papers": [p.to_dict() if hasattr(p, "to_dict") else p for p in all_papers],
+    }

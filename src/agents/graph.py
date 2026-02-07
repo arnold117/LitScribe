@@ -160,6 +160,7 @@ async def run_literature_review(
     verbose: bool = True,
     graphrag_enabled: bool = True,
     batch_size: int = 20,
+    local_files: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
 
@@ -181,6 +182,7 @@ async def run_literature_review(
         verbose: Whether to log progress
         graphrag_enabled: Whether to enable GraphRAG knowledge graph (default: True)
         batch_size: Batch size for processing papers (default: 20)
+        local_files: List of local PDF file paths to include in review
 
     Returns:
         Final state containing the literature review
@@ -198,6 +200,7 @@ async def run_literature_review(
         llm_config=llm_config or {},
         graphrag_enabled=graphrag_enabled,
         batch_size=batch_size,
+        local_files=local_files or [],
     )
 
     logger.info(f"Starting literature review for: {research_question}")

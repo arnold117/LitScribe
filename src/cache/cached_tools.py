@@ -1,13 +1,14 @@
 """Cached versions of agent tools for LitScribe.
 
 Wraps the existing tools with caching functionality for:
-- Search results
+- Search results (local-first: SQLite cache -> Zotero -> External API)
 - Paper metadata
 - PDF downloads
 - Parsed documents
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,8 +17,58 @@ from cache.paper_cache import PaperCache
 from cache.parse_cache import ParseCache
 from cache.pdf_cache import PDFCache
 from cache.search_cache import SearchCache
+from utils.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _zotero_available() -> bool:
+    """Check if Zotero API is configured."""
+    return bool(Config.ZOTERO_API_KEY and Config.ZOTERO_LIBRARY_ID)
+
+
+def _zotero_item_to_paper(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a Zotero item dict to unified paper format.
+
+    Args:
+        item: Zotero item dict (from ZoteroItem.to_dict())
+
+    Returns:
+        Paper dict in unified format compatible with the agent pipeline
+    """
+    # Extract author names from creators
+    authors = []
+    for creator in item.get("creators", []):
+        if creator.get("creatorType") == "author":
+            name = f"{creator.get('firstName', '')} {creator.get('lastName', '')}".strip()
+            if name:
+                authors.append(name)
+
+    # Parse year from date
+    year = 0
+    date_str = item.get("date", "")
+    if date_str:
+        year_match = re.search(r"(\d{4})", date_str)
+        if year_match:
+            year = int(year_match.group(1))
+
+    paper_id = item.get("doi") or f"zotero:{item.get('key', '')}"
+
+    return {
+        "paper_id": paper_id,
+        "title": item.get("title", ""),
+        "authors": authors,
+        "abstract": item.get("abstract", ""),
+        "year": year,
+        "venue": item.get("publication_title", ""),
+        "citations": 0,
+        "doi": item.get("doi"),
+        "arxiv_id": item.get("arxiv_id"),
+        "url": item.get("url", ""),
+        "source": "zotero",
+        "zotero_key": item.get("key", ""),
+        "search_origin": "zotero_local",
+    }
 
 
 class CachedTools:
@@ -43,39 +94,107 @@ class CachedTools:
             self.pdf_cache = None
             self.parse_cache = None
 
+    async def search_zotero_first(
+        self,
+        query: str,
+        zotero_collection: Optional[str] = None,
+        limit: int = 25,
+    ) -> List[Dict[str, Any]]:
+        """Search Zotero personal library as a priority local source.
+
+        This is called before external APIs to leverage papers the user
+        already has in their library.
+
+        Args:
+            query: Search query
+            zotero_collection: Specific Zotero collection to search (optional)
+            limit: Maximum results
+
+        Returns:
+            List of papers in unified format from Zotero
+        """
+        if not _zotero_available():
+            return []
+
+        try:
+            from mcp_servers.zotero_server import search_items
+
+            result = await search_items(
+                query=query,
+                collection=zotero_collection,
+                limit=limit,
+            )
+            items = result.get("items", [])
+            papers = [_zotero_item_to_paper(item) for item in items]
+
+            if papers:
+                logger.info(
+                    f"Zotero local search for '{query}': {len(papers)} papers found"
+                )
+                # Cache Zotero papers
+                if self.cache_enabled:
+                    await self.paper_cache.save_many_async(papers)
+
+            return papers
+
+        except Exception as e:
+            logger.warning(f"Zotero local search failed: {e}")
+            return []
+
     async def search_with_cache(
         self,
         query: str,
         sources: List[str],
         max_per_source: int = 20,
         force_refresh: bool = False,
+        zotero_collection: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Search with caching support.
+        """Search with local-first strategy: SQLite cache -> Zotero -> External API.
+
+        Search order:
+        1. SQLite cache — check cached results per source
+        2. Zotero library — search personal library (if configured)
+        3. External APIs — only fetch from sources not covered by cache
 
         Args:
             query: Search query
             sources: List of sources to search
             max_per_source: Max results per source
             force_refresh: If True, bypass cache
+            zotero_collection: Zotero collection to search (optional)
 
         Returns:
-            Combined search results
+            Combined search results with origin tracking
         """
         from agents.tools import unified_search
 
         if not self.cache_enabled or force_refresh:
+            # Still try Zotero first even without cache
+            zotero_papers = await self.search_zotero_first(
+                query, zotero_collection
+            )
+
             result = await unified_search(
                 query=query,
                 sources=sources,
                 max_per_source=max_per_source,
                 deduplicate=True,
             )
-            if self.cache_enabled:
-                # Cache the results
-                await self._cache_search_results(query, sources, result)
-            return result
+            all_papers = zotero_papers + result.get("papers", [])
 
-        # Check cache for each source
+            if self.cache_enabled:
+                await self._cache_search_results(query, sources, result)
+
+            unique_papers = self._deduplicate_papers(all_papers)
+            return {
+                "papers": unique_papers,
+                "total_found": len(unique_papers),
+                "from_cache": 0,
+                "from_zotero": len(zotero_papers),
+                "sources_fetched": sources,
+            }
+
+        # === Step 1: Check SQLite cache for each source ===
         cached_papers = []
         sources_to_fetch = []
 
@@ -88,7 +207,12 @@ class CachedTools:
             else:
                 sources_to_fetch.append(source)
 
-        # Fetch missing sources
+        # === Step 2: Search Zotero library (always, if configured) ===
+        zotero_papers = await self.search_zotero_first(
+            query, zotero_collection
+        )
+
+        # === Step 3: Fetch from external APIs (only uncached sources) ===
         if sources_to_fetch:
             logger.info(f"Fetching from {sources_to_fetch} (not cached)")
             result = await unified_search(
@@ -109,18 +233,19 @@ class CachedTools:
 
             for src, papers in source_papers.items():
                 await self.search_cache.save_async(query, src, papers, len(papers))
-                # Also cache paper metadata
                 await self.paper_cache.save_many_async(papers)
 
             cached_papers.extend(new_papers)
 
-        # Deduplicate combined results
-        unique_papers = self._deduplicate_papers(cached_papers)
+        # === Step 4: Merge and deduplicate (Zotero papers first for priority) ===
+        all_papers = zotero_papers + cached_papers
+        unique_papers = self._deduplicate_papers(all_papers)
 
         return {
             "papers": unique_papers,
             "total_found": len(unique_papers),
             "from_cache": len(sources) - len(sources_to_fetch),
+            "from_zotero": len(zotero_papers),
             "sources_fetched": sources_to_fetch,
         }
 
@@ -157,6 +282,8 @@ class CachedTools:
     def _deduplicate_papers(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Deduplicate papers by ID or title.
 
+        Papers earlier in the list have priority (Zotero > cache > external).
+
         Args:
             papers: List of papers
 
@@ -189,7 +316,9 @@ class CachedTools:
         paper: Dict[str, Any],
         force_download: bool = False,
     ) -> Optional[Path]:
-        """Get PDF with caching support.
+        """Get PDF with caching support. Checks Zotero local storage first.
+
+        Search order: PDF cache -> Zotero local storage -> arXiv download
 
         Args:
             paper: Paper metadata
@@ -211,24 +340,28 @@ class CachedTools:
                 logger.info(f"PDF cache hit for {paper_id}")
                 return cached_path
 
-        # Download PDF
         pdf_path = None
-        arxiv_id = paper.get("arxiv_id")
         zotero_key = paper.get("zotero_key")
+        arxiv_id = paper.get("arxiv_id")
 
-        if arxiv_id:
+        # Try Zotero local storage first (no network needed)
+        if zotero_key:
+            try:
+                result = await get_zotero_pdf_path(zotero_key)
+                local_path = result.get("local_path")
+                if local_path and Path(local_path).exists():
+                    pdf_path = local_path
+                    logger.info(f"PDF found in Zotero local storage: {zotero_key}")
+            except Exception as e:
+                logger.warning(f"Failed to get Zotero PDF {zotero_key}: {e}")
+
+        # Fall back to arXiv download
+        if not pdf_path and arxiv_id:
             try:
                 result = await download_arxiv_pdf(arxiv_id)
                 pdf_path = result.get("pdf_path")
             except Exception as e:
                 logger.warning(f"Failed to download arXiv PDF {arxiv_id}: {e}")
-
-        if not pdf_path and zotero_key:
-            try:
-                result = await get_zotero_pdf_path(zotero_key)
-                pdf_path = result.get("pdf_path")
-            except Exception as e:
-                logger.warning(f"Failed to get Zotero PDF {zotero_key}: {e}")
 
         # Cache the PDF path
         if pdf_path and self.cache_enabled:

@@ -109,8 +109,11 @@ async def search_all_sources(
     """
     all_papers = []
     source_counts = {source: 0 for source in sources}
+    if "zotero" not in source_counts:
+        source_counts["zotero"] = 0
     errors = []
     from_cache_count = 0
+    from_zotero_count = 0
 
     # Search with each query in parallel (limit to top 3 queries to avoid rate limits)
     queries_to_search = queries[:3]
@@ -157,6 +160,7 @@ async def search_all_sources(
 
         result = res["result"]
         from_cache_count += result.get("from_cache", 0)
+        from_zotero_count += result.get("from_zotero", 0)
         papers = result.get("papers", [])
         all_papers.extend(papers)
 
@@ -186,8 +190,13 @@ async def search_all_sources(
             seen_titles.add(title)
         unique_papers.append(paper)
 
-    cache_info = f" ({from_cache_count} from cache)" if from_cache_count > 0 else ""
-    logger.info(f"Found {len(unique_papers)} unique papers from {len(all_papers)} total results{cache_info}")
+    origin_parts = []
+    if from_cache_count > 0:
+        origin_parts.append(f"{from_cache_count} from cache")
+    if from_zotero_count > 0:
+        origin_parts.append(f"{from_zotero_count} from Zotero")
+    origin_info = f" ({', '.join(origin_parts)})" if origin_parts else ""
+    logger.info(f"Found {len(unique_papers)} unique papers from {len(all_papers)} total results{origin_info}")
 
     return {
         "papers": unique_papers,
@@ -195,6 +204,7 @@ async def search_all_sources(
         "total_found": len(unique_papers),
         "errors": errors,
         "from_cache": from_cache_count,
+        "from_zotero": from_zotero_count,
     }
 
 
@@ -357,7 +367,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
         State updates with search results and selected papers
     """
     research_question = state["research_question"]
-    sources = state.get("sources", ["arxiv", "semantic_scholar"])
+    sources = state.get("sources", ["arxiv", "semantic_scholar", "pubmed"])
     max_papers = state.get("max_papers", 10)
     cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))

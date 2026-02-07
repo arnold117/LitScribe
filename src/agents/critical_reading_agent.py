@@ -12,6 +12,7 @@ Includes automatic retry with exponential backoff for LLM calls.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -119,6 +120,12 @@ async def acquire_pdf(
         or paper.get("doi")
         or "unknown"
     )
+
+    # Check for local file first (no download needed)
+    local_pdf = paper.get("local_pdf_path")
+    if local_pdf and Path(local_pdf).exists():
+        logger.info(f"Using local PDF for {paper_id}: {local_pdf}")
+        return local_pdf
 
     # Use cached tools if available
     if cached_tools and cached_tools.cache_enabled:
@@ -539,6 +546,33 @@ async def analyze_single_paper(
     )
 
 
+def _local_file_to_paper(file_path: str) -> Dict[str, Any]:
+    """Convert a local PDF file path to a paper dict for the pipeline.
+
+    Args:
+        file_path: Absolute path to a local PDF file
+
+    Returns:
+        Paper dict with paper_id derived from filename hash
+    """
+    path = Path(file_path)
+    file_hash = hashlib.md5(str(path.resolve()).encode()).hexdigest()[:12]
+    paper_id = f"local:{file_hash}"
+
+    return {
+        "paper_id": paper_id,
+        "title": path.stem.replace("_", " ").replace("-", " "),
+        "authors": [],
+        "abstract": "",
+        "year": 0,
+        "venue": "",
+        "citations": 0,
+        "source": "local_file",
+        "local_pdf_path": str(path.resolve()),
+        "search_origin": "local_file",
+    }
+
+
 async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     """Main entry point for the Critical Reading Agent.
 
@@ -547,6 +581,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
 
     Supports PDF and parse caching when cache_enabled=True.
     Uses parallel processing for faster analysis.
+    Handles local PDF files specified via local_files state field.
 
     Args:
         state: Current workflow state
@@ -554,8 +589,21 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     Returns:
         State updates with analyzed papers and parsed documents
     """
-    papers_to_analyze = state.get("papers_to_analyze", [])
+    papers_to_analyze = list(state.get("papers_to_analyze", []))
+    local_files = state.get("local_files", [])
     errors = list(state.get("errors", []))
+
+    # Inject local files as papers (skip PDF download for these)
+    for file_path in local_files:
+        path = Path(file_path)
+        if path.exists() and path.suffix.lower() == ".pdf":
+            local_paper = _local_file_to_paper(file_path)
+            papers_to_analyze.append(local_paper)
+            logger.info(f"Added local file: {path.name}")
+        else:
+            error_msg = f"Local file not found or not PDF: {file_path}"
+            logger.warning(error_msg)
+            errors.append(error_msg)
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
     cache_enabled = state.get("cache_enabled", True)
