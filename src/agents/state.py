@@ -75,6 +75,30 @@ class SynthesisOutput(TypedDict):
     papers_cited: int
 
 
+# === Phase 9.2: Planning Types ===
+
+
+class SubTopic(TypedDict):
+    """A sub-topic decomposed from the research question."""
+
+    name: str  # Sub-topic name
+    description: str  # What this sub-topic covers
+    estimated_papers: int  # Estimated number of papers
+    priority: float  # Weight 0-1
+    custom_queries: List[str]  # Suggested search queries
+    selected: bool  # Whether user selected this sub-topic
+
+
+class ResearchPlan(TypedDict):
+    """Research plan from Planning Agent."""
+
+    complexity_score: int  # 1-5 complexity rating
+    sub_topics: List[SubTopic]
+    scope_estimate: str  # e.g. "Estimated 30-50 papers across 5 sub-topics"
+    is_interactive: bool  # Whether user confirmation is needed
+    confirmed: bool  # Whether plan has been confirmed
+
+
 # === Phase 9.1: Self-Review Types ===
 
 
@@ -185,6 +209,7 @@ class LitScribeState(TypedDict):
 
     Workflow:
     1. User provides research_question
+    1.5. Planning Agent (Phase 9.2): complexity assessment, sub-topic decomposition
     2. Discovery Agent: expands query, searches sources, selects papers
     3. Critical Reading Agent: parses PDFs, extracts findings, creates summaries
     4. GraphRAG Agent (Phase 7.5): builds knowledge graph, detects communities
@@ -198,6 +223,9 @@ class LitScribeState(TypedDict):
     # === Message History ===
     # Uses add_messages reducer to accumulate conversation history
     messages: Annotated[List, add_messages]
+
+    # === Planning Stage (Phase 9.2) ===
+    research_plan: Optional[ResearchPlan]  # Decomposed research plan
 
     # === Discovery Stage ===
     search_results: Optional[SearchResult]  # Results from multi-source search
@@ -222,6 +250,7 @@ class LitScribeState(TypedDict):
     # === Workflow Control ===
     current_agent: Literal[
         "supervisor",
+        "planning",
         "discovery",
         "critical_reading",
         "graphrag",
@@ -295,6 +324,7 @@ def create_initial_state(
         papers_to_analyze=[],
         analyzed_papers=[],
         parsed_documents={},
+        research_plan=None,
         knowledge_graph=None,
         graphrag_enabled=graphrag_enabled,
         batch_state=None,

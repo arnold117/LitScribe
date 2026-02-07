@@ -378,6 +378,8 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))
 
+    research_plan = state.get("research_plan")
+
     logger.info(f"Discovery Agent starting for: {research_question}")
     logger.info(f"Cache enabled: {cache_enabled}")
 
@@ -385,8 +387,22 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     cached_tools = get_cached_tools(cache_enabled=cache_enabled) if cache_enabled else None
 
     try:
-        # Step 1: Expand queries
-        expanded_queries = await expand_queries(research_question)
+        # Step 1: Expand queries (use research plan sub-topics if available)
+        if research_plan and research_plan.get("sub_topics"):
+            # Use sub-topic queries from planning agent
+            plan_queries = []
+            for topic in research_plan["sub_topics"]:
+                if topic.get("selected", True):
+                    plan_queries.extend(topic.get("custom_queries", []))
+            if plan_queries:
+                # Combine plan queries with LLM-expanded queries
+                llm_queries = await expand_queries(research_question)
+                expanded_queries = plan_queries + [q for q in llm_queries if q not in plan_queries]
+                logger.info(f"Using {len(plan_queries)} plan queries + {len(llm_queries)} expanded queries")
+            else:
+                expanded_queries = await expand_queries(research_question)
+        else:
+            expanded_queries = await expand_queries(research_question)
 
         # Step 2: Search all sources (with caching if enabled)
         search_results = await search_all_sources(

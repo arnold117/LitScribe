@@ -46,10 +46,11 @@ def get_workflow_status(state: LitScribeState) -> Dict[str, Any]:
 
 def determine_next_agent(
     state: LitScribeState,
-) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "self_review", "complete"]:
+) -> Literal["planning", "discovery", "critical_reading", "graphrag", "synthesis", "self_review", "complete"]:
     """Determine which agent should run next based on state.
 
     Follows a linear workflow:
+    0. Planning: if no research plan yet (Phase 9.2)
     1. Discovery: if no search results yet
     2. Critical Reading: if papers found but not analyzed
     3. GraphRAG: if papers analyzed but no knowledge graph (Phase 7.5)
@@ -78,12 +79,17 @@ def determine_next_agent(
         return "complete"
 
     # State-based routing
+    research_plan = state.get("research_plan")
     search_results = state.get("search_results")
     papers_to_analyze = state.get("papers_to_analyze", [])
     analyzed_papers = state.get("analyzed_papers", [])
     knowledge_graph = state.get("knowledge_graph")
     graphrag_enabled = state.get("graphrag_enabled", True)
     synthesis = state.get("synthesis")
+
+    # Phase 0: Need to plan (Phase 9.2)
+    if research_plan is None:
+        return "planning"
 
     # Phase 1: Need to discover papers
     if search_results is None:

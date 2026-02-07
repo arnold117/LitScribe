@@ -390,6 +390,7 @@ async def cmd_review(args) -> int:
     out.stat("Log File", log_file)
     out.blank()
     out.info("Starting multi-agent workflow...")
+    out.bullet("Planning Agent: Complexity assessment & sub-topic decomposition")
     out.bullet("Discovery Agent: Searching and selecting papers")
     out.bullet("Critical Reading Agent: Analyzing papers")
     if graphrag_enabled:
@@ -399,6 +400,22 @@ async def cmd_review(args) -> int:
         out.bullet("Synthesis Agent: Generating review")
     out.bullet("Self-Review Agent: Quality assessment")
     out.blank()
+
+    # Handle --plan-only: run planning agent only (Phase 9.2)
+    plan_only = getattr(args, "plan_only", False)
+    if plan_only:
+        from agents.planning_agent import assess_and_decompose, format_plan_for_user
+        try:
+            out.info("Running planning agent only...")
+            plan = await assess_and_decompose(research_question, max_papers=max_papers)
+            out.subheader("Research Plan", "📋")
+            out.info(format_plan_for_user(plan))
+            out.blank()
+            out.info("Use 'litscribe review' without --plan-only to execute the full workflow.")
+            return 0
+        except Exception as e:
+            out.error(f"Planning failed: {e}")
+            return 1
 
     try:
         # Run the multi-agent workflow
@@ -421,6 +438,17 @@ async def cmd_review(args) -> int:
             out.subheader("Warnings/Errors during processing", "⚠")
             for err in errors[-5:]:
                 out.bullet(str(err))
+
+        # Display research plan (Phase 9.2)
+        research_plan = final_state.get("research_plan")
+        if research_plan:
+            from agents.planning_agent import format_plan_for_user
+            out.subheader("Research Plan", "📋")
+            out.stat("Complexity", f"{research_plan.get('complexity_score', '?')}/5")
+            out.stat("Sub-topics", len(research_plan.get("sub_topics", [])))
+            out.stat("Scope", research_plan.get("scope_estimate", "N/A"))
+            if args.verbose:
+                out.info(format_plan_for_user(research_plan))
 
         # Display results
         search_results = final_state.get("search_results")
@@ -832,6 +860,12 @@ Examples:
         choices=["en", "zh"],
         default="en",
         help="Language for the generated review (default: en). 'zh' generates directly in Chinese.",
+    )
+    # Planning options (Phase 9.2)
+    review_parser.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Only run the planning agent, show research plan, then stop",
     )
 
     # cache command - Cache management

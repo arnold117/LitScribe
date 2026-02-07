@@ -16,6 +16,7 @@ from langgraph.graph import END, StateGraph
 
 from agents.critical_reading_agent import critical_reading_agent
 from agents.discovery_agent import discovery_agent
+from agents.planning_agent import planning_agent
 from agents.self_review_agent import self_review_agent
 from agents.state import LitScribeState, create_initial_state
 from agents.supervisor import supervisor_agent
@@ -27,7 +28,7 @@ from cache.database import get_cache_db
 logger = logging.getLogger(__name__)
 
 
-def should_continue(state: LitScribeState) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "self_review", "complete"]:
+def should_continue(state: LitScribeState) -> Literal["planning", "discovery", "critical_reading", "graphrag", "synthesis", "self_review", "complete"]:
     """Routing function for the conditional edge.
 
     Determines which node to visit next based on current_agent in state.
@@ -41,7 +42,9 @@ def should_continue(state: LitScribeState) -> Literal["discovery", "critical_rea
     current = state.get("current_agent", "complete")
 
     # Map state to graph node names
-    if current == "discovery":
+    if current == "planning":
+        return "planning"
+    elif current == "discovery":
         return "discovery"
     elif current == "critical_reading":
         return "critical_reading"
@@ -81,6 +84,7 @@ def create_review_graph() -> StateGraph:
 
     # Add nodes for each agent
     workflow.add_node("supervisor", supervisor_agent)
+    workflow.add_node("planning", planning_agent)  # Phase 9.2
     workflow.add_node("discovery", discovery_agent)
     workflow.add_node("critical_reading", critical_reading_agent)
     workflow.add_node("graphrag", graphrag_agent)  # Phase 7.5
@@ -95,6 +99,7 @@ def create_review_graph() -> StateGraph:
         "supervisor",
         should_continue,
         {
+            "planning": "planning",
             "discovery": "discovery",
             "critical_reading": "critical_reading",
             "graphrag": "graphrag",
@@ -105,6 +110,7 @@ def create_review_graph() -> StateGraph:
     )
 
     # After each agent completes, return to supervisor for next decision
+    workflow.add_edge("planning", "supervisor")  # Phase 9.2
     workflow.add_edge("discovery", "supervisor")
     workflow.add_edge("critical_reading", "supervisor")
     workflow.add_edge("graphrag", "supervisor")  # Phase 7.5

@@ -388,6 +388,50 @@ Output as JSON:
 
 
 # =============================================================================
+# Planning Agent Prompts (Phase 9.2)
+# =============================================================================
+
+COMPLEXITY_ASSESSMENT_PROMPT = """You are an expert academic researcher. Assess the complexity of this research question for a literature review.
+
+Research Question: {research_question}
+
+Rate the complexity on a scale of 1-5:
+1 = Very simple, single focused topic (e.g., "BERT performance on GLUE benchmark")
+2 = Simple, one main topic with clear scope (e.g., "attention mechanisms in transformers")
+3 = Moderate, crosses 2-3 sub-areas (e.g., "LLM reasoning capabilities")
+4 = Complex, multiple interconnected sub-topics (e.g., "AI applications in drug discovery")
+5 = Very complex, broad interdisciplinary topic (e.g., "ethical implications of AI in healthcare")
+
+Also decompose the question into sub-topics if complexity >= 3.
+
+Output as JSON:
+{{
+  "complexity_score": 1-5,
+  "reasoning": "Why this complexity level...",
+  "sub_topics": [
+    {{
+      "name": "Sub-topic name",
+      "description": "What this covers",
+      "estimated_papers": 5-20,
+      "priority": 0.0-1.0,
+      "custom_queries": ["search query 1", "search query 2"]
+    }}
+  ],
+  "scope_estimate": "Estimated X-Y papers across N sub-topics"
+}}
+
+For complexity 1-2, provide 1-2 sub-topics (the question itself is essentially the topic).
+For complexity 3-5, provide 3-6 sub-topics that together cover the research question comprehensively.
+
+Ensure sub-topics are:
+- Mutually exclusive (minimal overlap)
+- Collectively exhaustive (cover the full question)
+- Ordered by priority (most important first)
+- Each with 2 specific search queries optimized for academic databases
+- IMPORTANT: All search queries MUST be in English"""
+
+
+# =============================================================================
 # Self-Review Agent Prompts (Phase 9.1)
 # =============================================================================
 
