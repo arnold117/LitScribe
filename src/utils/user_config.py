@@ -154,6 +154,7 @@ def merge_with_cli_args(
     cli_batch_size: Optional[int] = None,
     cli_graphrag: Optional[bool] = None,
     cli_local_files: Optional[List[str]] = None,
+    cli_language: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Merge user config with CLI arguments.
 
@@ -166,6 +167,7 @@ def merge_with_cli_args(
         cli_batch_size: Batch size from CLI --batch-size
         cli_graphrag: GraphRAG enabled from CLI
         cli_local_files: Local files from CLI --local-files
+        cli_language: Language from CLI --lang
 
     Returns:
         Merged configuration dict
@@ -185,6 +187,8 @@ def merge_with_cli_args(
         config["graphrag_enabled"] = cli_graphrag
     if cli_local_files is not None:
         config["local_files"] = cli_local_files
+    if cli_language is not None:
+        config["language"] = cli_language
 
     return config
 

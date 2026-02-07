@@ -66,8 +66,13 @@ async def expand_queries(research_question: str, model: Optional[str] = None) ->
         if not isinstance(queries, list):
             raise ValueError("Expected JSON array")
 
-        # Include original question as first query
-        all_queries = [research_question] + queries
+        # Include original question as first query only if it's in English
+        # (non-English queries perform poorly on English academic databases)
+        is_english = all(ord(c) < 128 for c in research_question if c.isalpha())
+        if is_english:
+            all_queries = [research_question] + queries
+        else:
+            all_queries = queries if queries else [research_question]
         logger.info(f"Expanded '{research_question}' into {len(all_queries)} queries")
 
         return all_queries
@@ -75,6 +80,7 @@ async def expand_queries(research_question: str, model: Optional[str] = None) ->
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse query expansion response: {e}")
         # Fall back to original question and simple variations
+        # If non-English, use generic English terms from the question
         return [
             research_question,
             f"{research_question} review",

@@ -24,6 +24,7 @@ from agents.prompts import (
     LITERATURE_REVIEW_PROMPT,
     THEME_IDENTIFICATION_PROMPT,
     format_summaries_for_prompt,
+    get_language_instruction,
 )
 from agents.state import (
     Community,
@@ -327,6 +328,7 @@ async def generate_review(
     review_type: str = "narrative",
     target_words: int = 2000,
     model: Optional[str] = None,
+    language: str = "en",
 ) -> str:
     """Generate the literature review narrative.
 
@@ -338,6 +340,7 @@ async def generate_review(
         review_type: Type of review (narrative, systematic, scoping)
         target_words: Target word count
         model: LLM model to use
+        language: Output language code ("en", "zh", etc.)
 
     Returns:
         Generated review text
@@ -361,7 +364,7 @@ async def generate_review(
         themes=themes_text,
         gaps=gaps_text,
         word_count=target_words,
-    )
+    ) + get_language_instruction(language)
 
     try:
         response = await call_llm(
@@ -401,6 +404,7 @@ async def generate_graphrag_review(
     review_type: str = "narrative",
     target_words: int = 2500,
     model: Optional[str] = None,
+    language: str = "en",
 ) -> str:
     """Generate literature review enhanced with GraphRAG knowledge.
 
@@ -417,6 +421,7 @@ async def generate_graphrag_review(
         review_type: Type of review (narrative, systematic, scoping)
         target_words: Target word count
         model: LLM model to use
+        language: Output language code ("en", "zh", etc.)
 
     Returns:
         Generated review text with GraphRAG enhancement
@@ -442,7 +447,7 @@ async def generate_graphrag_review(
         knowledge_graph_context=knowledge_graph_context,
         global_summary=global_summary,
         word_count=target_words,
-    )
+    ) + get_language_instruction(language)
 
     try:
         response = await call_llm(
@@ -465,6 +470,7 @@ async def generate_graphrag_review(
             review_type=review_type,
             target_words=target_words,
             model=model,
+            language=language,
         )
 
 
@@ -550,6 +556,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     analyzed_papers = state.get("analyzed_papers", [])
     research_question = state["research_question"]
     review_type = state.get("review_type", "narrative")
+    language = state.get("language", "en")
     errors = list(state.get("errors", []))
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
@@ -630,6 +637,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 review_type=review_type,
                 target_words=2500,  # Slightly longer for richer synthesis
                 model=model,
+                language=language,
             )
         else:
             review_text = await generate_review(
@@ -640,6 +648,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 review_type=review_type,
                 target_words=2000,
                 model=model,
+                language=language,
             )
 
         # Step 4: Format citations

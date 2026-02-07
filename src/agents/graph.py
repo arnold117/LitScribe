@@ -161,6 +161,7 @@ async def run_literature_review(
     graphrag_enabled: bool = True,
     batch_size: int = 20,
     local_files: Optional[list] = None,
+    language: str = "en",
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
 
@@ -183,6 +184,7 @@ async def run_literature_review(
         graphrag_enabled: Whether to enable GraphRAG knowledge graph (default: True)
         batch_size: Batch size for processing papers (default: 20)
         local_files: List of local PDF file paths to include in review
+        language: Output language for review text (default: "en")
 
     Returns:
         Final state containing the literature review
@@ -201,6 +203,7 @@ async def run_literature_review(
         graphrag_enabled=graphrag_enabled,
         batch_size=batch_size,
         local_files=local_files or [],
+        language=language,
     )
 
     logger.info(f"Starting literature review for: {research_question}")
@@ -303,6 +306,7 @@ async def run_with_streaming(
     checkpoint_enabled: bool = True,
     graphrag_enabled: bool = True,
     batch_size: int = 20,
+    language: str = "en",
 ):
     """Run literature review with streaming updates.
 
@@ -322,6 +326,7 @@ async def run_with_streaming(
         checkpoint_enabled: Whether to enable checkpointing
         graphrag_enabled: Whether to enable GraphRAG knowledge graph
         batch_size: Batch size for processing papers
+        language: Output language for review text (default: "en")
 
     Yields:
         State snapshots as workflow progresses
@@ -335,6 +340,7 @@ async def run_with_streaming(
         llm_config=llm_config or {},
         graphrag_enabled=graphrag_enabled,
         batch_size=batch_size,
+        language=language,
     )
 
     if checkpoint_enabled:
@@ -366,6 +372,7 @@ def run_review_sync(
     checkpoint_enabled: bool = True,
     graphrag_enabled: bool = True,
     batch_size: int = 20,
+    language: str = "en",
 ) -> Dict[str, Any]:
     """Synchronous wrapper for running literature review.
 
@@ -379,6 +386,7 @@ def run_review_sync(
         checkpoint_enabled: Whether to enable checkpointing
         graphrag_enabled: Whether to enable GraphRAG knowledge graph
         batch_size: Batch size for processing papers
+        language: Output language for review text (default: "en")
 
     Returns:
         Final state with literature review
@@ -394,6 +402,7 @@ def run_review_sync(
         checkpoint_enabled=checkpoint_enabled,
         graphrag_enabled=graphrag_enabled,
         batch_size=batch_size,
+        language=language,
     ))
 
 

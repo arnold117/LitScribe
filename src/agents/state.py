@@ -203,6 +203,7 @@ class LitScribeState(TypedDict):
     cache_enabled: bool  # Whether to use local cache for search/PDF/parse
     batch_size: int  # Batch size for processing papers (default: 20)
     local_files: List[str]  # Local PDF file paths to include in review
+    language: str  # Output language for review text ("en", "zh", etc.)
 
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
@@ -218,6 +219,7 @@ def create_initial_state(
     graphrag_enabled: bool = True,
     batch_size: int = 20,
     local_files: Optional[List[str]] = None,
+    language: str = "en",
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
 
@@ -231,6 +233,7 @@ def create_initial_state(
         graphrag_enabled: Enable GraphRAG knowledge graph (default: True)
         batch_size: Batch size for processing papers (default: 20)
         local_files: List of local PDF file paths to include in review
+        language: Output language for review text (default: "en")
 
     Returns:
         Initialized LitScribeState ready for the workflow
@@ -268,5 +271,6 @@ def create_initial_state(
         cache_enabled=cache_enabled,
         batch_size=batch_size,
         local_files=local_files,
+        language=language,
         llm_config=llm_config,
     )

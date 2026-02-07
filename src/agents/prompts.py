@@ -23,6 +23,7 @@ Requirements:
 - Each query should be 3-8 words, optimized for academic search engines
 - Avoid overly generic terms
 - Include field-specific terminology
+- IMPORTANT: All queries MUST be in English, even if the research question is in another language. Academic databases (arXiv, PubMed, Semantic Scholar) are English-based.
 
 Output as a JSON array of strings:
 ["query1", "query2", "query3", "query4", "query5"]"""
@@ -463,3 +464,41 @@ Limitations: {", ".join(summary.get("limitations", [])[:3])}
         total_chars += len(section)
 
     return "\n".join(lines)
+
+
+# =============================================================================
+# Language Instructions for Multi-Language Review Generation (Phase 8.6)
+# =============================================================================
+
+LANGUAGE_INSTRUCTIONS = {
+    "en": "",  # No additional instruction needed for English
+    "zh": (
+        "\n\nIMPORTANT LANGUAGE REQUIREMENT: Write the entire review in Chinese (中文). "
+        "Use Chinese academic writing conventions and formal scholarly tone. "
+        "Section headings should be in Chinese (e.g., 引言, 主题分析, 批判性讨论, 研究空白与未来方向, 结论). "
+        "Keep in-text citations in their original format [Author, Year]. "
+        "Do not include an English translation."
+    ),
+}
+
+
+def get_language_instruction(language: str) -> str:
+    """Get the language instruction suffix for review generation prompts.
+
+    Args:
+        language: Target language code ("en", "zh", etc.)
+
+    Returns:
+        Instruction string to append to review prompts.
+        Empty string for English (default behavior).
+    """
+    if language in LANGUAGE_INSTRUCTIONS:
+        return LANGUAGE_INSTRUCTIONS[language]
+
+    # Generic fallback for unsupported but requested languages
+    return (
+        f"\n\nIMPORTANT LANGUAGE REQUIREMENT: Write the entire review in {language}. "
+        f"Use appropriate academic writing conventions for this language. "
+        "Section headings should also be in the target language. "
+        "Keep in-text citations in their original format [Author, Year]."
+    )

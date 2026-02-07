@@ -382,7 +382,10 @@ async def cmd_review(args) -> int:
     out.stat("Max Papers", max_papers)
     out.stat("Sources", sources)
     out.stat("Review Type", review_type)
+    language = getattr(args, "lang", "en") or "en"
+
     out.stat("GraphRAG", "enabled" if graphrag_enabled else "disabled")
+    out.stat("Language", language)
     out.stat("Output", output_path)
     out.stat("Log File", log_file)
     out.blank()
@@ -408,6 +411,7 @@ async def cmd_review(args) -> int:
             graphrag_enabled=graphrag_enabled,
             batch_size=batch_size,
             local_files=local_files,
+            language=language,
         )
 
         # Check for errors
@@ -789,6 +793,12 @@ Examples:
         nargs="+",
         default=[],
         help="Local PDF files to include in review (paths)",
+    )
+    review_parser.add_argument(
+        "--lang",
+        choices=["en", "zh"],
+        default="en",
+        help="Language for the generated review (default: en). 'zh' generates directly in Chinese.",
     )
 
     # cache command - Cache management
