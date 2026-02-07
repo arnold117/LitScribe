@@ -384,9 +384,14 @@ async def cmd_review(args) -> int:
     out.stat("Review Type", review_type)
     language = getattr(args, "lang", "en") or "en"
 
+    # Pre-generate thread_id so user can note it for resume
+    import uuid as _uuid
+    thread_id = str(_uuid.uuid4())
+
     out.stat("GraphRAG", "enabled" if graphrag_enabled else "disabled")
     out.stat("Language", language)
     out.stat("Output", output_path)
+    out.stat("Thread ID", f"{thread_id}  (for resume if interrupted)")
     out.stat("Log File", log_file)
     out.blank()
     out.info("Starting multi-agent workflow...")
@@ -430,6 +435,7 @@ async def cmd_review(args) -> int:
             batch_size=batch_size,
             local_files=local_files,
             language=language,
+            thread_id=thread_id,
         )
 
         # Check for errors
@@ -577,6 +583,115 @@ async def cmd_review(args) -> int:
         out.header("Review Complete")
         return 0
 
+    except Exception as e:
+        out.error(f"Error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
+async def cmd_resume(args) -> int:
+    """Resume an interrupted literature review from checkpoint."""
+    from agents.graph import resume_literature_review
+
+    log_file = setup_logging(verbose=args.verbose)
+    out = get_output("litscribe.resume")
+
+    thread_id = args.thread_id
+
+    # Determine output path
+    if getattr(args, "output", None):
+        output_path = Path(args.output)
+    else:
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"review_resumed_{timestamp}"
+
+    out.header("LitScribe Resume Review")
+    out.stat("Thread ID", thread_id)
+    out.stat("Output", output_path)
+    out.stat("Log File", log_file)
+    out.blank()
+    out.info("Resuming from last checkpoint...")
+
+    try:
+        final_state = await resume_literature_review(
+            thread_id=thread_id,
+            verbose=args.verbose,
+        )
+
+        # Check for errors
+        errors = final_state.get("errors", [])
+        if errors:
+            out.subheader("Warnings/Errors during processing", "⚠")
+            for err in errors[-5:]:
+                out.bullet(str(err))
+
+        research_question = final_state.get("research_question", "Resumed review")
+
+        # Display results
+        analyzed = final_state.get("analyzed_papers", [])
+        out.subheader("Papers Analyzed", "📖")
+        out.stat("Count", len(analyzed))
+
+        synthesis = final_state.get("synthesis")
+        if synthesis:
+            out.subheader("Review Generated", "✨")
+            out.stat("Themes", len(synthesis.get("themes", [])))
+            out.stat("Research Gaps", len(synthesis.get("gaps", [])))
+            out.stat("Word Count", synthesis.get("word_count", 0))
+            out.stat("Papers Cited", synthesis.get("papers_cited", 0))
+
+            # Save review markdown
+            review_text = synthesis.get("review_text", "")
+            review_file = output_path.with_suffix(".md")
+            with open(review_file, "w", encoding="utf-8") as f:
+                f.write(f"# Literature Review: {research_question}\n\n")
+                f.write(review_text)
+                f.write("\n\n## References\n\n")
+                for cit in synthesis.get("citations_formatted", []):
+                    f.write(f"- {cit}\n")
+            out.success(f"Review saved to: {review_file}", "📄")
+
+            # Save full state as JSON
+            json_file = output_path.with_suffix(".json")
+            search_results = final_state.get("search_results")
+            knowledge_graph = final_state.get("knowledge_graph")
+            self_review = final_state.get("self_review")
+            with open(json_file, "w", encoding="utf-8") as f:
+                output_data = {
+                    "research_question": research_question,
+                    "search_results": search_results,
+                    "analyzed_papers": [dict(p) for p in analyzed],
+                    "knowledge_graph": knowledge_graph,
+                    "synthesis": dict(synthesis) if synthesis else None,
+                    "self_review": dict(self_review) if self_review else None,
+                    "errors": errors,
+                }
+                json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)
+            out.success(f"Full data saved to: {json_file}", "📊")
+
+            # Show preview
+            out.preview("REVIEW PREVIEW", review_text, max_chars=500)
+
+        else:
+            out.error("No synthesis generated")
+
+        # Show session ID for refinement (Phase 9.3)
+        session_id = final_state.get("_session_id")
+        if session_id:
+            out.blank()
+            out.stat("Session ID", session_id)
+            out.info(f"Refine: litscribe session refine {session_id[:12]} -i \"your instruction\"")
+
+        out.header("Resume Complete")
+        return 0
+
+    except ValueError as e:
+        out.error(f"Cannot resume: {e}")
+        return 1
     except Exception as e:
         out.error(f"Error: {e}")
         if args.verbose:
@@ -873,6 +988,25 @@ Examples:
         "--plan-only",
         action="store_true",
         help="Only run the planning agent, show research plan, then stop",
+    )
+
+    # resume command - Resume interrupted review
+    resume_parser = subparsers.add_parser(
+        "resume",
+        help="Resume an interrupted literature review from checkpoint",
+    )
+    resume_parser.add_argument(
+        "thread_id",
+        help="Thread ID of the interrupted review (shown at start of 'litscribe review')",
+    )
+    resume_parser.add_argument(
+        "--output", "-o",
+        help="Output file path (default: output/review_resumed_<timestamp>)",
+    )
+    resume_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show detailed progress and debug info",
     )
 
     # cache command - Cache management
@@ -1307,6 +1441,8 @@ async def async_main(args) -> int:
         return await cmd_demo(args)
     elif args.command == "review":
         return await cmd_review(args)
+    elif args.command == "resume":
+        return await cmd_resume(args)
     elif args.command == "cache":
         return await cmd_cache(args)
     elif args.command == "session":

@@ -307,6 +307,33 @@ async def resume_literature_review(
 
     logger.info("Literature review resumed and completed")
 
+    # Include thread_id in result
+    final_state["_thread_id"] = thread_id
+
+    # Auto-create session for iterative refinement (same as run_literature_review)
+    synthesis = final_state.get("synthesis")
+    if synthesis and synthesis.get("review_text"):
+        try:
+            from versioning.review_versions import create_session, save_version
+            research_question = final_state.get("research_question", "Resumed review")
+            session_id = create_session(
+                research_question=research_question,
+                review_type=final_state.get("review_type", "narrative"),
+                language=final_state.get("language", "en"),
+                thread_id=thread_id,
+                state_snapshot=_serialize_state(final_state),
+            )
+            save_version(
+                session_id=session_id,
+                review_text=synthesis["review_text"],
+                word_count=synthesis.get("word_count", 0),
+                papers_cited=synthesis.get("papers_cited", 0),
+            )
+            final_state["_session_id"] = session_id
+            logger.info(f"Session created: {session_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create session after resume: {e}")
+
     return final_state
 
 
