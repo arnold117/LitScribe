@@ -75,6 +75,39 @@ class SynthesisOutput(TypedDict):
     papers_cited: int
 
 
+# === Phase 9.1: Self-Review Types ===
+
+
+class IrrelevantPaper(TypedDict):
+    """A paper flagged as irrelevant to the research question."""
+
+    paper_id: str
+    title: str
+    reason: str  # Why this paper is irrelevant
+
+
+class WeakClaim(TypedDict):
+    """A claim in the review with weak or missing support."""
+
+    claim: str
+    issue: str  # What's wrong (unsupported, contradicted, etc.)
+
+
+class ReviewAssessment(TypedDict):
+    """Quality assessment from Self-Review Agent."""
+
+    overall_score: float  # 0-1, overall review quality
+    relevance_score: float  # 0-1, paper relevance to research question
+    coverage_score: float  # 0-1, topic coverage completeness
+    coherence_score: float  # 0-1, narrative coherence and flow
+    coverage_gaps: List[str]  # Missing topics or aspects
+    irrelevant_papers: List[IrrelevantPaper]  # Papers that don't belong
+    weak_claims: List[WeakClaim]  # Claims with weak support
+    suggestions: List[str]  # Actionable improvement suggestions
+    needs_additional_search: bool  # Whether more papers are needed
+    additional_queries: List[str]  # Suggested queries for missing coverage
+
+
 # === Phase 7.5: GraphRAG Types ===
 
 
@@ -156,6 +189,7 @@ class LitScribeState(TypedDict):
     3. Critical Reading Agent: parses PDFs, extracts findings, creates summaries
     4. GraphRAG Agent (Phase 7.5): builds knowledge graph, detects communities
     5. Synthesis Agent: identifies themes, finds gaps, generates review
+    6. Self-Review Agent (Phase 9.1): quality assessment, irrelevant paper detection
     """
 
     # === Core Input ===
@@ -182,6 +216,9 @@ class LitScribeState(TypedDict):
     synthesis: Optional[SynthesisOutput]  # Final synthesis output
     technology_comparison: Optional[Dict[str, Any]]  # Tech comparison table
 
+    # === Self-Review Stage (Phase 9.1) ===
+    self_review: Optional[ReviewAssessment]  # Quality assessment
+
     # === Workflow Control ===
     current_agent: Literal[
         "supervisor",
@@ -189,6 +226,7 @@ class LitScribeState(TypedDict):
         "critical_reading",
         "graphrag",
         "synthesis",
+        "self_review",
         "complete"
     ]
     iteration_count: int  # Track iterations for loop control
@@ -262,6 +300,7 @@ def create_initial_state(
         batch_state=None,
         synthesis=None,
         technology_comparison=None,
+        self_review=None,
         current_agent="supervisor",
         iteration_count=0,
         errors=[],

@@ -16,6 +16,7 @@ from langgraph.graph import END, StateGraph
 
 from agents.critical_reading_agent import critical_reading_agent
 from agents.discovery_agent import discovery_agent
+from agents.self_review_agent import self_review_agent
 from agents.state import LitScribeState, create_initial_state
 from agents.supervisor import supervisor_agent
 from agents.synthesis_agent import synthesis_agent
@@ -26,7 +27,7 @@ from cache.database import get_cache_db
 logger = logging.getLogger(__name__)
 
 
-def should_continue(state: LitScribeState) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "complete"]:
+def should_continue(state: LitScribeState) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "self_review", "complete"]:
     """Routing function for the conditional edge.
 
     Determines which node to visit next based on current_agent in state.
@@ -48,6 +49,8 @@ def should_continue(state: LitScribeState) -> Literal["discovery", "critical_rea
         return "graphrag"
     elif current == "synthesis":
         return "synthesis"
+    elif current == "self_review":
+        return "self_review"
     else:
         return "complete"
 
@@ -82,6 +85,7 @@ def create_review_graph() -> StateGraph:
     workflow.add_node("critical_reading", critical_reading_agent)
     workflow.add_node("graphrag", graphrag_agent)  # Phase 7.5
     workflow.add_node("synthesis", synthesis_agent)
+    workflow.add_node("self_review", self_review_agent)  # Phase 9.1
 
     # Set the entry point
     workflow.set_entry_point("supervisor")
@@ -95,6 +99,7 @@ def create_review_graph() -> StateGraph:
             "critical_reading": "critical_reading",
             "graphrag": "graphrag",
             "synthesis": "synthesis",
+            "self_review": "self_review",
             "complete": END,
         }
     )
@@ -104,6 +109,7 @@ def create_review_graph() -> StateGraph:
     workflow.add_edge("critical_reading", "supervisor")
     workflow.add_edge("graphrag", "supervisor")  # Phase 7.5
     workflow.add_edge("synthesis", "supervisor")
+    workflow.add_edge("self_review", "supervisor")  # Phase 9.1
 
     return workflow
 

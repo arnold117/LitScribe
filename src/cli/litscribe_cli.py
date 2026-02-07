@@ -397,6 +397,7 @@ async def cmd_review(args) -> int:
         out.bullet("Synthesis Agent: Generating review")
     else:
         out.bullet("Synthesis Agent: Generating review")
+    out.bullet("Self-Review Agent: Quality assessment")
     out.blank()
 
     try:
@@ -466,6 +467,37 @@ async def cmd_review(args) -> int:
                 for gap in synthesis["gaps"][:3]:
                     out.bullet(gap[:80] + "..." if len(gap) > 80 else gap)
 
+        # Display self-review results (Phase 9.1)
+        self_review = final_state.get("self_review")
+        if self_review:
+            out.subheader("Self-Review Assessment", "🔎")
+            out.stat("Overall", f"{self_review.get('overall_score', 0):.2f}")
+            out.stat("Relevance", f"{self_review.get('relevance_score', 0):.2f}")
+            out.stat("Coverage", f"{self_review.get('coverage_score', 0):.2f}")
+            out.stat("Coherence", f"{self_review.get('coherence_score', 0):.2f}")
+
+            irrelevant = self_review.get("irrelevant_papers", [])
+            if irrelevant:
+                out.subheader(f"Irrelevant Papers ({len(irrelevant)})", "⚠")
+                for p in irrelevant:
+                    out.bullet(f"[{p.get('paper_id', '?')}] {p.get('title', '?')}: {p.get('reason', '')}")
+
+            gaps = self_review.get("coverage_gaps", [])
+            if gaps:
+                out.subheader("Coverage Gaps", "📋")
+                for gap in gaps[:3]:
+                    out.bullet(gap)
+
+            suggestions = self_review.get("suggestions", [])
+            if suggestions:
+                out.subheader("Suggestions", "💡")
+                for s in suggestions[:3]:
+                    out.bullet(s)
+
+            if self_review.get("overall_score", 1.0) < 0.7:
+                out.warning("Overall score below 0.7 — review may need revision")
+
+        if synthesis:
             # Always save output
             review_text = synthesis.get("review_text", "")
 
@@ -489,6 +521,7 @@ async def cmd_review(args) -> int:
                     "analyzed_papers": [dict(p) for p in analyzed],
                     "knowledge_graph": knowledge_graph,  # Phase 7.5
                     "synthesis": dict(synthesis) if synthesis else None,
+                    "self_review": dict(self_review) if self_review else None,
                     "errors": errors,
                 }
                 json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)

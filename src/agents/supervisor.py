@@ -46,7 +46,7 @@ def get_workflow_status(state: LitScribeState) -> Dict[str, Any]:
 
 def determine_next_agent(
     state: LitScribeState,
-) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "complete"]:
+) -> Literal["discovery", "critical_reading", "graphrag", "synthesis", "self_review", "complete"]:
     """Determine which agent should run next based on state.
 
     Follows a linear workflow:
@@ -54,7 +54,8 @@ def determine_next_agent(
     2. Critical Reading: if papers found but not analyzed
     3. GraphRAG: if papers analyzed but no knowledge graph (Phase 7.5)
     4. Synthesis: if GraphRAG done (or disabled) but no synthesis
-    5. Complete: if synthesis done or errors prevent progress
+    5. Self-Review: if synthesis done but no self-review (Phase 9.1)
+    6. Complete: if self-review done or errors prevent progress
 
     Args:
         state: Current workflow state
@@ -99,6 +100,10 @@ def determine_next_agent(
     # Phase 4: All papers analyzed (and GraphRAG done if enabled), need synthesis
     if analyzed_papers and synthesis is None:
         return "synthesis"
+
+    # Phase 5: Synthesis done but self-review not done (Phase 9.1)
+    if synthesis is not None and state.get("self_review") is None:
+        return "self_review"
 
     # All done
     return "complete"
