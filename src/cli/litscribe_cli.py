@@ -651,14 +651,22 @@ async def cmd_review(args) -> int:
                     instruction = input("  Refinement instruction: ").strip()
                     if instruction:
                         try:
+                            out.info("Classifying instruction and refining review...")
                             result = await run_refinement(session_id, instruction)
                             out.success(f"Version {result['version_number']} created", "✅")
                             out.stat("Word Count", result["word_count"])
-                            # Update saved files
+                            # Update saved files (include references)
                             review_file = output_path.with_suffix(".md")
+                            citations = synthesis.get("citations_formatted", [])
                             with open(review_file, "w", encoding="utf-8") as f:
                                 f.write(f"# Literature Review: {research_question}\n\n")
                                 f.write(result["review_text"])
+                                if citations:
+                                    f.write("\n\n## References\n\n")
+                                    for cit in citations:
+                                        f.write(f"- {cit}\n")
+                            # Update synthesis review_text for "Show full text"
+                            synthesis["review_text"] = result["review_text"]
                             out.success(f"Updated: {review_file}", "📄")
                             out.preview("REFINED PREVIEW", result["review_text"], max_chars=500)
                             continue

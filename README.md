@@ -11,17 +11,19 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 ## Key Features
 
 ### Multi-Agent Literature Review
-- **Supervisor Agent**: LangGraph-based workflow orchestration with state routing
-- **Planning Agent**: Complexity assessment (1-5), sub-topic decomposition, `--plan-only` mode
-- **Discovery Agent**: Query expansion, multi-source search (parallel), snowball sampling
-- **Critical Reading Agent**: PDF parsing, key findings extraction, methodology analysis (batched)
-- **GraphRAG Agent**: Knowledge graph construction, entity extraction, community detection
-- **Synthesis Agent**: GraphRAG-enhanced theme identification, gap analysis, review generation
-- **Self-Review Agent**: Automated quality assessment (relevance, coverage, coherence, argumentation)
-- **Refinement Agent**: Iterative review modification via natural language instructions
+- **Supervisor Agent**: LangGraph-based workflow orchestration with state routing, self-review loop-back
+- **Planning Agent**: Complexity assessment (1-5), sub-topic decomposition, **domain detection** (arXiv categories, S2 fields, PubMed MeSH), CLI confirmation for complex plans
+- **Discovery Agent**: **Domain-aware** query expansion, multi-source search with field filtering, keyword-validated snowball sampling
+- **Critical Reading Agent**: PDF parsing, 5-8 key findings extraction, methodology analysis, **LLM-assessed relevance scoring**
+- **GraphRAG Agent**: Knowledge graph construction, entity extraction with research context, **relevance-gated** (filters low-relevance papers)
+- **Synthesis Agent**: GraphRAG-enhanced theme identification, gap analysis, review generation with formatted citations
+- **Self-Review Agent**: Quality assessment, **actionable irrelevant paper removal**, loop-back to Discovery when score < 0.6
+- **Refinement Agent**: Iterative review modification via natural language instructions, in-process refinement from post-review menu
 
 ### Multi-Source Search
 - Unified search across **arXiv**, **PubMed**, **Semantic Scholar**
+- **Domain filtering**: arXiv category, Semantic Scholar `fields_of_study`, PubMed MeSH terms
+- **Keyword-based relevance scoring** (replaces positional scoring) — title/abstract/keyword matching
 - **Zotero** integration for personal library management
 - Intelligent deduplication and merging across sources
 - Citation tracking and paper recommendations
@@ -63,10 +65,13 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **Deep integration**: Communities used directly as themes in synthesis
 
 ### Quality Assurance & Iterative Refinement
-- **Self-Review**: Automated scoring (relevance, coverage, coherence, argumentation), irrelevant paper detection
-- **Planning**: Complexity-aware sub-topic decomposition with interactive confirmation
+- **Self-Review**: Automated scoring (relevance, coverage, coherence, argumentation), **actionable** irrelevant paper removal, loop-back to Discovery when quality < 0.6
+- **Planning**: Complexity-aware sub-topic decomposition, **domain detection** for search filtering, CLI confirmation before execution
 - **Refinement**: Natural language instructions to modify reviews (add/remove/modify/rewrite sections)
+- **Post-Review Menu**: Interactive choices after review — refine in-process, show full text, or save & exit
 - **Session Management**: Git-like version tracking with unified diffs, rollback support
+- **Language Detection**: Warns on mismatch (e.g., English query + `--lang zh`), auto-suggests correction
+- **Local-Files-First**: `--local-files` prompts whether to also search online; supports offline-only analysis
 - **Non-blocking**: All quality agents use graceful fallbacks — never block the main workflow
 
 ## Tech Stack
@@ -98,43 +103,44 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 │         ▼                                                │               │
 │  ┌──────────────┐                                        │               │
 │  │  Planning    │  Complexity assessment (1-5)           │               │
-│  │    Agent     │  Sub-topic decomposition               │               │
+│  │    Agent     │  Domain detection + search filters     │               │
 │  └──────┬───────┘                                        │               │
 │         │                                                │               │
 │         ▼                                                │               │
 │  ┌──────────────┐     ┌─────────────────┐               │               │
 │  │  Discovery   │────▶│ MCP Servers     │               │               │
-│  │    Agent     │     │ • arXiv/PubMed  │               │               │
-│  │              │     │ • Semantic S.   │               │               │
-│  │ • Query exp  │     │ • Zotero        │               │               │
-│  └──────┬───────┘     └─────────────────┘               │               │
-│         │                                                │               │
-│         ▼                                                │               │
-│  ┌──────────────┐     ┌─────────────────┐               │               │
-│  │  Critical    │────▶│ PDF Parser      │               │               │
-│  │  Reading     │     │ • pymupdf4llm   │               │               │
-│  └──────┬───────┘     └─────────────────┘               │               │
-│         │                                                │               │
-│         ▼                                                │               │
-│  ┌──────────────┐     ┌─────────────────┐               │               │
-│  │  GraphRAG    │────▶│ Knowledge Graph │               │               │
-│  │    Agent     │     │ • Entities      │               │               │
-│  │              │     │ • Communities   │               │               │
-│  └──────┬───────┘     └─────────────────┘               │               │
-│         │                                                │               │
-│         ▼                                                │               │
-│  ┌──────────────┐                                        │               │
-│  │  Synthesis   │────────────────────────────────────────┘               │
-│  │    Agent     │                                                        │
-│  └──────┬───────┘                                                        │
-│         │                                                                │
-│         ▼                                                                │
-│  ┌──────────────┐     ┌─────────────────┐                               │
-│  │ Self-Review  │     │ SQLite Cache    │                               │
-│  │    Agent     │     │ • Papers/PDFs   │                               │
-│  │ • Scoring    │     │ • Sessions      │                               │
-│  │ • Gap detect │     │ • Versions      │                               │
-│  └──────┬───────┘     └─────────────────┘                               │
+│  │    Agent     │◄┐   │ • arXiv/PubMed  │               │               │
+│  │ • Domain-    │ │   │ • Semantic S.   │               │               │
+│  │   aware      │ │   │ • Zotero        │               │               │
+│  └──────┬───────┘ │   └─────────────────┘               │               │
+│         │         │                                      │               │
+│         ▼         │                                      │               │
+│  ┌──────────────┐ │   ┌─────────────────┐               │               │
+│  │  Critical    │ │──▶│ PDF Parser      │               │               │
+│  │  Reading     │ │   │ • pymupdf4llm   │               │               │
+│  └──────┬───────┘ │   └─────────────────┘               │               │
+│         │         │                                      │               │
+│         ▼         │                                      │               │
+│  ┌──────────────┐ │   ┌─────────────────┐               │               │
+│  │  GraphRAG    │ │──▶│ Knowledge Graph │               │               │
+│  │    Agent     │ │   │ • Entities      │               │               │
+│  │ • Relevance  │ │   │ • Communities   │               │               │
+│  │   gated      │ │   └─────────────────┘               │               │
+│  └──────┬───────┘ │                                      │               │
+│         │         │                                      │               │
+│         ▼         │                                      │               │
+│  ┌──────────────┐ │                                      │               │
+│  │  Synthesis   │─┼──────────────────────────────────────┘               │
+│  │    Agent     │ │                                                      │
+│  └──────┬───────┘ │                                                      │
+│         │         │                                                      │
+│         ▼         │  loop back                                           │
+│  ┌──────────────┐ │  (score < 0.6)    ┌─────────────────┐               │
+│  │ Self-Review  │─┘                   │ SQLite Cache    │               │
+│  │ • Scoring    │                     │ • Papers/PDFs   │               │
+│  │ • Remove bad │                     │ • Sessions      │               │
+│  │ • Loop-back  │                     │ • Versions      │               │
+│  └──────┬───────┘                     └─────────────────┘               │
 │         │                                                                │
 │         ▼                                                                │
 │  ┌──────────────┐     ┌─────────────────┐                               │
@@ -145,8 +151,9 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 │         │                                                                │
 │         ▼                                                                │
 │  ┌──────────────┐                                                        │
-│  │ Refinement   │  User instruction → classify → execute → save version │
-│  │    Agent     │  Standalone entry (not in main graph)                  │
+│  │ Interactive  │  [1] Save & exit                                       │
+│  │  Menu / Re-  │  [2] Refine → Refinement Agent → save version         │
+│  │  finement    │  [3] Show full text                                    │
 │  └──────────────┘                                                        │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -168,38 +175,47 @@ sequenceDiagram
     participant Refinement
 
     User->>CLI: litscribe review "question"
-    CLI->>Supervisor: Start workflow
 
-    Supervisor->>Planning: Assess complexity
-    Planning->>Planning: Sub-topic decomposition
-    Planning-->>Supervisor: Research plan
+    CLI->>Planning: Assess complexity + detect domain
+    Planning-->>CLI: Research plan (domain, arXiv cats, S2 fields, MeSH)
+    CLI-->>User: Show plan (if complex)
+    User-->>CLI: Confirm plan
+
+    CLI->>Supervisor: Start workflow (inject plan)
 
     Supervisor->>Discovery: Search papers
-    Discovery->>Discovery: Query expansion + multi-source search
-    Discovery-->>Supervisor: Papers found
+    Discovery->>Discovery: Domain-aware query expansion + filtered search
+    Discovery-->>Supervisor: Papers found (keyword relevance scored)
 
     Supervisor->>CriticalReading: Analyze papers
-    CriticalReading->>CriticalReading: PDF parse & extract
+    CriticalReading->>CriticalReading: PDF parse + 5-8 findings + relevance assessment
     CriticalReading-->>Supervisor: Paper summaries
 
     Supervisor->>GraphRAG: Build knowledge graph
-    GraphRAG->>GraphRAG: Entity extraction + community detection
+    GraphRAG->>GraphRAG: Relevance-gated entity extraction + community detection
     GraphRAG-->>Supervisor: Communities & themes
 
     Supervisor->>Synthesis: Generate review
-    Synthesis->>Synthesis: Theme synthesis + gap analysis
+    Synthesis->>Synthesis: Theme synthesis + gap analysis + citations
     Synthesis-->>Supervisor: Review text
 
     Supervisor->>SelfReview: Quality assessment
-    SelfReview-->>Supervisor: Scores + suggestions
+    SelfReview->>SelfReview: Score + remove irrelevant papers
+
+    alt Score < 0.6 (online mode)
+        SelfReview-->>Supervisor: Loop back to Discovery
+        Supervisor->>Discovery: Re-search (clear synthesis/graphrag)
+    else Score >= 0.6
+        SelfReview-->>Supervisor: Complete
+    end
 
     Supervisor-->>CLI: Final state + auto-create session (v1)
-    CLI-->>User: Save .md + .json + show session_id
+    CLI-->>User: Save .md + .json + interactive menu
 
-    Note over User,Refinement: Iterative refinement (optional)
-    User->>CLI: litscribe session refine <id> -i "add LoRA discussion"
+    Note over User,Refinement: Post-review interactive menu
+    User->>CLI: [2] Refine review + instruction
     CLI->>Refinement: classify + execute
-    Refinement-->>CLI: Updated review (v2) + diff
+    Refinement-->>CLI: Updated review (v2) + references
 ```
 
 ## Quick Start
@@ -343,7 +359,9 @@ Export generates additional formats:
 
 **Agent Architecture**: 8 agents orchestrated by LangGraph StateGraph:
 - Main pipeline: Supervisor → Planning → Discovery → Critical Reading → GraphRAG → Synthesis → Self-Review
-- Standalone: Refinement Agent (bypasses main graph, invoked via `session refine`)
+- **Loop-back**: Self-Review can route back to Discovery (score < 0.6), clearing downstream state (synthesis, graphrag, self-review) for a fresh pass
+- **Pre-workflow planning**: CLI runs Planning Agent before the graph, injects the approved plan to skip re-planning inside the workflow
+- Standalone: Refinement Agent (bypasses main graph, invoked via `session refine` or post-review interactive menu)
 - All quality agents (Self-Review, Refinement) use graceful fallbacks and never block the main workflow
 
 ---
