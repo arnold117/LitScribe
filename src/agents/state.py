@@ -98,6 +98,12 @@ class ResearchPlan(TypedDict):
     is_interactive: bool  # Whether user confirmation is needed
     confirmed: bool  # Whether plan has been confirmed
 
+    # Domain filtering (Emergency Fix)
+    domain_hint: str  # Primary academic field, e.g. "Biology", "Computer Science"
+    arxiv_categories: List[str]  # arXiv category filters, e.g. ["q-bio.BM"]
+    s2_fields: List[str]  # Semantic Scholar field filters, e.g. ["Biology"]
+    pubmed_mesh: List[str]  # PubMed MeSH term filters, e.g. ["Alkaloids"]
+
 
 # === Phase 9.1: Self-Review Types ===
 
@@ -300,6 +306,7 @@ class LitScribeState(TypedDict):
     batch_size: int  # Batch size for processing papers (default: 20)
     local_files: List[str]  # Local PDF file paths to include in review
     language: str  # Output language for review text ("en", "zh", etc.)
+    domain_hint: Optional[str]  # Detected research domain for filtering
 
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
@@ -316,6 +323,7 @@ def create_initial_state(
     batch_size: int = 20,
     local_files: Optional[List[str]] = None,
     language: str = "en",
+    research_plan: Optional[Dict[str, Any]] = None,
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
 
@@ -330,6 +338,7 @@ def create_initial_state(
         batch_size: Batch size for processing papers (default: 20)
         local_files: List of local PDF file paths to include in review
         language: Output language for review text (default: "en")
+        research_plan: Pre-approved research plan to inject (skips planning agent)
 
     Returns:
         Initialized LitScribeState ready for the workflow
@@ -353,7 +362,7 @@ def create_initial_state(
         papers_to_analyze=[],
         analyzed_papers=[],
         parsed_documents={},
-        research_plan=None,
+        research_plan=research_plan,
         knowledge_graph=None,
         graphrag_enabled=graphrag_enabled,
         batch_state=None,
@@ -373,5 +382,6 @@ def create_initial_state(
         batch_size=batch_size,
         local_files=local_files,
         language=language,
+        domain_hint=research_plan.get("domain_hint") if research_plan else None,
         llm_config=llm_config,
     )

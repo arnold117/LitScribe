@@ -16,6 +16,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from cli.output import OutputManager, get_output
 
 
+def detect_query_language(text: str) -> str:
+    """Detect whether the query is primarily Chinese or English.
+
+    Args:
+        text: The research question text
+
+    Returns:
+        "zh" if Chinese characters dominate, "en" otherwise
+    """
+    chinese = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    alpha = sum(1 for c in text if c.isalpha() or '\u4e00' <= c <= '\u9fff')
+    if alpha > 0 and chinese / alpha > 0.3:
+        return "zh"
+    return "en"
+
+
 def setup_logging(
     log_dir: Optional[Path] = None,
     verbose: bool = False,
@@ -344,7 +360,7 @@ async def cmd_citations(args) -> int:
 async def cmd_review(args) -> int:
     """Run complete literature review using multi-agent system."""
     import warnings
-    from agents.graph import run_literature_review
+    from agents.graph import run_literature_review, run_refinement
 
     # Setup logging (to console and file)
     log_file = setup_logging(verbose=args.verbose)
@@ -383,6 +399,21 @@ async def cmd_review(args) -> int:
     out.stat("Sources", sources)
     out.stat("Review Type", review_type)
     language = getattr(args, "lang", "en") or "en"
+
+    # Language mismatch detection (Emergency Fix Step 5)
+    query_lang = detect_query_language(research_question)
+    if query_lang == "en" and language == "zh":
+        out.warning("Query appears to be English but output language is set to Chinese (--lang zh).")
+        confirm = input("  Continue with Chinese output? (Y/n): ").strip()
+        if confirm.lower() == "n":
+            language = "en"
+            out.info("Switched output language to English.")
+    elif query_lang == "zh" and language == "en":
+        out.warning("Query appears to be Chinese but output language is English.")
+        confirm = input("  Switch to Chinese output? (Y/n): ").strip()
+        if confirm.lower() != "n":
+            language = "zh"
+            out.info("Switched output language to Chinese.")
 
     # Pre-generate thread_id so user can note it for resume
     import uuid as _uuid
@@ -423,8 +454,38 @@ async def cmd_review(args) -> int:
             return 1
 
     try:
-        # Run the multi-agent workflow
+        # Local files workflow (Emergency Fix Step 6)
         local_files = getattr(args, "local_files", []) or []
+        if local_files:
+            out.info(f"Found {len(local_files)} local PDF file(s) to analyze.")
+            choice = input("  Also search online for additional papers? (y/N): ").strip()
+            if choice.lower() != "y":
+                sources = []  # Empty sources = skip online discovery
+                out.info("Will analyze local files only (no online search).")
+            else:
+                out.info("Will analyze local files AND search online.")
+
+        # Planning confirmation (Emergency Fix Step 7a)
+        # Run planning agent first; if complex, show plan and ask for confirmation
+        injected_plan = None
+        from agents.planning_agent import assess_and_decompose, format_plan_for_user
+        try:
+            out.info("Assessing research complexity...")
+            plan = await assess_and_decompose(research_question, max_papers=max_papers)
+            complexity = plan.get("complexity_score", 1)
+            if complexity >= 3:
+                out.subheader("Research Plan", "📋")
+                out.info(format_plan_for_user(plan))
+                out.blank()
+                confirm = input("Proceed with this plan? (Y/n): ").strip()
+                if confirm.lower() == "n":
+                    out.info("Review cancelled.")
+                    return 0
+            injected_plan = plan
+        except Exception as e:
+            out.warning(f"Planning pre-check failed ({e}), will plan during workflow.")
+
+        # Run the multi-agent workflow
         final_state = await run_literature_review(
             research_question=research_question,
             max_papers=max_papers,
@@ -436,6 +497,7 @@ async def cmd_review(args) -> int:
             local_files=local_files,
             language=language,
             thread_id=thread_id,
+            research_plan=injected_plan,
         )
 
         # Check for errors
@@ -573,9 +635,47 @@ async def cmd_review(args) -> int:
         else:
             out.error("No synthesis generated")
 
-        # Show session ID for refinement (Phase 9.3)
+        # Post-review interactive menu (Emergency Fix Step 7b)
         session_id = final_state.get("_session_id")
-        if session_id:
+        if session_id and synthesis:
+            out.blank()
+            out.stat("Session ID", session_id)
+            while True:
+                out.blank()
+                out.info("What next?")
+                out.bullet("[1] Save & exit (default)")
+                out.bullet("[2] Refine review")
+                out.bullet("[3] Show full review text")
+                choice = input("  Choice (1/2/3): ").strip()
+                if choice == "2":
+                    instruction = input("  Refinement instruction: ").strip()
+                    if instruction:
+                        try:
+                            result = await run_refinement(session_id, instruction)
+                            out.success(f"Version {result['version_number']} created", "✅")
+                            out.stat("Word Count", result["word_count"])
+                            # Update saved files
+                            review_file = output_path.with_suffix(".md")
+                            with open(review_file, "w", encoding="utf-8") as f:
+                                f.write(f"# Literature Review: {research_question}\n\n")
+                                f.write(result["review_text"])
+                            out.success(f"Updated: {review_file}", "📄")
+                            out.preview("REFINED PREVIEW", result["review_text"], max_chars=500)
+                            continue
+                        except Exception as e:
+                            out.error(f"Refinement failed: {e}")
+                            continue
+                    else:
+                        out.info("No instruction provided, skipping.")
+                        continue
+                elif choice == "3":
+                    review_text = synthesis.get("review_text", "")
+                    out.blank()
+                    print(review_text)
+                    continue
+                else:
+                    break
+        elif session_id:
             out.blank()
             out.stat("Session ID", session_id)
             out.info(f"Refine: litscribe session refine {session_id[:12]} -i \"your instruction\"")

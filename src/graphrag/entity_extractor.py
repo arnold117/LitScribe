@@ -131,6 +131,7 @@ async def extract_entities_from_paper(
     paper: PaperSummary,
     parsed_doc: Optional[Dict[str, Any]] = None,
     llm_config: Optional[Dict[str, Any]] = None,
+    research_question: str = "",
 ) -> Tuple[List[ExtractedEntity], List[EntityMention]]:
     """Extract entities from a single paper using LLM.
 
@@ -138,6 +139,7 @@ async def extract_entities_from_paper(
         paper: Paper summary with metadata
         parsed_doc: Optional parsed document with full text
         llm_config: LLM configuration
+        research_question: Research question for contextual extraction
 
     Returns:
         Tuple of (extracted entities, entity mentions)
@@ -157,6 +159,7 @@ async def extract_entities_from_paper(
         year=paper.get("year", "Unknown"),
         abstract=paper.get("abstract", "")[:1000],  # Limit abstract
         content_section=content_section,
+        research_question=research_question or "General academic research",
     )
 
     # Call LLM with system prompt
@@ -238,6 +241,7 @@ async def extract_entities_batch(
     batch_size: int = 10,
     max_concurrent: int = 5,
     llm_config: Optional[Dict[str, Any]] = None,
+    research_question: str = "",
 ) -> Tuple[List[ExtractedEntity], List[EntityMention]]:
     """Extract entities from multiple papers with batching.
 
@@ -247,6 +251,7 @@ async def extract_entities_batch(
         batch_size: Number of papers to process in each batch
         max_concurrent: Maximum concurrent LLM calls
         llm_config: LLM configuration
+        research_question: Research question for contextual extraction
 
     Returns:
         Tuple of (all entities, all mentions)
@@ -263,7 +268,9 @@ async def extract_entities_batch(
         async with semaphore:
             paper_id = paper.get("paper_id", "unknown")
             parsed_doc = parsed_documents.get(paper_id)
-            return await extract_entities_from_paper(paper, parsed_doc, llm_config)
+            return await extract_entities_from_paper(
+                paper, parsed_doc, llm_config, research_question=research_question,
+            )
 
     # Process in batches
     for batch_start in range(0, len(papers), batch_size):

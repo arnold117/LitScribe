@@ -34,23 +34,31 @@ from cache.cached_tools import CachedTools, get_cached_tools
 logger = logging.getLogger(__name__)
 
 
-async def expand_queries(research_question: str, model: Optional[str] = None) -> List[str]:
+async def expand_queries(
+    research_question: str,
+    model: Optional[str] = None,
+    domain_hint: str = "",
+) -> List[str]:
     """Expand a research question into multiple search queries.
 
     Uses LLM to generate diverse queries that cover different aspects
-    of the research topic.
+    of the research topic, constrained to the detected domain.
 
     Args:
         research_question: The original research question
         model: LLM model to use (optional)
+        domain_hint: Detected research domain for constraining queries
 
     Returns:
         List of expanded search queries
     """
-    prompt = QUERY_EXPANSION_PROMPT.format(research_question=research_question)
+    prompt = QUERY_EXPANSION_PROMPT.format(
+        research_question=research_question,
+        domain_hint=domain_hint or "General",
+    )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.7, max_tokens=500)
+        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=500)
 
         # Parse JSON array from response
         # Handle possible markdown code blocks
@@ -96,6 +104,9 @@ async def search_all_sources(
     sources: List[str],
     max_per_source: int = 20,
     cached_tools: Optional[CachedTools] = None,
+    arxiv_categories: Optional[List[str]] = None,
+    s2_fields: Optional[List[str]] = None,
+    pubmed_mesh: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Search multiple sources with multiple queries.
 
@@ -109,6 +120,9 @@ async def search_all_sources(
         sources: List of sources to search
         max_per_source: Maximum results per source per query
         cached_tools: CachedTools instance for local-first search (optional)
+        arxiv_categories: arXiv category filters (e.g. ["q-bio.BM"])
+        s2_fields: Semantic Scholar field filters (e.g. ["Biology"])
+        pubmed_mesh: PubMed MeSH term filters (e.g. ["Alkaloids"])
 
     Returns:
         Combined search results with deduplication
@@ -219,6 +233,7 @@ async def select_papers(
     research_question: str,
     max_papers: int = 10,
     model: Optional[str] = None,
+    domain_hint: str = "",
 ) -> List[Dict[str, Any]]:
     """Select the most relevant papers for the literature review.
 
@@ -230,6 +245,7 @@ async def select_papers(
         research_question: The research question
         max_papers: Maximum number of papers to select
         model: LLM model to use
+        domain_hint: Research domain for filtering
 
     Returns:
         Selected papers in ranked order
@@ -243,6 +259,7 @@ async def select_papers(
 
     prompt = PAPER_SELECTION_PROMPT.format(
         research_question=research_question,
+        domain_hint=domain_hint or "General",
         total_papers=len(papers),
         papers_list=papers_list,
         max_papers=max_papers,
@@ -286,26 +303,65 @@ async def select_papers(
         return selected_papers
 
     except (json.JSONDecodeError, LLMError) as e:
-        logger.warning(f"Paper selection failed: {e}, falling back to citation-based ranking")
-        # Fall back to simple citation-based ranking
-        sorted_papers = sorted(papers, key=lambda x: x.get("citations", 0), reverse=True)
+        logger.warning(f"Paper selection failed: {e}, falling back to relevance-based ranking")
+        # Fall back to relevance_score first, then citations as tiebreaker
+        sorted_papers = sorted(
+            papers,
+            key=lambda x: (x.get("relevance_score", 0), x.get("citations", 0)),
+            reverse=True,
+        )
         return sorted_papers[:max_papers]
+
+
+def _paper_matches_keywords(paper: Dict[str, Any], keywords: List[str], min_matches: int = 2) -> bool:
+    """Check if a paper's title/abstract contains enough keywords from the research question.
+
+    Args:
+        paper: Paper dict with title and abstract
+        keywords: Keywords extracted from research question
+        min_matches: Minimum number of keyword matches required
+
+    Returns:
+        True if paper matches enough keywords
+    """
+    text = (paper.get("title", "") + " " + paper.get("abstract", "")).lower()
+    matches = sum(1 for kw in keywords if kw.lower() in text)
+    return matches >= min_matches
+
+
+def _extract_keywords(research_question: str) -> List[str]:
+    """Extract meaningful keywords from research question (skip stopwords)."""
+    stopwords = {
+        "the", "a", "an", "in", "on", "of", "for", "and", "or", "to", "is",
+        "are", "was", "were", "what", "how", "which", "that", "this", "with",
+        "from", "by", "at", "its", "their", "have", "has", "been", "be",
+        "do", "does", "did", "will", "can", "could", "would", "should",
+        "about", "into", "through", "during", "before", "after", "between",
+        "latest", "recent", "advances", "methods", "approaches", "review",
+        "survey", "applications", "based",
+    }
+    words = research_question.lower().split()
+    # Keep words >= 3 chars that aren't stopwords
+    return [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in stopwords]
 
 
 async def snowball_sampling(
     seed_papers: List[Dict[str, Any]],
     max_additional: int = 5,
     direction: str = "both",
+    research_question: str = "",
 ) -> List[Dict[str, Any]]:
     """Find additional papers through citation network.
 
     Performs forward (citations) and backward (references) snowball sampling
-    to discover related papers not found in initial search.
+    to discover related papers not found in initial search. Validates that
+    discovered papers are relevant to the research question.
 
     Args:
         seed_papers: Initial set of papers to expand from
         max_additional: Maximum additional papers to add
         direction: "citations", "references", or "both"
+        research_question: Research question for keyword-based relevance filtering
 
     Returns:
         List of additional papers found through snowball sampling
@@ -315,6 +371,9 @@ async def snowball_sampling(
         p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
         for p in seed_papers
     }
+
+    # Extract keywords for relevance validation
+    keywords = _extract_keywords(research_question) if research_question else []
 
     # Sample from top cited papers to avoid too many API calls
     top_seeds = sorted(
@@ -335,6 +394,10 @@ async def snowball_sampling(
                 for cited_paper in citations_result.get("citations", [])[:3]:
                     cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
                     if cited_id and cited_id not in seen_ids:
+                        # Validate relevance before adding
+                        if keywords and not _paper_matches_keywords(cited_paper, keywords):
+                            logger.debug(f"Snowball: skipping irrelevant citation {cited_id}")
+                            continue
                         seen_ids.add(cited_id)
                         additional_papers.append(cited_paper)
 
@@ -344,6 +407,10 @@ async def snowball_sampling(
                 for ref_paper in refs_result.get("references", [])[:3]:
                     ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
                     if ref_id and ref_id not in seen_ids:
+                        # Validate relevance before adding
+                        if keywords and not _paper_matches_keywords(ref_paper, keywords):
+                            logger.debug(f"Snowball: skipping irrelevant reference {ref_id}")
+                            continue
                         seen_ids.add(ref_id)
                         additional_papers.append(ref_paper)
 
@@ -379,9 +446,44 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
 
     research_plan = state.get("research_plan")
+    domain_hint = state.get("domain_hint", "")
+
+    # Extract domain filters from research plan
+    arxiv_categories = None
+    s2_fields = None
+    pubmed_mesh = None
+    if research_plan:
+        domain_hint = domain_hint or research_plan.get("domain_hint", "")
+        arxiv_categories = research_plan.get("arxiv_categories") or None
+        s2_fields = research_plan.get("s2_fields") or None
+        pubmed_mesh = research_plan.get("pubmed_mesh") or None
 
     logger.info(f"Discovery Agent starting for: {research_question}")
-    logger.info(f"Cache enabled: {cache_enabled}")
+    logger.info(f"Cache enabled: {cache_enabled}, domain: {domain_hint or 'undetected'}")
+    if arxiv_categories:
+        logger.info(f"arXiv categories: {arxiv_categories}")
+    if s2_fields:
+        logger.info(f"S2 fields: {s2_fields}")
+    if pubmed_mesh:
+        logger.info(f"PubMed MeSH: {pubmed_mesh}")
+
+    # Local-files-only mode: skip online search (Emergency Fix Step 6)
+    local_files = state.get("local_files", [])
+    if not sources and local_files:
+        logger.info("Local-files-only mode: skipping online search")
+        return {
+            "search_results": SearchResult(
+                query=research_question,
+                expanded_queries=[],
+                papers=[],
+                source_counts={},
+                total_found=0,
+                search_timestamp=datetime.now().isoformat(),
+            ),
+            "papers_to_analyze": [],
+            "errors": errors,
+            "current_agent": "critical_reading",
+        }
 
     # Initialize cached tools if caching is enabled
     cached_tools = get_cached_tools(cache_enabled=cache_enabled) if cache_enabled else None
@@ -396,20 +498,23 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     plan_queries.extend(topic.get("custom_queries", []))
             if plan_queries:
                 # Combine plan queries with LLM-expanded queries
-                llm_queries = await expand_queries(research_question)
+                llm_queries = await expand_queries(research_question, domain_hint=domain_hint)
                 expanded_queries = plan_queries + [q for q in llm_queries if q not in plan_queries]
                 logger.info(f"Using {len(plan_queries)} plan queries + {len(llm_queries)} expanded queries")
             else:
-                expanded_queries = await expand_queries(research_question)
+                expanded_queries = await expand_queries(research_question, domain_hint=domain_hint)
         else:
-            expanded_queries = await expand_queries(research_question)
+            expanded_queries = await expand_queries(research_question, domain_hint=domain_hint)
 
-        # Step 2: Search all sources (with caching if enabled)
+        # Step 2: Search all sources (with caching if enabled, with domain filters)
         search_results = await search_all_sources(
             queries=expanded_queries,
             sources=sources,
             max_per_source=20,
             cached_tools=cached_tools,
+            arxiv_categories=arxiv_categories,
+            s2_fields=s2_fields,
+            pubmed_mesh=pubmed_mesh,
         )
 
         if search_results.get("errors"):
@@ -440,6 +545,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             papers=papers,
             research_question=research_question,
             max_papers=max_papers,
+            domain_hint=domain_hint,
         )
 
         # Step 4: Optional snowball sampling if we need more papers
@@ -447,6 +553,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             additional = await snowball_sampling(
                 seed_papers=selected_papers,
                 max_additional=max_papers - len(selected_papers),
+                research_question=research_question,
             )
             # Re-select from combined pool
             all_candidates = selected_papers + additional
@@ -454,6 +561,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 papers=all_candidates,
                 research_question=research_question,
                 max_papers=max_papers,
+                domain_hint=domain_hint,
             )
 
         # Build SearchResult

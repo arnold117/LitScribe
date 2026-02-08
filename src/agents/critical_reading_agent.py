@@ -395,6 +395,7 @@ async def analyze_paper_combined(
     paper: Dict[str, Any],
     parsed_doc: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
+    research_question: str = "",
 ) -> Dict[str, Any]:
     """Perform combined analysis using a single LLM call.
 
@@ -404,9 +405,10 @@ async def analyze_paper_combined(
         paper: Paper metadata with abstract
         parsed_doc: Parsed PDF content (optional)
         model: LLM model to use
+        research_question: Research question for context-aware analysis
 
     Returns:
-        Dict with key_findings, methodology, strengths, limitations
+        Dict with key_findings, methodology, strengths, limitations, relevance_to_question
     """
     title = paper.get("title", "Unknown")
     authors = paper.get("authors", [])
@@ -428,10 +430,11 @@ async def analyze_paper_combined(
         year=year,
         abstract=abstract,
         full_text=full_text,
+        research_question=research_question or "General academic review",
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2000)
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2500)
 
         # Parse JSON response
         response = response.strip()
@@ -448,10 +451,11 @@ async def analyze_paper_combined(
         result = json.loads(response)
 
         return {
-            "key_findings": result.get("key_findings", [])[:5],
+            "key_findings": result.get("key_findings", [])[:8],
             "methodology": result.get("methodology", "Methodology not analyzed"),
             "strengths": result.get("strengths", [])[:4],
             "limitations": result.get("limitations", [])[:4],
+            "relevance_to_question": float(result.get("relevance_to_question", 0.5)),
         }
 
     except Exception as e:
@@ -462,6 +466,7 @@ async def analyze_paper_combined(
             "methodology": "Methodology analysis not available",
             "strengths": ["Unable to assess"],
             "limitations": ["Unable to assess"],
+            "relevance_to_question": 0.5,
         }
 
 
@@ -470,6 +475,7 @@ async def analyze_single_paper(
     model: Optional[str] = None,
     cached_tools: Optional[CachedTools] = None,
     use_combined_prompt: bool = True,
+    research_question: str = "",
 ) -> PaperSummary:
     """Perform complete critical reading analysis on a single paper.
 
@@ -481,6 +487,7 @@ async def analyze_single_paper(
         model: LLM model to use
         cached_tools: CachedTools instance for caching (optional)
         use_combined_prompt: Use single combined LLM call (faster)
+        research_question: Research question for context-aware analysis
 
     Returns:
         Complete PaperSummary
@@ -513,15 +520,24 @@ async def analyze_single_paper(
     # Step 3: Analyze paper (combined or separate)
     if use_combined_prompt:
         # Single LLM call for all analysis
-        analysis = await analyze_paper_combined(paper, parsed_doc, model)
+        analysis = await analyze_paper_combined(
+            paper, parsed_doc, model, research_question=research_question,
+        )
         key_findings = analysis["key_findings"]
         methodology = analysis["methodology"]
         quality = {"strengths": analysis["strengths"], "limitations": analysis["limitations"]}
+        # Update relevance_score from LLM assessment if available
+        llm_relevance = analysis.get("relevance_to_question")
+        if llm_relevance is not None:
+            relevance_score = llm_relevance
+        else:
+            relevance_score = paper.get("relevance_score", 0.5)
     else:
         # Original 3 separate calls
         key_findings = await extract_key_findings(paper, parsed_doc, model)
         methodology = await analyze_methodology(paper, parsed_doc, model)
         quality = await assess_quality(paper, key_findings, parsed_doc, model)
+        relevance_score = paper.get("relevance_score", 0.5)
 
     # Build PaperSummary
     authors = paper.get("authors", [])
@@ -538,7 +554,7 @@ async def analyze_single_paper(
         methodology=methodology,
         strengths=quality["strengths"],
         limitations=quality["limitations"],
-        relevance_score=paper.get("relevance_score", 0.5),
+        relevance_score=relevance_score,
         citations=paper.get("citations", 0),
         venue=paper.get("venue", ""),
         pdf_available=pdf_path is not None,
@@ -649,6 +665,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
                     model=model,
                     cached_tools=cached_tools,
                     use_combined_prompt=True,  # Use optimized combined prompt
+                    research_question=research_question,
                     max_retries=MAX_RETRIES,
                 )
 

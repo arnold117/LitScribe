@@ -187,6 +187,7 @@ async def run_graphrag_pipeline(
             batch_size=entity_batch_size,
             max_concurrent=max_concurrent,
             llm_config=llm_config,
+            research_question=research_question,
         )
         logger.info(
             f"Extracted {len(new_entities)} entities with {len(new_mentions)} mentions"
@@ -332,6 +333,22 @@ async def graphrag_agent(state: LitScribeState) -> Dict[str, Any]:
 
     if not papers:
         logger.warning("No analyzed papers found, skipping GraphRAG")
+        return {
+            "current_agent": "synthesis",
+            "knowledge_graph": None,
+        }
+
+    # Filter out low-relevance papers to prevent knowledge graph pollution
+    original_count = len(papers)
+    papers = [p for p in papers if p.get("relevance_score", 0.5) >= 0.3]
+    if len(papers) < original_count:
+        logger.info(
+            f"GraphRAG: filtered out {original_count - len(papers)} low-relevance papers "
+            f"(relevance < 0.3), {len(papers)} remaining"
+        )
+
+    if not papers:
+        logger.warning("No papers above relevance threshold, skipping GraphRAG")
         return {
             "current_agent": "synthesis",
             "knowledge_graph": None,

@@ -111,6 +111,18 @@ def determine_next_agent(
     if synthesis is not None and state.get("self_review") is None:
         return "self_review"
 
+    # Phase 5b: Self-review requested loop-back to discovery
+    self_review = state.get("self_review")
+    if (
+        self_review is not None
+        and self_review.get("needs_additional_search", False)
+        and self_review.get("overall_score", 1.0) < 0.6
+        and state.get("sources")  # Has online sources
+        and iteration < 8
+    ):
+        # Reset self_review and synthesis so they re-run after discovery
+        return "discovery"
+
     # All done
     return "complete"
 
@@ -146,10 +158,25 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
         f"graphrag: {graphrag_status}, errors: {status['error_count']})"
     )
 
-    return {
+    updates: Dict[str, Any] = {
         "current_agent": next_agent,
         "iteration_count": iteration + 1,
     }
+
+    # When looping back to discovery from self-review, clear downstream state
+    # so synthesis/graphrag/self-review re-run with the updated paper set
+    self_review = state.get("self_review")
+    if (
+        next_agent == "discovery"
+        and self_review is not None
+        and state.get("synthesis") is not None
+    ):
+        logger.info("Loop-back to discovery: clearing synthesis, self_review, knowledge_graph")
+        updates["synthesis"] = None
+        updates["self_review"] = None
+        updates["knowledge_graph"] = None
+
+    return updates
 
 
 async def supervisor_with_llm(state: LitScribeState) -> Dict[str, Any]:

@@ -80,6 +80,10 @@ async def assess_and_decompose(
         scope_estimate=data.get("scope_estimate", f"Estimated {max_papers} papers"),
         is_interactive=is_interactive,
         confirmed=confirmed,
+        domain_hint=data.get("domain", ""),
+        arxiv_categories=data.get("arxiv_categories", []),
+        s2_fields=data.get("s2_fields", []),
+        pubmed_mesh=data.get("pubmed_mesh", []),
     )
 
 
@@ -110,6 +114,10 @@ def _build_fallback_plan(research_question: str, max_papers: int) -> ResearchPla
         scope_estimate=f"Estimated {max_papers} papers",
         is_interactive=False,
         confirmed=True,
+        domain_hint="",
+        arxiv_categories=[],
+        s2_fields=[],
+        pubmed_mesh=[],
     )
 
 
@@ -170,6 +178,7 @@ async def planning_agent(state: LitScribeState) -> Dict[str, Any]:
 
         return {
             "research_plan": plan,
+            "domain_hint": plan.get("domain_hint", ""),
             "current_agent": "discovery",
         }
 

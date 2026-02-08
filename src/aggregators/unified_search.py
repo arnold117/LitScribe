@@ -128,6 +128,53 @@ def _semantic_scholar_to_unified(paper_dict: dict) -> UnifiedPaper:
     )
 
 
+def _compute_keyword_relevance(papers: List["UnifiedPaper"], research_question: str) -> None:
+    """Compute keyword-based relevance scores for papers.
+
+    Replaces positional scoring with semantic keyword matching.
+    Score breakdown: title match=0.4, abstract match=0.4, keyword match=0.2.
+
+    Args:
+        papers: List of UnifiedPaper objects (modified in place)
+        research_question: The original research question
+    """
+    # Extract meaningful keywords from research question
+    stopwords = {
+        "the", "a", "an", "in", "on", "of", "for", "and", "or", "to", "is",
+        "are", "was", "were", "what", "how", "which", "that", "this", "with",
+        "from", "by", "at", "its", "their", "have", "has", "been", "be",
+        "do", "does", "did", "will", "can", "could", "would", "should",
+        "about", "into", "through", "during", "before", "after", "between",
+        "latest", "recent", "advances", "methods", "approaches", "review",
+        "survey", "applications", "based",
+    }
+    words = research_question.lower().split()
+    keywords = [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in stopwords]
+
+    if not keywords:
+        # Fallback: give all papers a neutral score
+        for paper in papers:
+            paper.relevance_score = 0.5
+        return
+
+    for paper in papers:
+        title = (paper.title or "").lower()
+        abstract = (paper.abstract or "").lower()
+        paper_keywords = " ".join(getattr(paper, "keywords", None) or []).lower()
+
+        # Calculate match ratios
+        title_matches = sum(1 for kw in keywords if kw in title)
+        abstract_matches = sum(1 for kw in keywords if kw in abstract)
+        keyword_matches = sum(1 for kw in keywords if kw in paper_keywords)
+
+        n = len(keywords)
+        title_score = min(title_matches / n, 1.0) * 0.4
+        abstract_score = min(abstract_matches / n, 1.0) * 0.4
+        kw_score = min(keyword_matches / n, 1.0) * 0.2
+
+        paper.relevance_score = title_score + abstract_score + kw_score
+
+
 class UnifiedSearchAggregator:
     """
     Aggregates search results from multiple academic sources.
@@ -179,15 +226,24 @@ class UnifiedSearchAggregator:
         self,
         query: str,
         max_results: int = 20,
+        category: Optional[str] = None,
     ) -> List[UnifiedPaper]:
-        """Search arXiv and return unified papers."""
+        """Search arXiv and return unified papers.
+
+        Args:
+            query: Search query
+            max_results: Max results
+            category: arXiv category filter (e.g. "q-bio.BM")
+        """
         await self._lazy_init()
 
         if not self._arxiv_search:
             return []
 
         try:
-            result = await self._arxiv_search(query=query, max_results=max_results)
+            result = await self._arxiv_search(
+                query=query, max_results=max_results, category=category,
+            )
             papers = result.get("papers", [])
             return [_arxiv_to_unified(p) for p in papers]
         except Exception as e:
@@ -198,15 +254,28 @@ class UnifiedSearchAggregator:
         self,
         query: str,
         max_results: int = 20,
+        mesh_terms: Optional[List[str]] = None,
     ) -> List[UnifiedPaper]:
-        """Search PubMed and return unified papers."""
+        """Search PubMed and return unified papers.
+
+        Args:
+            query: Search query
+            max_results: Max results
+            mesh_terms: MeSH terms to append to query for domain filtering
+        """
         await self._lazy_init()
 
         if not self._pubmed_search:
             return []
 
         try:
-            result = await self._pubmed_search(query=query, max_results=max_results)
+            # Append MeSH terms to query for domain filtering
+            filtered_query = query
+            if mesh_terms:
+                mesh_filter = " AND ".join(f"{m}[MeSH]" for m in mesh_terms[:3])
+                filtered_query = f"({query}) AND ({mesh_filter})"
+
+            result = await self._pubmed_search(query=filtered_query, max_results=max_results)
             articles = result.get("articles", [])
             return [_pubmed_to_unified(a) for a in articles]
         except Exception as e:
@@ -236,15 +305,24 @@ class UnifiedSearchAggregator:
         self,
         query: str,
         max_results: int = 20,
+        fields_of_study: Optional[List[str]] = None,
     ) -> List[UnifiedPaper]:
-        """Search Semantic Scholar and return unified papers."""
+        """Search Semantic Scholar and return unified papers.
+
+        Args:
+            query: Search query
+            max_results: Max results
+            fields_of_study: Field of study filter (e.g. ["Biology"])
+        """
         await self._lazy_init()
 
         if not self._semantic_scholar_search:
             return []
 
         try:
-            result = await self._semantic_scholar_search(query=query, limit=max_results)
+            result = await self._semantic_scholar_search(
+                query=query, limit=max_results, fields_of_study=fields_of_study,
+            )
             papers = result.get("papers", [])
             return [_semantic_scholar_to_unified(p) for p in papers]
         except Exception as e:
@@ -258,6 +336,9 @@ class UnifiedSearchAggregator:
         max_per_source: int = 20,
         deduplicate: bool = True,
         sort_by: str = "relevance",
+        arxiv_categories: Optional[List[str]] = None,
+        s2_fields: Optional[List[str]] = None,
+        pubmed_mesh: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Search all specified sources and return unified, deduplicated results.
@@ -269,6 +350,9 @@ class UnifiedSearchAggregator:
             max_per_source: Maximum results per source
             deduplicate: Whether to merge duplicate papers
             sort_by: Ranking criteria ("relevance", "citations", "year", "completeness")
+            arxiv_categories: arXiv category filters (e.g. ["q-bio.BM"])
+            s2_fields: Semantic Scholar field filters (e.g. ["Biology"])
+            pubmed_mesh: PubMed MeSH term filters (e.g. ["Alkaloids"])
 
         Returns:
             Dictionary with search results and metadata
@@ -278,16 +362,18 @@ class UnifiedSearchAggregator:
 
         await self._lazy_init()
 
-        # Build list of search tasks
+        # Build list of search tasks with domain filters
         tasks = []
         source_names = []
 
         if "arxiv" in sources:
-            tasks.append(self.search_arxiv(query, max_per_source))
+            # Use first arXiv category as filter (API supports single category)
+            category = arxiv_categories[0] if arxiv_categories else None
+            tasks.append(self.search_arxiv(query, max_per_source, category=category))
             source_names.append("arxiv")
 
         if "pubmed" in sources:
-            tasks.append(self.search_pubmed(query, max_per_source))
+            tasks.append(self.search_pubmed(query, max_per_source, mesh_terms=pubmed_mesh))
             source_names.append("pubmed")
 
         if "zotero" in sources:
@@ -295,7 +381,9 @@ class UnifiedSearchAggregator:
             source_names.append("zotero")
 
         if "semantic_scholar" in sources:
-            tasks.append(self.search_semantic_scholar(query, max_per_source))
+            tasks.append(self.search_semantic_scholar(
+                query, max_per_source, fields_of_study=s2_fields,
+            ))
             source_names.append("semantic_scholar")
 
         # Execute searches in parallel
@@ -313,10 +401,9 @@ class UnifiedSearchAggregator:
                 source_counts[source_name] = len(result)
                 all_papers.extend(result)
 
-        # Calculate initial relevance scores (based on position in results)
-        for i, paper in enumerate(all_papers):
-            # Higher score for earlier results within each source
-            paper.relevance_score = 1.0 - (i / max(len(all_papers), 1)) * 0.5
+        # Compute keyword-based relevance scores instead of positional
+        _compute_keyword_relevance(all_papers, query)
+        for paper in all_papers:
             paper.calculate_completeness_score()
 
         # Deduplicate if requested
@@ -343,6 +430,9 @@ async def search_all_sources(
     max_per_source: int = 20,
     deduplicate: bool = True,
     sort_by: str = "relevance",
+    arxiv_categories: Optional[List[str]] = None,
+    s2_fields: Optional[List[str]] = None,
+    pubmed_mesh: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Convenience function to search all sources.
@@ -353,6 +443,9 @@ async def search_all_sources(
         max_per_source: Maximum results per source
         deduplicate: Whether to merge duplicate papers
         sort_by: Ranking criteria
+        arxiv_categories: arXiv category filters
+        s2_fields: Semantic Scholar field filters
+        pubmed_mesh: PubMed MeSH term filters
 
     Returns:
         Dictionary with search results
@@ -364,6 +457,9 @@ async def search_all_sources(
         max_per_source=max_per_source,
         deduplicate=deduplicate,
         sort_by=sort_by,
+        arxiv_categories=arxiv_categories,
+        s2_fields=s2_fields,
+        pubmed_mesh=pubmed_mesh,
     )
 
 

@@ -12,6 +12,9 @@ IMPORTANT: You MUST respond with ONLY valid JSON. No markdown, no explanations, 
 
 ENTITY_EXTRACTION_PROMPT = """Extract all significant entities from this academic paper.
 
+**Research Context:** This paper is part of a literature review on: {research_question}
+Only extract entities that are relevant to this research context. Ignore entities from unrelated fields.
+
 **Paper Information:**
 - Title: {title}
 - Authors: {authors}

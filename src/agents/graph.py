@@ -175,6 +175,7 @@ async def run_literature_review(
     batch_size: int = 20,
     local_files: Optional[list] = None,
     language: str = "en",
+    research_plan: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
 
@@ -198,6 +199,7 @@ async def run_literature_review(
         batch_size: Batch size for processing papers (default: 20)
         local_files: List of local PDF file paths to include in review
         language: Output language for review text (default: "en")
+        research_plan: Pre-approved research plan (skips planning agent if provided)
 
     Returns:
         Final state containing the literature review
@@ -217,6 +219,7 @@ async def run_literature_review(
         batch_size=batch_size,
         local_files=local_files or [],
         language=language,
+        research_plan=research_plan,
     )
 
     logger.info(f"Starting literature review for: {research_question}")

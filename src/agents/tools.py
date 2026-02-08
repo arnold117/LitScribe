@@ -35,6 +35,9 @@ async def unified_search(
     max_per_source: int = 10,
     sort_by: str = "relevance",
     deduplicate: bool = True,
+    arxiv_categories: Optional[List[str]] = None,
+    s2_fields: Optional[List[str]] = None,
+    pubmed_mesh: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Search multiple academic sources and return deduplicated results.
 
@@ -44,6 +47,9 @@ async def unified_search(
         max_per_source: Maximum results per source
         sort_by: Sort order (relevance, citations, year, completeness)
         deduplicate: Whether to deduplicate results
+        arxiv_categories: arXiv category filters
+        s2_fields: Semantic Scholar field filters
+        pubmed_mesh: PubMed MeSH term filters
 
     Returns:
         Dictionary with papers, source_counts, and metadata
@@ -59,6 +65,9 @@ async def unified_search(
             max_per_source=max_per_source,
             deduplicate=deduplicate,
             sort_by=sort_by,
+            arxiv_categories=arxiv_categories,
+            s2_fields=s2_fields,
+            pubmed_mesh=pubmed_mesh,
         )
     except Exception as e:
         if "rate limit" in str(e).lower():

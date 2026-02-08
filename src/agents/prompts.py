@@ -11,6 +11,7 @@ Templates use Python format strings for variable substitution.
 QUERY_EXPANSION_PROMPT = """You are an expert academic researcher. Given a research question, generate diverse search queries to find relevant academic literature.
 
 Research Question: {research_question}
+Research Domain: {domain_hint}
 
 Generate exactly 5 search queries that:
 1. Rephrase the original question with precise academic terminology
@@ -18,11 +19,12 @@ Generate exactly 5 search queries that:
 3. Target application domains or use cases
 4. Use synonyms and related concepts from the field
 5. Include combinations of key concepts
+6. STAY WITHIN the research domain "{domain_hint}". Do NOT generate queries that would match papers from unrelated fields.
 
 Requirements:
 - Each query should be 3-8 words, optimized for academic search engines
-- Avoid overly generic terms
-- Include field-specific terminology
+- Avoid overly generic terms that could match unrelated fields
+- Include field-specific terminology from {domain_hint}
 - IMPORTANT: All queries MUST be in English, even if the research question is in another language. Academic databases (arXiv, PubMed, Semantic Scholar) are English-based.
 
 Output as a JSON array of strings:
@@ -32,6 +34,7 @@ Output as a JSON array of strings:
 PAPER_SELECTION_PROMPT = """You are an expert at evaluating academic papers for literature reviews.
 
 Research Question: {research_question}
+Research Domain: {domain_hint}
 
 Papers Found ({total_papers} total):
 {papers_list}
@@ -39,11 +42,14 @@ Papers Found ({total_papers} total):
 Select the top {max_papers} most relevant papers for this literature review.
 
 Selection Criteria:
-1. Direct relevance to the research question
-2. Citation count and impact
-3. Recency (prefer recent work unless seminal papers)
-4. Methodological rigor
-5. Diversity of perspectives
+1. Direct relevance to the research question — the paper must address the specific topic
+2. Domain match — paper must be from the {domain_hint} field. REJECT papers from unrelated fields (e.g., physics papers in a biology review)
+3. Citation count and impact
+4. Recency (prefer recent work unless seminal papers)
+5. Methodological rigor
+6. Diversity of perspectives
+
+IMPORTANT: Do NOT select papers from unrelated academic fields, even if they share some keywords with the research question.
 
 Output as a JSON array of paper IDs:
 ["paper_id_1", "paper_id_2", ...]"""
@@ -133,6 +139,8 @@ Output as JSON:
 
 COMBINED_PAPER_ANALYSIS_PROMPT = """You are an expert academic researcher performing critical reading of a research paper.
 
+Research Question Context: {research_question}
+
 Paper Title: {title}
 Authors: {authors}
 Year: {year}
@@ -143,12 +151,13 @@ Abstract:
 Full Text (or available sections):
 {full_text}
 
-Perform a complete critical analysis of this paper. Provide:
+Perform a complete critical analysis of this paper in the context of the research question above. Provide:
 
-1. KEY FINDINGS (3-5 findings):
+1. KEY FINDINGS (5-8 findings):
    - Specific and measurable where possible
    - Supported by evidence from the paper
    - Written as complete, self-contained sentences
+   - Focus on findings relevant to the research question
 
 2. METHODOLOGY SUMMARY (2-3 paragraphs):
    - Study design and approach
@@ -159,16 +168,25 @@ Perform a complete critical analysis of this paper. Provide:
    - STRENGTHS (2-4 points): What the paper does well, contributions, methodological strengths
    - LIMITATIONS (2-4 points): Weaknesses, gaps, biases, threats to validity
 
+4. RELEVANCE ASSESSMENT:
+   - How relevant is this paper to the research question? Score 0.0-1.0
+   - 1.0 = directly addresses the research question
+   - 0.5 = tangentially related
+   - 0.0 = completely unrelated (different field/topic)
+
 Output as JSON:
 {{
   "key_findings": [
     "Finding 1: ...",
     "Finding 2: ...",
-    "Finding 3: ..."
+    "Finding 3: ...",
+    "Finding 4: ...",
+    "Finding 5: ..."
   ],
   "methodology": "Study design paragraph...\\n\\nData collection paragraph...\\n\\nAnalysis techniques paragraph...",
   "strengths": ["strength1", "strength2", ...],
-  "limitations": ["limitation1", "limitation2", ...]
+  "limitations": ["limitation1", "limitation2", ...],
+  "relevance_to_question": 0.0-1.0
 }}"""
 
 
@@ -404,10 +422,16 @@ Rate the complexity on a scale of 1-5:
 
 Also decompose the question into sub-topics if complexity >= 3.
 
+Additionally, identify the PRIMARY academic domain and provide search filters for each database:
+
 Output as JSON:
 {{
   "complexity_score": 1-5,
   "reasoning": "Why this complexity level...",
+  "domain": "Primary academic field (e.g., Biology, Computer Science, Medicine, Chemistry, Physics)",
+  "arxiv_categories": ["arXiv category codes, e.g. q-bio.BM, cs.AI, cs.CL"],
+  "s2_fields": ["Semantic Scholar fields, e.g. Biology, Computer Science, Medicine"],
+  "pubmed_mesh": ["PubMed MeSH terms for the topic, e.g. Alkaloids, Biosynthetic Pathways"],
   "sub_topics": [
     {{
       "name": "Sub-topic name",
@@ -428,7 +452,12 @@ Ensure sub-topics are:
 - Collectively exhaustive (cover the full question)
 - Ordered by priority (most important first)
 - Each with 2 specific search queries optimized for academic databases
-- IMPORTANT: All search queries MUST be in English"""
+- IMPORTANT: All search queries MUST be in English
+
+For domain detection:
+- arxiv_categories: Use official arXiv taxonomy (cs.*, q-bio.*, physics.*, math.*, stat.*, etc.)
+- s2_fields: Use Semantic Scholar fields (Biology, Chemistry, Computer Science, Medicine, Physics, etc.)
+- pubmed_mesh: Use 2-4 top-level MeSH terms that define the research scope"""
 
 
 # =============================================================================
@@ -491,7 +520,7 @@ Output as JSON:
 Be strict about relevance — a paper from a completely different field should always be flagged, even if it shares some keywords with the research question."""
 
 
-def format_papers_for_self_review(papers: list, max_chars: int = 6000) -> str:
+def format_papers_for_self_review(papers: list, max_chars: int = 12000) -> str:
     """Format paper list for self-review prompt.
 
     Includes paper_id, title, year, source, relevance_score, and abstract snippet.
@@ -587,7 +616,7 @@ Output the COMPLETE modified review text (not just the changed parts). Do not in
 # Utility Functions
 # =============================================================================
 
-def format_papers_for_prompt(papers: list, max_chars: int = 8000) -> str:
+def format_papers_for_prompt(papers: list, max_chars: int = 20000) -> str:
     """Format list of papers for inclusion in prompts.
 
     Args:
@@ -610,8 +639,12 @@ def format_papers_for_prompt(papers: list, max_chars: int = 8000) -> str:
         year = paper.get("year", "N/A")
         citations = paper.get("citations", 0)
         paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi", "")
+        source = paper.get("source", "unknown")
+        abstract = paper.get("abstract", "")[:120]
+        if abstract:
+            abstract = f"\n   Abstract: {abstract}..."
 
-        line = f"{i}. [{paper_id}] {title}\n   Authors: {authors} | Year: {year} | Citations: {citations}"
+        line = f"{i}. [{paper_id}] {title}\n   Authors: {authors} | Year: {year} | Citations: {citations} | Source: {source}{abstract}"
 
         if total_chars + len(line) > max_chars:
             lines.append(f"... and {len(papers) - i + 1} more papers")
@@ -623,7 +656,7 @@ def format_papers_for_prompt(papers: list, max_chars: int = 8000) -> str:
     return "\n".join(lines)
 
 
-def format_summaries_for_prompt(summaries: list, max_chars: int = 12000) -> str:
+def format_summaries_for_prompt(summaries: list, max_chars: int = 20000) -> str:
     """Format paper summaries for inclusion in prompts.
 
     Args:

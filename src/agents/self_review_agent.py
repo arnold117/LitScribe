@@ -172,6 +172,9 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
             "current_agent": "complete",
         }
 
+    sources = state.get("sources", [])
+    iteration_count = state.get("iteration_count", 0)
+
     try:
         assessment = await assess_review_quality(
             research_question=research_question,
@@ -190,10 +193,41 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
             f"coherence={assessment['coherence_score']:.2f}"
         )
 
-        return {
+        updates: Dict[str, Any] = {
             "self_review": assessment,
             "current_agent": "complete",
         }
+
+        # Step 4b: Filter out irrelevant papers from analyzed_papers
+        irrelevant_ids = {
+            p.get("paper_id") for p in assessment.get("irrelevant_papers", [])
+        }
+        if irrelevant_ids:
+            cleaned_papers = [
+                p for p in analyzed_papers
+                if p.get("paper_id") not in irrelevant_ids
+            ]
+            removed = len(analyzed_papers) - len(cleaned_papers)
+            if removed > 0:
+                logger.info(f"Self-review: removed {removed} irrelevant papers from analyzed_papers")
+                updates["analyzed_papers"] = cleaned_papers
+
+        # Step 4c: Loop-back if quality is low and online search is available
+        if (
+            assessment.get("overall_score", 1.0) < 0.6
+            and assessment.get("needs_additional_search", False)
+            and iteration_count < 8
+        ):
+            if sources:
+                # Online mode: loop back to discovery for more papers
+                logger.info("Self-review: low quality score, routing back to discovery")
+                updates["current_agent"] = "discovery"
+            else:
+                # Local-only mode: flag for CLI to handle
+                logger.info("Self-review: low quality score in local-only mode, setting quality warning")
+                updates["_quality_warning"] = True
+
+        return updates
 
     except (json.JSONDecodeError, LLMError) as e:
         error_msg = f"Self-review failed: {e}"
