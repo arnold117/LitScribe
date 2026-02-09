@@ -27,6 +27,44 @@ def _zotero_available() -> bool:
     return bool(Config.ZOTERO_API_KEY and Config.ZOTERO_LIBRARY_ID)
 
 
+async def resolve_zotero_collection(value: str) -> Optional[str]:
+    """Resolve a Zotero collection value to a collection key.
+
+    If value looks like an 8-char alphanumeric key (e.g. 'ABC123XY'), use it directly.
+    Otherwise treat it as a collection name and look up or create it.
+
+    Args:
+        value: Collection key or name
+
+    Returns:
+        Collection key string, or None if resolution fails
+    """
+    if not _zotero_available():
+        logger.warning("Zotero not configured, cannot resolve collection")
+        return None
+
+    # Heuristic: Zotero keys are exactly 8 alphanumeric characters
+    if len(value) == 8 and value.isalnum():
+        return value
+
+    # Treat as collection name — look up or create
+    try:
+        from services.zotero import create_or_get_collection
+        result = await create_or_get_collection(name=value)
+        if "error" in result:
+            logger.error(f"Failed to resolve Zotero collection '{value}': {result['error']}")
+            return None
+        key = result.get("key", "")
+        if result.get("created"):
+            logger.info(f"Created new Zotero collection '{value}' (key: {key})")
+        else:
+            logger.info(f"Found existing Zotero collection '{value}' (key: {key})")
+        return key
+    except Exception as e:
+        logger.error(f"Failed to resolve Zotero collection '{value}': {e}")
+        return None
+
+
 def _zotero_item_to_paper(item: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a Zotero item dict to unified paper format.
 

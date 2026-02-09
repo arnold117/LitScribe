@@ -471,7 +471,19 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     pubmed_mesh = None
     disable_domain_filter = state.get("disable_domain_filter", False)
     disable_snowball = state.get("disable_snowball", False)
-    zotero_collection = state.get("zotero_collection")
+    zotero_collection_raw = state.get("zotero_collection")
+    zotero_collection = None  # Will be resolved to a key below
+
+    # Resolve zotero_collection: name → key (if needed)
+    if zotero_collection_raw:
+        from cache.cached_tools import resolve_zotero_collection, _zotero_available
+        if _zotero_available():
+            zotero_collection = await resolve_zotero_collection(zotero_collection_raw)
+            if zotero_collection:
+                logger.info(f"Zotero collection: {zotero_collection_raw} → key {zotero_collection}")
+            else:
+                logger.warning(f"Could not resolve Zotero collection '{zotero_collection_raw}', searching entire library")
+
     if research_plan and not disable_domain_filter:
         domain_hint = domain_hint or research_plan.get("domain_hint", "")
         arxiv_categories = research_plan.get("arxiv_categories") or None
@@ -603,6 +615,24 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             f"Discovery complete: {len(selected_papers)} papers selected "
             f"from {len(papers)} found"
         )
+
+        # Auto-save selected papers to Zotero collection (if specified)
+        if zotero_collection and selected_papers:
+            try:
+                from services.zotero import save_papers_to_collection
+                save_result = await save_papers_to_collection(
+                    papers=selected_papers,
+                    collection_key=zotero_collection,
+                )
+                saved = save_result.get("saved", 0)
+                failed = save_result.get("failed", 0)
+                skipped = save_result.get("skipped", 0)
+                logger.info(
+                    f"Zotero auto-save to collection {zotero_collection}: "
+                    f"{saved} saved, {failed} failed, {skipped} skipped"
+                )
+            except Exception as e:
+                logger.warning(f"Zotero auto-save failed (non-blocking): {e}")
 
         return {
             "search_results": search_result,

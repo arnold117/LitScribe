@@ -1143,7 +1143,8 @@ Examples:
     review_parser.add_argument(
         "--zotero-collection",
         default=None,
-        help="Zotero collection key to search (default: search entire library or ZOTERO_DEFAULT_COLLECTION)",
+        help="Zotero collection key or name. Searches within and auto-saves papers to this collection. "
+             "8-char alphanumeric = key; otherwise looked up or created by name.",
     )
     review_parser.add_argument(
         "--lang",
