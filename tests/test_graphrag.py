@@ -76,7 +76,8 @@ def test_state_types():
         assert state["disable_self_review"] is False
         assert state["disable_domain_filter"] is False
         assert state["disable_snowball"] is False
-        assert state["token_tracker"] is None
+        # token_tracker moved to ContextVar (not in state)
+        assert "token_tracker" not in state
         print("  Phase 9.5 fields OK")
 
         print("State types defined correctly")

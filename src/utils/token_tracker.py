@@ -2,10 +2,30 @@
 
 Accumulates token usage across all LLM calls in a pipeline run,
 providing per-agent and per-model breakdowns with cost estimation.
+
+The tracker is stored in a ContextVar (not in LangGraph state) to avoid
+msgpack serialization issues with LangGraph checkpointing.
 """
 
+import contextvars
 import time
 from typing import Any, Dict, List, Optional
+
+
+# ContextVar for the current tracker instance — avoids storing in LangGraph state
+_tracker_var: contextvars.ContextVar["TokenTracker | None"] = contextvars.ContextVar(
+    "token_tracker", default=None
+)
+
+
+def get_tracker() -> "TokenTracker | None":
+    """Get the current TokenTracker from context."""
+    return _tracker_var.get()
+
+
+def set_tracker(tracker: "TokenTracker | None") -> contextvars.Token:
+    """Set the current TokenTracker in context. Returns a reset token."""
+    return _tracker_var.set(tracker)
 
 
 # Pricing per 1M tokens (USD) — updated Feb 2026

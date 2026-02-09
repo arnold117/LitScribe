@@ -163,7 +163,8 @@ async def planning_agent(state: LitScribeState) -> Dict[str, Any]:
     max_papers = state.get("max_papers", 10)
     errors = list(state.get("errors", []))
 
-    tracker = state.get("token_tracker")
+    from utils.token_tracker import get_tracker
+    tracker = get_tracker()
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
 

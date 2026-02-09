@@ -229,9 +229,10 @@ async def run_literature_review(
     )
 
     # Inject token tracker for cost instrumentation (Phase 9.5)
-    from utils.token_tracker import TokenTracker
+    # Stored in ContextVar, not in state, to avoid msgpack serialization issues
+    from utils.token_tracker import TokenTracker, set_tracker
     tracker = TokenTracker()
-    initial_state["token_tracker"] = tracker
+    set_tracker(tracker)
 
     logger.info(f"Starting literature review for: {research_question}")
 

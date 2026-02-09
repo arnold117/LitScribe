@@ -1,6 +1,7 @@
 """Unified search aggregator for multiple academic sources."""
 
 import asyncio
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from aggregators.deduplicator import deduplicate_papers, rank_papers
 from models.unified_paper import UnifiedPaper
+
+logger = logging.getLogger(__name__)
+
+# Limit concurrent arXiv requests to avoid 503 rate limiting + retry storms
+_arxiv_semaphore = asyncio.Semaphore(1)
 
 
 def _arxiv_to_unified(paper_dict: dict) -> UnifiedPaper:
@@ -25,17 +31,17 @@ def _arxiv_to_unified(paper_dict: dict) -> UnifiedPaper:
             pass
 
     return UnifiedPaper(
-        title=paper_dict.get("title", ""),
-        authors=paper_dict.get("authors", []),
-        abstract=paper_dict.get("abstract", ""),
+        title=paper_dict.get("title") or "",
+        authors=paper_dict.get("authors") or [],
+        abstract=paper_dict.get("abstract") or "",
         year=year or 0,
-        sources={"arxiv": paper_dict.get("arxiv_id", "")},
-        venue=paper_dict.get("journal_ref", ""),
+        sources={"arxiv": paper_dict.get("arxiv_id") or ""},
+        venue=paper_dict.get("journal_ref") or "",
         citations=paper_dict.get("citations") or 0,
         pdf_urls=[paper_dict["pdf_url"]] if paper_dict.get("pdf_url") else [],
         doi=paper_dict.get("doi"),
         arxiv_id=paper_dict.get("arxiv_id"),
-        categories=paper_dict.get("categories", []),
+        categories=paper_dict.get("categories") or [],
         comment=paper_dict.get("comment"),
         journal_ref=paper_dict.get("journal_ref"),
     )
@@ -53,19 +59,19 @@ def _pubmed_to_unified(article_dict: dict) -> UnifiedPaper:
             pass
 
     return UnifiedPaper(
-        title=article_dict.get("title", ""),
-        authors=article_dict.get("authors", []),
-        abstract=article_dict.get("abstract", ""),
+        title=article_dict.get("title") or "",
+        authors=article_dict.get("authors") or [],
+        abstract=article_dict.get("abstract") or "",
         year=year or 0,
-        sources={"pubmed": article_dict.get("pmid", "")},
-        venue=article_dict.get("journal", ""),
+        sources={"pubmed": article_dict.get("pmid") or ""},
+        venue=article_dict.get("journal") or "",
         citations=article_dict.get("citations") or 0,
         pdf_urls=[],  # PubMed doesn't provide direct PDF links
         doi=article_dict.get("doi"),
         pmid=article_dict.get("pmid"),
         pmc_id=article_dict.get("pmc_id"),
-        mesh_terms=article_dict.get("mesh_terms", []),
-        keywords=article_dict.get("keywords", []),
+        mesh_terms=article_dict.get("mesh_terms") or [],
+        keywords=article_dict.get("keywords") or [],
         url=article_dict.get("url"),
     )
 
@@ -111,19 +117,19 @@ def _zotero_to_unified(item_dict: dict) -> UnifiedPaper:
 def _semantic_scholar_to_unified(paper_dict: dict) -> UnifiedPaper:
     """Convert Semantic Scholar paper dict to UnifiedPaper."""
     return UnifiedPaper(
-        title=paper_dict.get("title", ""),
-        authors=paper_dict.get("authors", []),
-        abstract=paper_dict.get("abstract", ""),
+        title=paper_dict.get("title") or "",
+        authors=paper_dict.get("authors") or [],
+        abstract=paper_dict.get("abstract") or "",
         year=paper_dict.get("year") or 0,
-        sources={"semantic_scholar": paper_dict.get("paper_id", "")},
-        venue=paper_dict.get("venue", ""),
+        sources={"semantic_scholar": paper_dict.get("paper_id") or ""},
+        venue=paper_dict.get("venue") or "",
         citations=paper_dict.get("citation_count") or 0,
         pdf_urls=[paper_dict["pdf_url"]] if paper_dict.get("pdf_url") else [],
         doi=paper_dict.get("doi"),
         arxiv_id=paper_dict.get("arxiv_id"),
         pmid=paper_dict.get("pmid"),
         scholar_id=paper_dict.get("paper_id"),
-        keywords=paper_dict.get("fields_of_study", []),
+        keywords=paper_dict.get("fields_of_study") or [],
         url=paper_dict.get("url"),
     )
 
@@ -200,25 +206,25 @@ class UnifiedSearchAggregator:
             from services.arxiv import search_papers as arxiv_search
             self._arxiv_search = arxiv_search
         except ImportError:
-            print("Warning: arXiv service not available")
+            logger.warning("arXiv service not available")
 
         try:
             from services.pubmed import search_pubmed as pubmed_search
             self._pubmed_search = pubmed_search
         except ImportError:
-            print("Warning: PubMed service not available")
+            logger.warning("PubMed service not available")
 
         try:
             from services.zotero import search_items as zotero_search
             self._zotero_search = zotero_search
         except ImportError:
-            print("Warning: Zotero service not available")
+            logger.warning("Zotero service not available")
 
         try:
             from services.semantic_scholar import search_papers as semantic_scholar_search
             self._semantic_scholar_search = semantic_scholar_search
         except ImportError:
-            print("Warning: Semantic Scholar service not available")
+            logger.warning("Semantic Scholar service not available")
 
         self._initialized = True
 
@@ -241,13 +247,15 @@ class UnifiedSearchAggregator:
             return []
 
         try:
-            result = await self._arxiv_search(
-                query=query, max_results=max_results, category=category,
-            )
+            # Serialize arXiv requests to avoid 503 rate-limit → retry storms
+            async with _arxiv_semaphore:
+                result = await self._arxiv_search(
+                    query=query, max_results=max_results, category=category,
+                )
             papers = result.get("papers", [])
             return [_arxiv_to_unified(p) for p in papers]
         except Exception as e:
-            print(f"arXiv search error: {e}")
+            logger.error(f"arXiv search error: {e}")
             return []
 
     async def search_pubmed(
@@ -279,7 +287,7 @@ class UnifiedSearchAggregator:
             articles = result.get("articles", [])
             return [_pubmed_to_unified(a) for a in articles]
         except Exception as e:
-            print(f"PubMed search error: {e}")
+            logger.error(f"PubMed search error: {e}")
             return []
 
     async def search_zotero(
@@ -298,7 +306,7 @@ class UnifiedSearchAggregator:
             items = result.get("items", [])
             return [_zotero_to_unified(item) for item in items]
         except Exception as e:
-            print(f"Zotero search error: {e}")
+            logger.error(f"Zotero search error: {e}")
             return []
 
     async def search_semantic_scholar(
@@ -326,7 +334,7 @@ class UnifiedSearchAggregator:
             papers = result.get("papers", [])
             return [_semantic_scholar_to_unified(p) for p in papers]
         except Exception as e:
-            print(f"Semantic Scholar search error: {e}")
+            logger.error(f"Semantic Scholar search error: {e}")
             return []
 
     async def search_all(
@@ -386,8 +394,19 @@ class UnifiedSearchAggregator:
             ))
             source_names.append("semantic_scholar")
 
-        # Execute searches in parallel
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Execute searches in parallel with per-source timeout
+        # Prevents one slow source (e.g. arXiv retrying) from blocking all results
+        async def _with_timeout(coro, source_name, timeout=45):
+            try:
+                return await asyncio.wait_for(coro, timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(f"{source_name} search timed out after {timeout}s")
+                return []
+
+        timed_tasks = [
+            _with_timeout(task, name) for task, name in zip(tasks, source_names)
+        ]
+        results = await asyncio.gather(*timed_tasks, return_exceptions=True)
 
         # Collect all papers
         all_papers = []
@@ -395,11 +414,15 @@ class UnifiedSearchAggregator:
 
         for source_name, result in zip(source_names, results):
             if isinstance(result, Exception):
-                print(f"Error from {source_name}: {result}")
+                logger.error(f"Search error from {source_name}: {result}")
+                source_counts[source_name] = 0
+            elif result is None:
+                logger.warning(f"{source_name} returned None")
                 source_counts[source_name] = 0
             else:
                 source_counts[source_name] = len(result)
                 all_papers.extend(result)
+                logger.info(f"{source_name}: {len(result)} papers found")
 
         # Compute keyword-based relevance scores instead of positional
         _compute_keyword_relevance(all_papers, query)

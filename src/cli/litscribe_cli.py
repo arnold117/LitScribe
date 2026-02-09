@@ -660,7 +660,8 @@ async def cmd_review(args) -> int:
             # Show token usage summary (Phase 9.5)
             token_usage = final_state.get("_token_usage")
             if token_usage:
-                tracker = final_state.get("token_tracker")
+                from utils.token_tracker import get_tracker
+                tracker = get_tracker()
                 if tracker:
                     out.blank()
                     out.header("LLM COST SUMMARY")

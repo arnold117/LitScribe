@@ -142,7 +142,8 @@ async def refinement_agent(state: LitScribeState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
-    tracker = state.get("token_tracker")
+    from utils.token_tracker import get_tracker
+    tracker = get_tracker()
 
     if instruction is None:
         error_msg = "No refinement instruction provided"

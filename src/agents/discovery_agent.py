@@ -148,6 +148,9 @@ async def search_all_sources(
                     query=query,
                     sources=sources,
                     max_per_source=max_per_query,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
                 )
             else:
                 result = await unified_search(
@@ -298,18 +301,18 @@ async def select_papers(
         # If not enough papers selected, add more by citation count
         if len(selected_papers) < max_papers:
             remaining = [p for p in papers if p not in selected_papers]
-            remaining.sort(key=lambda x: x.get("citations", 0), reverse=True)
+            remaining.sort(key=lambda x: x.get("citations", 0) or 0, reverse=True)
             selected_papers.extend(remaining[: max_papers - len(selected_papers)])
 
         logger.info(f"Selected {len(selected_papers)} papers from {len(papers)} candidates")
         return selected_papers
 
-    except (json.JSONDecodeError, LLMError) as e:
+    except Exception as e:
         logger.warning(f"Paper selection failed: {e}, falling back to relevance-based ranking")
         # Fall back to relevance_score first, then citations as tiebreaker
         sorted_papers = sorted(
             papers,
-            key=lambda x: (x.get("relevance_score", 0), x.get("citations", 0)),
+            key=lambda x: (x.get("relevance_score", 0) or 0, x.get("citations", 0) or 0),
             reverse=True,
         )
         return sorted_papers[:max_papers]
@@ -380,7 +383,7 @@ async def snowball_sampling(
     # Sample from top cited papers to avoid too many API calls
     top_seeds = sorted(
         seed_papers,
-        key=lambda x: x.get("citations", 0),
+        key=lambda x: x.get("citations", 0) or 0,
         reverse=True
     )[:3]
 
@@ -393,7 +396,7 @@ async def snowball_sampling(
             # Get citations (papers citing this one)
             if direction in ("citations", "both"):
                 citations_result = await get_paper_citations(paper_id, limit=5)
-                for cited_paper in citations_result.get("citations", [])[:3]:
+                for cited_paper in (citations_result or {}).get("citations", [])[:3]:
                     cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
                     if cited_id and cited_id not in seen_ids:
                         # Validate relevance before adding
@@ -406,7 +409,7 @@ async def snowball_sampling(
             # Get references (papers this one cites)
             if direction in ("references", "both"):
                 refs_result = await get_paper_references(paper_id, limit=5)
-                for ref_paper in refs_result.get("references", [])[:3]:
+                for ref_paper in (refs_result or {}).get("references", [])[:3]:
                     ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
                     if ref_id and ref_id not in seen_ids:
                         # Validate relevance before adding
@@ -419,7 +422,7 @@ async def snowball_sampling(
             if len(additional_papers) >= max_additional:
                 break
 
-        except AgentError as e:
+        except Exception as e:
             logger.warning(f"Snowball sampling failed for {paper_id}: {e}")
             continue
 
@@ -446,7 +449,8 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     max_papers = state.get("max_papers", 10)
     cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))
-    tracker = state.get("token_tracker")
+    from utils.token_tracker import get_tracker
+    tracker = get_tracker()
 
     research_plan = state.get("research_plan")
     domain_hint = state.get("domain_hint", "")
@@ -596,8 +600,10 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
         }
 
     except Exception as e:
+        import traceback
         error_msg = f"Discovery Agent failed: {e}"
         logger.error(error_msg)
+        logger.error(f"Discovery Agent traceback:\n{traceback.format_exc()}")
         errors.append(error_msg)
         return {
             "errors": errors,

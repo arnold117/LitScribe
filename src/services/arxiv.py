@@ -62,7 +62,7 @@ async def search_papers(
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client()
+        client = arxiv.Client(page_size=max_results, num_retries=1, delay_seconds=3)
         search = arxiv.Search(
             query=query,
             max_results=max_results,
@@ -222,7 +222,7 @@ async def get_recent_papers(
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client()
+        client = arxiv.Client(page_size=max_results, num_retries=1, delay_seconds=3)
         search = arxiv.Search(
             query=f"cat:{category}",
             max_results=max_results,
@@ -262,7 +262,7 @@ async def search_by_author(
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client()
+        client = arxiv.Client(page_size=max_results, num_retries=1, delay_seconds=3)
         search = arxiv.Search(
             query=f'au:"{author_name}"',
             max_results=max_results,

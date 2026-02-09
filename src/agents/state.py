@@ -317,7 +317,8 @@ class LitScribeState(TypedDict):
     disable_snowball: bool  # Skip snowball sampling in discovery
 
     # === Instrumentation (Phase 9.5) ===
-    token_tracker: Optional[Any]  # TokenTracker instance (runtime only, not serialized)
+    # TokenTracker moved to contextvars (utils.token_tracker.get_tracker)
+    # to avoid msgpack serialization issues with LangGraph checkpointing
 
 
 def create_initial_state(
@@ -398,5 +399,4 @@ def create_initial_state(
         disable_self_review=disable_self_review,
         disable_domain_filter=disable_domain_filter,
         disable_snowball=disable_snowball,
-        token_tracker=None,
     )

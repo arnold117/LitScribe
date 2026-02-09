@@ -204,7 +204,8 @@ async def supervisor_with_llm(state: LitScribeState) -> Dict[str, Any]:
     )
 
     try:
-        tracker = state.get("token_tracker")
+        from utils.token_tracker import get_tracker
+        tracker = get_tracker()
         response = await call_llm(prompt, temperature=0.1, max_tokens=300, tracker=tracker, agent_name="supervisor")
 
         # Parse JSON response

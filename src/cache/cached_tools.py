@@ -148,6 +148,9 @@ class CachedTools:
         max_per_source: int = 20,
         force_refresh: bool = False,
         zotero_collection: Optional[str] = None,
+        arxiv_categories: Optional[List[str]] = None,
+        s2_fields: Optional[List[str]] = None,
+        pubmed_mesh: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Search with local-first strategy: SQLite cache -> Zotero -> External API.
 
@@ -162,6 +165,9 @@ class CachedTools:
             max_per_source: Max results per source
             force_refresh: If True, bypass cache
             zotero_collection: Zotero collection to search (optional)
+            arxiv_categories: arXiv category filters (e.g. ["q-bio.BM"])
+            s2_fields: Semantic Scholar field filters (e.g. ["Biology"])
+            pubmed_mesh: PubMed MeSH term filters (e.g. ["Alkaloids"])
 
         Returns:
             Combined search results with origin tracking
@@ -179,6 +185,9 @@ class CachedTools:
                 sources=sources,
                 max_per_source=max_per_source,
                 deduplicate=True,
+                arxiv_categories=arxiv_categories,
+                s2_fields=s2_fields,
+                pubmed_mesh=pubmed_mesh,
             )
             all_papers = zotero_papers + result.get("papers", [])
 
@@ -220,6 +229,9 @@ class CachedTools:
                 sources=sources_to_fetch,
                 max_per_source=max_per_source,
                 deduplicate=True,
+                arxiv_categories=arxiv_categories,
+                s2_fields=s2_fields,
+                pubmed_mesh=pubmed_mesh,
             )
             new_papers = result.get("papers", [])
 
@@ -362,6 +374,23 @@ class CachedTools:
                 pdf_path = result.get("pdf_path")
             except Exception as e:
                 logger.warning(f"Failed to download arXiv PDF {arxiv_id}: {e}")
+
+        # Fall back to direct URL download (e.g. Semantic Scholar openAccessPdf)
+        if not pdf_path:
+            pdf_urls = paper.get("pdf_urls") or []
+            single_url = paper.get("pdf_url")
+            if single_url and single_url not in pdf_urls:
+                pdf_urls.append(single_url)
+            for url in pdf_urls:
+                try:
+                    from agents.critical_reading_agent import _download_pdf_from_url
+                    downloaded = await _download_pdf_from_url(url, paper_id)
+                    if downloaded:
+                        pdf_path = downloaded
+                        logger.info(f"Downloaded PDF from URL for {paper_id}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to download PDF from {url}: {e}")
 
         # Cache the PDF path
         if pdf_path and self.cache_enabled:

@@ -365,7 +365,8 @@ async def graphrag_agent(state: LitScribeState) -> Dict[str, Any]:
     llm_config = state.get("llm_config", {})
     batch_size = state.get("batch_size", 20)
     cache_enabled = state.get("cache_enabled", True)
-    tracker = state.get("token_tracker")
+    from utils.token_tracker import get_tracker
+    tracker = get_tracker()
 
     try:
         knowledge_graph = await run_graphrag_pipeline(

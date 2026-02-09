@@ -105,7 +105,7 @@ async def acquire_pdf(
     1. Local cache (if caching enabled)
     2. arXiv (if arXiv ID available)
     3. Zotero (if zotero_key available)
-    4. Direct URL download (future)
+    4. Direct URL download (e.g. Semantic Scholar openAccessPdf)
 
     Args:
         paper: Paper metadata dict
@@ -168,8 +168,63 @@ async def acquire_pdf(
         except Exception as e:
             logger.warning(f"Failed to get Zotero PDF {zotero_key}: {e}")
 
+    # Try direct URL download (e.g. Semantic Scholar openAccessPdf)
+    pdf_urls = paper.get("pdf_urls") or []
+    if isinstance(pdf_urls, str):
+        pdf_urls = [pdf_urls]
+    single_url = paper.get("pdf_url")
+    if single_url and single_url not in pdf_urls:
+        pdf_urls.append(single_url)
+
+    for url in pdf_urls:
+        try:
+            downloaded = await _download_pdf_from_url(url, paper_id)
+            if downloaded:
+                logger.info(f"Downloaded PDF from URL for {paper_id}")
+                return downloaded
+        except Exception as e:
+            logger.warning(f"Failed to download PDF from {url}: {e}")
+
     logger.info(f"No PDF available for paper {paper_id}")
     return None
+
+
+async def _download_pdf_from_url(url: str, paper_id: str) -> Optional[str]:
+    """Download a PDF from a direct URL.
+
+    Args:
+        url: Direct URL to PDF file
+        paper_id: Paper identifier for filename
+
+    Returns:
+        Local path to downloaded PDF, or None
+    """
+    import aiohttp
+    from utils.config import Config
+
+    pdf_dir = Config.DATA_DIR / "pdfs"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize paper_id for filename
+    safe_id = paper_id.replace("/", "_").replace(":", "_").replace("\\", "_")
+    pdf_path = pdf_dir / f"{safe_id}.pdf"
+
+    if pdf_path.exists():
+        return str(pdf_path)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200 and "pdf" in resp.content_type.lower():
+                    content = await resp.read()
+                    pdf_path.write_bytes(content)
+                    return str(pdf_path)
+                else:
+                    logger.debug(f"URL {url} returned status={resp.status}, type={resp.content_type}")
+                    return None
+    except Exception as e:
+        logger.debug(f"Download failed from {url}: {e}")
+        return None
 
 
 async def parse_paper_pdf(
@@ -630,7 +685,8 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     cache_enabled = state.get("cache_enabled", True)
     research_question = state.get("research_question", "")
     max_concurrent = state.get("max_concurrent", 3)  # Limit concurrent LLM calls
-    tracker = state.get("token_tracker")
+    from utils.token_tracker import get_tracker
+    tracker = get_tracker()
 
     if not papers_to_analyze:
         error_msg = "No papers to analyze"

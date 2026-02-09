@@ -206,14 +206,11 @@ async def test_ablation_flags_in_state():
                 print(f"FAIL: {flag} should be True, got {state2[flag]}")
                 return False
 
-        # Token tracker field
-        if "token_tracker" not in state:
-            print("FAIL: token_tracker not in state")
+        # Token tracker moved to ContextVar (no longer in state)
+        if "token_tracker" in state:
+            print("FAIL: token_tracker should NOT be in state (moved to ContextVar)")
             return False
-        if state["token_tracker"] is not None:
-            print("FAIL: token_tracker should default to None")
-            return False
-        print(f"  - token_tracker: None (OK)")
+        print(f"  - token_tracker: not in state (moved to ContextVar, OK)")
 
         print("PASS: Ablation flags in state")
         return True

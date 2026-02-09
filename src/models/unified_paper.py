@@ -155,13 +155,13 @@ class UnifiedPaper:
         """
         merged = UnifiedPaper(
             title=self.title if len(self.title) > len(other.title) else other.title,
-            authors=list(set(self.authors + other.authors)),
+            authors=list(set((self.authors or []) + (other.authors or []))),
             abstract=self.abstract if len(self.abstract) > len(other.abstract) else other.abstract,
             year=self.year or other.year,
             sources={**self.sources, **other.sources},
             venue=self.venue or other.venue,
             citations=max(self.citations, other.citations),
-            pdf_urls=list(set(self.pdf_urls + other.pdf_urls)),
+            pdf_urls=list(set((self.pdf_urls or []) + (other.pdf_urls or []))),
             relevance_score=max(self.relevance_score, other.relevance_score),
         )
 
@@ -172,10 +172,10 @@ class UnifiedPaper:
         merged.arxiv_id = self.arxiv_id or other.arxiv_id
         merged.scholar_id = self.scholar_id or other.scholar_id
 
-        # Merge specialized metadata
-        merged.mesh_terms = list(set(self.mesh_terms + other.mesh_terms))
-        merged.categories = list(set(self.categories + other.categories))
-        merged.keywords = list(set(self.keywords + other.keywords))
+        # Merge specialized metadata (guard against None fields from APIs)
+        merged.mesh_terms = list(set((self.mesh_terms or []) + (other.mesh_terms or [])))
+        merged.categories = list(set((self.categories or []) + (other.categories or [])))
+        merged.keywords = list(set((self.keywords or []) + (other.keywords or [])))
 
         # Other fields
         merged.comment = self.comment or other.comment

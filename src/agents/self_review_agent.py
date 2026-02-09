@@ -185,7 +185,8 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
     iteration_count = state.get("iteration_count", 0)
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
-    tracker = state.get("token_tracker")
+    from utils.token_tracker import get_tracker
+    tracker = get_tracker()
 
     try:
         assessment = await assess_review_quality(

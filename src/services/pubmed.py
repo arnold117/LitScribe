@@ -1,6 +1,7 @@
 """PubMed MCP Server - Search and retrieve biomedical literature from PubMed/NCBI."""
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -13,10 +14,18 @@ from Bio import Entrez, Medline
 from models.pubmed_article import PubMedArticle
 from utils.config import Config
 
+logger = logging.getLogger(__name__)
+
 # Configure Entrez
 Entrez.email = Config.NCBI_EMAIL
 if Config.NCBI_API_KEY:
     Entrez.api_key = Config.NCBI_API_KEY
+
+if not Config.NCBI_EMAIL:
+    logger.warning(
+        "NCBI_EMAIL not set — PubMed searches may fail or be rate-limited. "
+        "Set NCBI_EMAIL in .env (e.g. NCBI_EMAIL=your@email.com)"
+    )
 
 
 def _parse_articles(handle) -> List[PubMedArticle]:
