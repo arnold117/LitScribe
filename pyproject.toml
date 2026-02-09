@@ -51,6 +51,7 @@ dev = [
 
 [project.scripts]
 litscribe = "cli.litscribe_cli:main"
+litscribe-mcp = "mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

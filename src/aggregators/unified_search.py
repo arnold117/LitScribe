@@ -195,30 +195,30 @@ class UnifiedSearchAggregator:
         if self._initialized:
             return
 
-        # Import MCP server functions
+        # Import service functions
         try:
-            from mcp_servers.arxiv_server import search_papers as arxiv_search
+            from services.arxiv import search_papers as arxiv_search
             self._arxiv_search = arxiv_search
         except ImportError:
-            print("Warning: arXiv MCP server not available")
+            print("Warning: arXiv service not available")
 
         try:
-            from mcp_servers.pubmed_server import search_pubmed as pubmed_search
+            from services.pubmed import search_pubmed as pubmed_search
             self._pubmed_search = pubmed_search
         except ImportError:
-            print("Warning: PubMed MCP server not available")
+            print("Warning: PubMed service not available")
 
         try:
-            from mcp_servers.zotero_server import search_items as zotero_search
+            from services.zotero import search_items as zotero_search
             self._zotero_search = zotero_search
         except ImportError:
-            print("Warning: Zotero MCP server not available")
+            print("Warning: Zotero service not available")
 
         try:
-            from mcp_servers.semantic_scholar_server import search_papers as semantic_scholar_search
+            from services.semantic_scholar import search_papers as semantic_scholar_search
             self._semantic_scholar_search = semantic_scholar_search
         except ImportError:
-            print("Warning: Semantic Scholar MCP server not available")
+            print("Warning: Semantic Scholar service not available")
 
         self._initialized = True
 

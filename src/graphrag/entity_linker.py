@@ -7,8 +7,8 @@ embedding similarity and clustering similar entities.
 import logging
 from typing import Dict, List, Optional, Set, Tuple
 
+import networkx as nx
 import numpy as np
-from sklearn.cluster import AgglomerativeClustering
 
 from agents.state import ExtractedEntity
 
@@ -112,27 +112,21 @@ def cluster_similar_entities(
     if len(entity_ids) <= 1:
         return [set(entity_ids)] if entity_ids else []
 
-    # Convert similarity to distance
-    distance_matrix = 1 - similarity_matrix
+    # Build graph: add edge between entities with similarity >= threshold
+    G = nx.Graph()
+    G.add_nodes_from(range(len(entity_ids)))
 
-    # Cluster using agglomerative clustering
-    clustering = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=1 - threshold,
-        metric="precomputed",
-        linkage="average",
-    )
+    for i in range(len(entity_ids)):
+        for j in range(i + 1, len(entity_ids)):
+            if similarity_matrix[i, j] >= threshold:
+                G.add_edge(i, j)
 
-    labels = clustering.fit_predict(distance_matrix)
+    # Find connected components as clusters
+    clusters = []
+    for component in nx.connected_components(G):
+        clusters.append({entity_ids[idx] for idx in component})
 
-    # Group entity IDs by cluster
-    clusters: Dict[int, Set[str]] = {}
-    for eid, label in zip(entity_ids, labels):
-        if label not in clusters:
-            clusters[label] = set()
-        clusters[label].add(eid)
-
-    return list(clusters.values())
+    return clusters
 
 
 def select_canonical_entity(

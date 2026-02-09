@@ -115,7 +115,7 @@ async def demo_multi_source_search():
 
     if paper_id:
         try:
-            from mcp_servers.semantic_scholar_server import get_paper
+            from services.semantic_scholar import get_paper
 
             print(f"Fetching details for: {paper_id}")
             detail = await get_paper(paper_id)
@@ -210,7 +210,7 @@ async def demo_pdf_parsing():
     print(f"Parsing: {pdf_path.name}\n")
 
     try:
-        from mcp_servers.pdf_parser_server import parse_pdf
+        from services.pdf_parser import parse_pdf
 
         result = await parse_pdf(str(pdf_path))
 

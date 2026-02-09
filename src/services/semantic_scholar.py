@@ -6,15 +6,11 @@ from pathlib import Path
 from typing import List, Optional
 
 import aiohttp
-from mcp.server.fastmcp import FastMCP
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from utils.config import Config
-
-# Initialize FastMCP server
-mcp = FastMCP("semantic-scholar-server")
 
 # API configuration
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
@@ -40,7 +36,6 @@ async def _make_request(endpoint: str, params: dict = None) -> dict:
                 return {"error": f"API error {response.status}: {text[:200]}"}
 
 
-@mcp.tool()
 async def search_papers(
     query: str,
     limit: int = 20,
@@ -96,7 +91,6 @@ async def search_papers(
     }
 
 
-@mcp.tool()
 async def get_paper(
     paper_id: str,
 ) -> dict:
@@ -126,7 +120,6 @@ async def get_paper(
     return _format_paper_detail(result)
 
 
-@mcp.tool()
 async def get_paper_citations(
     paper_id: str,
     limit: int = 50,
@@ -171,7 +164,6 @@ async def get_paper_citations(
     }
 
 
-@mcp.tool()
 async def get_paper_references(
     paper_id: str,
     limit: int = 50,
@@ -216,7 +208,6 @@ async def get_paper_references(
     }
 
 
-@mcp.tool()
 async def search_by_author(
     author_name: str,
     limit: int = 20,
@@ -275,7 +266,6 @@ async def search_by_author(
     }
 
 
-@mcp.tool()
 async def get_recommendations(
     paper_id: str,
     limit: int = 20,
@@ -313,7 +303,6 @@ async def get_recommendations(
     }
 
 
-@mcp.tool()
 async def batch_get_papers(
     paper_ids: List[str],
 ) -> dict:
@@ -436,16 +425,3 @@ def _format_paper_brief(paper: dict) -> dict:
     }
 
 
-def main():
-    """Run the Semantic Scholar MCP server."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Semantic Scholar MCP Server")
-    parser.add_argument("--stdio", action="store_true", help="Use stdio transport")
-    args = parser.parse_args()
-
-    mcp.run(transport="stdio")
-
-
-if __name__ == "__main__":
-    main()

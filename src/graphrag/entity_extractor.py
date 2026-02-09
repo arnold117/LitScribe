@@ -163,34 +163,50 @@ async def extract_entities_from_paper(
         research_question=research_question or "General academic research",
     )
 
-    # Call LLM with system prompt
-    try:
-        response = await call_llm_with_system(
-            system_prompt=ENTITY_EXTRACTION_SYSTEM,
-            user_prompt=prompt,
-            model=llm_config.get("model") if llm_config else None,
-            temperature=0.3,
-            max_tokens=2000,
-            tracker=tracker,
-            agent_name="graphrag",
-        )
+    # Call LLM with system prompt (with retry on JSON parse failure)
+    max_retries = 2
+    base_temperature = 0.3
+    raw_entities = []
 
-        # Clean and parse response
-        cleaned = _clean_json_response(response)
-        if not cleaned:
-            logger.warning(f"Empty response for entity extraction")
+    for attempt in range(max_retries + 1):
+        try:
+            temperature = base_temperature if attempt == 0 else 0.1
+            response = await call_llm_with_system(
+                system_prompt=ENTITY_EXTRACTION_SYSTEM,
+                user_prompt=prompt,
+                model=llm_config.get("model") if llm_config else None,
+                temperature=temperature,
+                max_tokens=2000,
+                tracker=tracker,
+                agent_name="graphrag",
+            )
+
+            # Clean and parse response
+            cleaned = _clean_json_response(response)
+            if not cleaned:
+                logger.warning(f"Empty response for entity extraction (attempt {attempt + 1})")
+                if attempt < max_retries:
+                    await asyncio.sleep(1 * (2 ** attempt))  # 1s, 2s backoff
+                    continue
+                raw_entities = []
+            else:
+                result = json.loads(cleaned)
+                raw_entities = result.get("entities", [])
+                break  # Success
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"JSON parse failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+            )
+            if attempt < max_retries:
+                await asyncio.sleep(1 * (2 ** attempt))  # 1s, 2s backoff
+                continue
+            logger.debug(f"Raw response was: {response[:200] if response else 'None'}...")
             raw_entities = []
-        else:
-            result = json.loads(cleaned)
-            raw_entities = result.get("entities", [])
-
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse entity extraction response: {e}")
-        logger.debug(f"Raw response was: {response[:200] if response else 'None'}...")
-        raw_entities = []
-    except Exception as e:
-        logger.error(f"Entity extraction failed for {paper.get('paper_id')}: {e}")
-        raw_entities = []
+        except Exception as e:
+            logger.error(f"Entity extraction failed for {paper.get('paper_id')}: {e}")
+            raw_entities = []
+            break  # Don't retry on non-JSON errors
 
     # Convert to ExtractedEntity and EntityMention
     entities = []

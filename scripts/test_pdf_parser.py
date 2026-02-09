@@ -12,7 +12,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mcp_servers.pdf_parser_server import (
+from services.pdf_parser import (
     parse_pdf,
     extract_section,
     extract_all_tables,

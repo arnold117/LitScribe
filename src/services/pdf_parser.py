@@ -12,8 +12,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from mcp.server.fastmcp import FastMCP
-
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -25,9 +23,6 @@ from models.parsed_document import (
     Table,
 )
 from utils.config import Config
-
-# Initialize FastMCP server
-mcp = FastMCP("pdf-parser-server")
 
 # Cache directory for parsed PDFs
 CACHE_DIR = Config.CACHE_DIR / "parsed"
@@ -333,7 +328,7 @@ def _get_pdf_metadata(pdf_path: str) -> Dict[str, Any]:
         return {"num_pages": 0, "error": str(e)}
 
 
-@mcp.tool()
+
 async def parse_pdf(
     pdf_path: str,
     use_cache: bool = True,
@@ -428,7 +423,7 @@ async def parse_pdf(
     return result
 
 
-@mcp.tool()
+
 async def extract_section(
     pdf_path: str,
     section_name: str,
@@ -480,7 +475,7 @@ async def extract_section(
     }
 
 
-@mcp.tool()
+
 async def extract_all_tables(pdf_path: str) -> dict:
     """
     Extract all tables from a PDF document.
@@ -509,7 +504,7 @@ async def extract_all_tables(pdf_path: str) -> dict:
     }
 
 
-@mcp.tool()
+
 async def extract_all_citations(pdf_path: str) -> dict:
     """
     Extract all citations and references from a PDF.
@@ -538,7 +533,7 @@ async def extract_all_citations(pdf_path: str) -> dict:
     }
 
 
-@mcp.tool()
+
 async def get_document_info(pdf_path: str) -> dict:
     """
     Get quick document information without full parsing.
@@ -591,7 +586,7 @@ async def get_document_info(pdf_path: str) -> dict:
     }
 
 
-@mcp.tool()
+
 async def clear_cache(pdf_path: Optional[str] = None) -> dict:
     """
     Clear parsed PDF cache.
@@ -620,16 +615,3 @@ async def clear_cache(pdf_path: Optional[str] = None) -> dict:
         return {"cleared": count, "message": f"Cleared {count} cached files"}
 
 
-def main():
-    """Run the PDF Parser MCP server."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="PDF Parser MCP Server")
-    parser.add_argument("--stdio", action="store_true", help="Use stdio transport")
-    args = parser.parse_args()
-
-    mcp.run(transport="stdio")
-
-
-if __name__ == "__main__":
-    main()

@@ -79,7 +79,7 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **Language:** Python 3.12+
 - **Orchestration:** LangGraph (multi-agent framework with state management)
 - **Async Processing:** asyncio with concurrent batching and semaphore control
-- **Interface:** FastMCP 2.0 (direct import, not protocol-based)
+- **Interface:** FastMCP 2.0 (unified MCP server for external clients)
 - **Storage:** SQLite (cache, checkpointing, GraphRAG data)
 - **Knowledge Graph:** NetworkX + graspologic (Leiden community detection)
 - **Embeddings:** sentence-transformers (entity linking)
@@ -316,12 +316,12 @@ Export generates additional formats:
 | Phase 9.2 | Planning Agent (complexity assessment, sub-topic decomposition, `--plan-only`) | ✅ Done |
 | **Phase 9.3** | **Refinement Agent, session management, version tracking, diff & rollback** | **✅ Done** |
 | **Phase 9.5** | **Evaluation & Instrumentation: token tracking, citation grounding, evaluation framework, ablation flags, failure analysis** | **✅ Done** |
+| **Phase 10** | **MCP cleanup → services/, unified MCP server, GraphRAG optimization (threshold clustering, retry, concurrency)** | **✅ Done** |
 
 ### Planned
 
 | Phase | Description | Priority |
 |-------|-------------|----------|
-| Phase 10 | MCP architecture cleanup, GraphRAG optimization | Medium-High |
 | Phase 11 | Local LLM support (Ollama/MLX/vLLM) | Medium |
 | Phase 12 | Subscription system, daily digest | Medium |
 | Phase 13 | Web UI (React + FastAPI) | Medium |
@@ -345,7 +345,7 @@ python tests/test_token_tracker.py
 | `test_critical_reading_cache.py` | Critical Reading Agent + Cache | PDF/parse caching, cached_tools | All Pass |
 | `test_checkpointing.py` | LangGraph Checkpointing | Imports, SQLite saver, graph compilation, ablation flags | 6/6 Pass |
 | `test_exporters.py` | BibTeX / Citation / Pandoc | BibTeX export, citation formatting | All Pass |
-| `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, supervisor routing, tracker params | 8/8 Pass |
+| `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, supervisor routing, tracker params, **retry logic, threshold clustering** | **10/10 Pass** |
 | `test_token_tracker.py` | TokenTracker | Init, multi-agent/model, cost estimation, fuzzy matching, CLI format | 13/13 Pass |
 | `test_citation_grounding.py` | Citation Grounding | Citation extraction, author matching, grounding rate | 15/15 Pass |
 | `test_evaluator.py` | ReviewEvaluator | Search quality, theme coverage, domain purity, failure detection | 18/18 Pass |

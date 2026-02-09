@@ -8,7 +8,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mcp_servers.semantic_scholar_server import (
+from services.semantic_scholar import (
     search_papers,
     get_paper,
     get_paper_citations,

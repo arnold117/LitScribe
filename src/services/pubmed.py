@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from mcp.server.fastmcp import FastMCP
-
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -14,9 +12,6 @@ from Bio import Entrez, Medline
 
 from models.pubmed_article import PubMedArticle
 from utils.config import Config
-
-# Initialize FastMCP server
-mcp = FastMCP("pubmed-server")
 
 # Configure Entrez
 Entrez.email = Config.NCBI_EMAIL
@@ -31,7 +26,6 @@ def _parse_articles(handle) -> List[PubMedArticle]:
     return [PubMedArticle.from_medline_record(r) for r in records]
 
 
-@mcp.tool()
 async def search_pubmed(
     query: str,
     max_results: int = 20,
@@ -106,7 +100,6 @@ async def search_pubmed(
     }
 
 
-@mcp.tool()
 async def get_article_details(pmid: str) -> dict:
     """
     Get detailed information for a specific PubMed article.
@@ -137,7 +130,6 @@ async def get_article_details(pmid: str) -> dict:
     return article.to_dict()
 
 
-@mcp.tool()
 async def get_related_articles(pmid: str, max_results: int = 10) -> dict:
     """
     Get articles related to a specific PubMed article.
@@ -197,7 +189,6 @@ async def get_related_articles(pmid: str, max_results: int = 10) -> dict:
     }
 
 
-@mcp.tool()
 async def search_mesh_terms(term: str, max_results: int = 10) -> dict:
     """
     Search for MeSH (Medical Subject Headings) terms.
@@ -272,7 +263,6 @@ async def search_mesh_terms(term: str, max_results: int = 10) -> dict:
     }
 
 
-@mcp.tool()
 async def get_citations(pmid: str, direction: str = "both") -> dict:
     """
     Get citation information for an article.
@@ -349,7 +339,6 @@ async def get_citations(pmid: str, direction: str = "both") -> dict:
     return result
 
 
-@mcp.tool()
 async def batch_get_articles(pmids: List[str]) -> dict:
     """
     Get details for multiple PubMed articles at once.
@@ -381,20 +370,3 @@ async def batch_get_articles(pmids: List[str]) -> dict:
     }
 
 
-def main():
-    """Run the PubMed MCP server."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="PubMed MCP Server")
-    parser.add_argument("--stdio", action="store_true", help="Use stdio transport")
-    args = parser.parse_args()
-
-    if args.stdio:
-        mcp.run(transport="stdio")
-    else:
-        # Default to stdio for MCP
-        mcp.run(transport="stdio")
-
-
-if __name__ == "__main__":
-    main()

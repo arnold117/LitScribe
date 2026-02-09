@@ -398,6 +398,103 @@ def test_tracker_params_in_graphrag():
         return False
 
 
+def test_entity_extraction_retry_params():
+    """Test that entity extractor has retry logic (Phase 10)."""
+    print("\n" + "=" * 60)
+    print("Test 9: Entity extraction retry params")
+    print("=" * 60)
+
+    try:
+        import inspect
+        from graphrag.entity_extractor import extract_entities_from_paper
+
+        # Read the source code to verify retry logic exists
+        source = inspect.getsource(extract_entities_from_paper)
+
+        assert "max_retries" in source, "extract_entities_from_paper missing max_retries"
+        print("  max_retries found")
+
+        assert "asyncio.sleep" in source, "extract_entities_from_paper missing backoff sleep"
+        print("  backoff sleep found")
+
+        assert "temperature" in source, "extract_entities_from_paper missing temperature param"
+        print("  temperature adjustment found")
+
+        print("PASS: Entity extraction retry params")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_threshold_clustering():
+    """Test that entity linker uses threshold+connected components (Phase 10)."""
+    print("\n" + "=" * 60)
+    print("Test 10: Threshold clustering")
+    print("=" * 60)
+
+    try:
+        import numpy as np
+        from graphrag.entity_linker import cluster_similar_entities
+
+        # Create a similarity matrix with two clear clusters
+        # Entities 0,1,2 are similar to each other; entities 3,4 are similar
+        similarity = np.array([
+            [1.0, 0.95, 0.90, 0.20, 0.15],
+            [0.95, 1.0, 0.88, 0.18, 0.12],
+            [0.90, 0.88, 1.0, 0.22, 0.19],
+            [0.20, 0.18, 0.22, 1.0, 0.92],
+            [0.15, 0.12, 0.19, 0.92, 1.0],
+        ])
+        entity_ids = ["e1", "e2", "e3", "e4", "e5"]
+
+        clusters = cluster_similar_entities(similarity, entity_ids, threshold=0.85)
+
+        print(f"  Clusters: {clusters}")
+        assert len(clusters) == 2, f"Expected 2 clusters, got {len(clusters)}"
+
+        # Find which cluster has 3 entities and which has 2
+        cluster_sizes = sorted([len(c) for c in clusters])
+        assert cluster_sizes == [2, 3], f"Expected cluster sizes [2, 3], got {cluster_sizes}"
+
+        # Verify cluster contents
+        for cluster in clusters:
+            if len(cluster) == 3:
+                assert cluster == {"e1", "e2", "e3"}, f"Unexpected 3-cluster: {cluster}"
+            else:
+                assert cluster == {"e4", "e5"}, f"Unexpected 2-cluster: {cluster}"
+
+        # Test single entity
+        single_clusters = cluster_similar_entities(
+            np.array([[1.0]]), ["e1"], threshold=0.85
+        )
+        assert len(single_clusters) == 1, "Single entity should give 1 cluster"
+        print("  Single entity clustering OK")
+
+        # Test empty
+        empty_clusters = cluster_similar_entities(np.array([]), [], threshold=0.85)
+        assert len(empty_clusters) == 0, "Empty input should give 0 clusters"
+        print("  Empty clustering OK")
+
+        # Verify no sklearn import
+        import inspect
+        source = inspect.getsource(cluster_similar_entities)
+        assert "AgglomerativeClustering" not in source, "Should not use AgglomerativeClustering"
+        print("  No sklearn dependency confirmed")
+
+        print("PASS: Threshold clustering")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Run all tests."""
     print("GraphRAG Module Tests")
@@ -413,6 +510,8 @@ def main():
     results.append(("Supervisor routing", test_supervisor_routing()))
     results.append(("Workflow routing", test_workflow_routing()))
     results.append(("Tracker params in GraphRAG", test_tracker_params_in_graphrag()))
+    results.append(("Entity extraction retry", test_entity_extraction_retry_params()))
+    results.append(("Threshold clustering", test_threshold_clustering()))
 
     # Summary
     print("\n" + "=" * 60)

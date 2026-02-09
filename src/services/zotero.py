@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from mcp.server.fastmcp import FastMCP
-
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -14,9 +12,6 @@ from pyzotero import zotero
 
 from models.zotero_item import ZoteroItem, Fulltext
 from utils.config import Config
-
-# Initialize FastMCP server
-mcp = FastMCP("zotero-server")
 
 
 def _get_zotero_client() -> zotero.Zotero:
@@ -67,7 +62,7 @@ def _get_pdf_path(attachment_key: str, filename: str) -> Optional[str]:
     return None
 
 
-@mcp.tool()
+
 async def search_items(
     query: str,
     collection: Optional[str] = None,
@@ -122,7 +117,7 @@ async def search_items(
     }
 
 
-@mcp.tool()
+
 async def get_item_metadata(item_key: str) -> dict:
     """
     Get detailed metadata for a specific Zotero item.
@@ -177,7 +172,7 @@ async def get_item_metadata(item_key: str) -> dict:
     return result
 
 
-@mcp.tool()
+
 async def get_collection_items(
     collection_key: Optional[str] = None,
     limit: int = 50,
@@ -232,7 +227,7 @@ async def get_collection_items(
     }
 
 
-@mcp.tool()
+
 async def get_collections(parent_collection: Optional[str] = None) -> dict:
     """
     Get list of collections in the library.
@@ -271,7 +266,7 @@ async def get_collections(parent_collection: Optional[str] = None) -> dict:
     }
 
 
-@mcp.tool()
+
 async def get_item_pdf_path(item_key: str) -> dict:
     """
     Get local PDF file path for a Zotero item.
@@ -314,7 +309,7 @@ async def get_item_pdf_path(item_key: str) -> dict:
     }
 
 
-@mcp.tool()
+
 async def add_note(
     parent_key: str,
     note_content: str,
@@ -362,7 +357,7 @@ async def add_note(
         }
 
 
-@mcp.tool()
+
 async def get_recent_items(limit: int = 20, collection: Optional[str] = None) -> dict:
     """
     Get recently added/modified items.
@@ -402,7 +397,7 @@ async def get_recent_items(limit: int = 20, collection: Optional[str] = None) ->
     }
 
 
-@mcp.tool()
+
 async def add_item_by_identifier(
     identifier: str,
     collection: Optional[str] = None,
@@ -471,7 +466,7 @@ async def add_item_by_identifier(
     }
 
 
-@mcp.tool()
+
 async def create_or_get_collection(
     name: str,
     parent_collection: Optional[str] = None,
@@ -522,7 +517,7 @@ async def create_or_get_collection(
     return await loop.run_in_executor(None, do_create)
 
 
-@mcp.tool()
+
 async def save_papers_to_collection(
     papers: List[dict],
     collection_key: Optional[str] = None,
@@ -597,7 +592,7 @@ async def save_papers_to_collection(
     return await loop.run_in_executor(None, do_save)
 
 
-@mcp.tool()
+
 async def import_collection_papers(
     collection_key: Optional[str] = None,
     limit: int = 100,
@@ -693,16 +688,3 @@ async def import_collection_papers(
     }
 
 
-def main():
-    """Run the Zotero MCP server."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Zotero MCP Server")
-    parser.add_argument("--stdio", action="store_true", help="Use stdio transport")
-    args = parser.parse_args()
-
-    mcp.run(transport="stdio")
-
-
-if __name__ == "__main__":
-    main()

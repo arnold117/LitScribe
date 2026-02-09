@@ -174,48 +174,46 @@ def _add_citation_edges(
         G: Graph to add edges to
         papers: List of papers
     """
-    # Group papers by year (skip papers with None paper_id)
-    by_year: Dict[int, List[str]] = defaultdict(list)
-    for paper in papers:
-        paper_id = paper.get("paper_id")
-        if paper_id is None:
-            continue
-        year = paper.get("year", 0)
-        if year > 0:
-            by_year[year].append(paper_id)
-
-    # For each paper, check if it likely cites older papers with shared entities
+    # Build entity sets per paper from existing mention edges
     paper_entities: Dict[str, Set[str]] = defaultdict(set)
 
     for node, data in G.nodes(data=True):
         if data.get("node_type") == "paper":
-            # Get entities mentioned by this paper
             for _, target, edge_data in G.out_edges(node, data=True):
                 if edge_data.get("edge_type") == "mentions":
                     paper_entities[node].add(target)
 
-    # Create potential citation edges (newer -> older with shared entities)
-    sorted_years = sorted(by_year.keys())
+    # Build list of (paper_id, year) pairs sorted by year
+    paper_years = []
+    for paper in papers:
+        paper_id = paper.get("paper_id")
+        year = paper.get("year", 0)
+        if paper_id is not None and year > 0:
+            paper_years.append((paper_id, year))
 
-    for i, year in enumerate(sorted_years):
-        for paper_id in by_year[year]:
-            entities = paper_entities.get(paper_id, set())
+    paper_years.sort(key=lambda x: x[1])
 
-            # Check older papers
-            for older_year in sorted_years[:i]:
-                for older_paper_id in by_year[older_year]:
-                    older_entities = paper_entities.get(older_paper_id, set())
+    # Compare each pair: newer paper potentially cites older paper with shared entities
+    for i in range(len(paper_years)):
+        pid_i, year_i = paper_years[i]
+        entities_i = paper_entities.get(pid_i, set())
+        if not entities_i:
+            continue
 
-                    # If they share entities, create a weak citation link
-                    shared = entities & older_entities
-                    if len(shared) >= 2:  # At least 2 shared entities
-                        G.add_edge(
-                            paper_id,
-                            older_paper_id,
-                            edge_type="likely_cites",
-                            weight=len(shared),
-                            shared_entities=list(shared),
-                        )
+        for j in range(i):
+            pid_j, year_j = paper_years[j]
+            if year_j >= year_i:
+                continue  # Only older papers
+
+            shared = entities_i & paper_entities.get(pid_j, set())
+            if len(shared) >= 2:  # At least 2 shared entities
+                G.add_edge(
+                    pid_i,
+                    pid_j,
+                    edge_type="likely_cites",
+                    weight=len(shared),
+                    shared_entities=list(shared),
+                )
 
 
 def compute_graph_statistics(G: nx.MultiDiGraph) -> Dict[str, Any]:

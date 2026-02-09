@@ -216,7 +216,7 @@ async def cmd_search(args) -> int:
 
 async def cmd_parse(args) -> int:
     """Execute parse command."""
-    from mcp_servers.pdf_parser_server import parse_pdf
+    from services.pdf_parser import parse_pdf
 
     out = get_output("litscribe.parse")
     pdf_path = Path(args.pdf_path)
@@ -267,7 +267,7 @@ async def cmd_parse(args) -> int:
 
 async def cmd_paper(args) -> int:
     """Get detailed information about a specific paper."""
-    from mcp_servers.semantic_scholar_server import get_paper
+    from services.semantic_scholar import get_paper
 
     out = get_output("litscribe.paper")
     out.header(f"Fetching: {args.paper_id}")
@@ -328,7 +328,7 @@ async def cmd_paper(args) -> int:
 
 async def cmd_citations(args) -> int:
     """Get citations for a paper."""
-    from mcp_servers.semantic_scholar_server import get_paper_citations
+    from services.semantic_scholar import get_paper_citations
 
     out = get_output("litscribe.citations")
     out.header(f"Citations for: {args.paper_id}")
@@ -898,7 +898,7 @@ async def cmd_demo(args) -> int:
 
     if paper_id:
         try:
-            from mcp_servers.semantic_scholar_server import get_paper
+            from services.semantic_scholar import get_paper
 
             detail = await get_paper(paper_id)
             if "error" not in detail:

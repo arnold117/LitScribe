@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from mcp.server.fastmcp import FastMCP
-
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -15,16 +13,12 @@ import arxiv
 from models.paper import Paper
 from utils.config import Config
 
-# Initialize FastMCP server
-mcp = FastMCP("arxiv-server")
-
 
 def _parse_arxiv_result(result: arxiv.Result) -> Paper:
     """Convert arxiv.Result to Paper model."""
     return Paper.from_arxiv_result(result)
 
 
-@mcp.tool()
 async def search_papers(
     query: str,
     max_results: int = 10,
@@ -89,7 +83,6 @@ async def search_papers(
     }
 
 
-@mcp.tool()
 async def get_paper_metadata(arxiv_id: str) -> dict:
     """
     Get detailed metadata for a specific arXiv paper.
@@ -117,7 +110,6 @@ async def get_paper_metadata(arxiv_id: str) -> dict:
     return paper.to_dict()
 
 
-@mcp.tool()
 async def download_pdf(
     arxiv_id: str,
     save_dir: Optional[str] = None,
@@ -179,7 +171,6 @@ async def download_pdf(
     }
 
 
-@mcp.tool()
 async def get_paper_by_doi(doi: str) -> dict:
     """
     Search arXiv for a paper by DOI.
@@ -212,7 +203,6 @@ async def get_paper_by_doi(doi: str) -> dict:
     return paper.to_dict()
 
 
-@mcp.tool()
 async def get_recent_papers(
     category: str,
     max_results: int = 10,
@@ -253,7 +243,6 @@ async def get_recent_papers(
     }
 
 
-@mcp.tool()
 async def search_by_author(
     author_name: str,
     max_results: int = 20,
@@ -294,7 +283,6 @@ async def search_by_author(
     }
 
 
-@mcp.tool()
 async def batch_get_papers(arxiv_ids: List[str]) -> dict:
     """
     Get metadata for multiple arXiv papers at once.
@@ -326,16 +314,3 @@ async def batch_get_papers(arxiv_ids: List[str]) -> dict:
     }
 
 
-def main():
-    """Run the arXiv MCP server."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="arXiv MCP Server")
-    parser.add_argument("--stdio", action="store_true", help="Use stdio transport")
-    args = parser.parse_args()
-
-    mcp.run(transport="stdio")
-
-
-if __name__ == "__main__":
-    main()

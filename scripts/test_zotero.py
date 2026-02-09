@@ -8,7 +8,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from mcp_servers.zotero_server import (
+from services.zotero import (
     search_items,
     get_item_metadata,
     get_collection_items,

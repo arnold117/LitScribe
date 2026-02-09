@@ -117,7 +117,7 @@ class CachedTools:
             return []
 
         try:
-            from mcp_servers.zotero_server import search_items
+            from services.zotero import search_items
 
             result = await search_items(
                 query=query,

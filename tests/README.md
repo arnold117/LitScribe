@@ -16,7 +16,7 @@ No pytest or external test runner required.
 | `test_critical_reading_cache.py` | Critical Reading Agent + Cache | PDF caching, parse caching, cached_tools parameter in agents | 8 |
 | `test_checkpointing.py` | LangGraph Checkpointing | Checkpoint imports, SQLite saver, graph compilation, state fields, `run_literature_review` signature, **ablation flags** | 8.6 + 9.5 |
 | `test_exporters.py` | BibTeX / Citation / Pandoc | BibTeX export, citation formatting, Markdown generation | 8 |
-| `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, graph building, community detection, supervisor routing, workflow routing, **tracker params** | 7.5 + 9.5 |
+| `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, graph building, community detection, supervisor routing, workflow routing, **tracker params**, **retry logic, threshold clustering** | 7.5 + 9.5 + 10 |
 
 ### Phase 9.5 - Evaluation & Instrumentation
 
@@ -49,7 +49,7 @@ python tests/test_evaluator.py
 
 ## Test Results Summary
 
-As of Phase 9.5 completion (all issues resolved):
+As of Phase 10 completion:
 
 | File | Status | Notes |
 |------|--------|-------|
@@ -58,7 +58,7 @@ As of Phase 9.5 completion (all issues resolved):
 | test_critical_reading_cache.py | All Pass | No Phase 9.5 impact |
 | test_checkpointing.py | **6/6 Pass** | New Test 6 added for ablation flags |
 | test_exporters.py | All Pass | No Phase 9.5 impact |
-| test_graphrag.py | **8/8 Pass** | Test 6 (Supervisor routing) fixed. New Test 8 added for Phase 9.5. |
+| test_graphrag.py | **10/10 Pass** | Tests 9-10 added for Phase 10 (retry logic, threshold clustering) |
 | test_token_tracker.py | **13/13 Pass** | New file |
 | test_citation_grounding.py | **15/15 Pass** | New file |
 | test_evaluator.py | **18/18 Pass** | New file |

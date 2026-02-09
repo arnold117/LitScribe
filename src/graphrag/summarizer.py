@@ -211,7 +211,7 @@ async def summarize_all_communities(
     entities_by_id: Dict[str, ExtractedEntity],
     papers_by_id: Dict[str, PaperSummary],
     research_question: str,
-    max_concurrent: int = 3,
+    max_concurrent: int = 8,
     llm_config: Optional[Dict[str, Any]] = None,
     tracker=None,
 ) -> List[Community]:

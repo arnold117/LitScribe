@@ -95,7 +95,7 @@ async def search_semantic_scholar(
     """
     async with semantic_scholar_limiter:
         try:
-            from mcp_servers.semantic_scholar_server import search_papers
+            from services.semantic_scholar import search_papers
             return await search_papers(
                 query=query,
                 limit=limit,
@@ -120,7 +120,7 @@ async def get_paper_details(paper_id: str) -> Dict[str, Any]:
     """
     async with semantic_scholar_limiter:
         try:
-            from mcp_servers.semantic_scholar_server import get_paper
+            from services.semantic_scholar import get_paper
             return await get_paper(paper_id)
         except Exception as e:
             if "rate limit" in str(e).lower() or "429" in str(e):
@@ -141,7 +141,7 @@ async def get_paper_citations(paper_id: str, limit: int = 20) -> Dict[str, Any]:
     """
     async with semantic_scholar_limiter:
         try:
-            from mcp_servers.semantic_scholar_server import get_paper_citations as s2_citations
+            from services.semantic_scholar import get_paper_citations as s2_citations
             return await s2_citations(paper_id, limit=limit)
         except Exception as e:
             if "rate limit" in str(e).lower() or "429" in str(e):
@@ -162,7 +162,7 @@ async def get_paper_references(paper_id: str, limit: int = 20) -> Dict[str, Any]
     """
     async with semantic_scholar_limiter:
         try:
-            from mcp_servers.semantic_scholar_server import get_paper_references as s2_refs
+            from services.semantic_scholar import get_paper_references as s2_refs
             return await s2_refs(paper_id, limit=limit)
         except Exception as e:
             if "rate limit" in str(e).lower() or "429" in str(e):
@@ -183,7 +183,7 @@ async def get_recommendations(paper_id: str, limit: int = 10) -> Dict[str, Any]:
     """
     async with semantic_scholar_limiter:
         try:
-            from mcp_servers.semantic_scholar_server import get_recommendations as s2_recs
+            from services.semantic_scholar import get_recommendations as s2_recs
             return await s2_recs(paper_id, limit=limit)
         except Exception as e:
             if "rate limit" in str(e).lower() or "429" in str(e):
@@ -205,7 +205,7 @@ async def download_arxiv_pdf(arxiv_id: str) -> Dict[str, Any]:
         Dictionary with local file path
     """
     try:
-        from mcp_servers.arxiv_server import download_pdf
+        from services.arxiv import download_pdf
         return await download_pdf(arxiv_id)
     except Exception as e:
         raise PDFNotFoundError(
@@ -225,7 +225,7 @@ async def get_zotero_pdf_path(item_key: str) -> Dict[str, Any]:
         Dictionary with PDF path if available
     """
     try:
-        from mcp_servers.zotero_server import get_item_pdf_path
+        from services.zotero import get_item_pdf_path
         return await get_item_pdf_path(item_key)
     except Exception as e:
         raise PDFNotFoundError(
@@ -246,7 +246,7 @@ async def parse_pdf(pdf_path: str, backend: str = "pymupdf") -> Dict[str, Any]:
         Dictionary with markdown, sections, tables, references
     """
     try:
-        from mcp_servers.pdf_parser_server import parse_pdf as pdf_parse
+        from services.pdf_parser import parse_pdf as pdf_parse
         return await pdf_parse(pdf_path, backend=backend)
     except Exception as e:
         raise PDFParseError(
@@ -267,7 +267,7 @@ async def extract_pdf_section(pdf_path: str, section_name: str) -> Dict[str, Any
         Dictionary with section content
     """
     try:
-        from mcp_servers.pdf_parser_server import extract_section
+        from services.pdf_parser import extract_section
         return await extract_section(pdf_path, section_name)
     except Exception as e:
         raise PDFParseError(
@@ -287,7 +287,7 @@ async def extract_pdf_tables(pdf_path: str) -> Dict[str, Any]:
         Dictionary with list of extracted tables
     """
     try:
-        from mcp_servers.pdf_parser_server import extract_all_tables
+        from services.pdf_parser import extract_all_tables
         return await extract_all_tables(pdf_path)
     except Exception as e:
         raise PDFParseError(
@@ -434,7 +434,7 @@ async def search_zotero(query: str, limit: int = 20) -> Dict[str, Any]:
         Dictionary with matching items
     """
     try:
-        from mcp_servers.zotero_server import search_items
+        from services.zotero import search_items
         return await search_items(query, limit=limit)
     except Exception as e:
         raise AgentError(
@@ -458,7 +458,7 @@ async def create_or_get_zotero_collection(
         Dictionary with collection key and name
     """
     try:
-        from mcp_servers.zotero_server import create_or_get_collection
+        from services.zotero import create_or_get_collection
         return await create_or_get_collection(name, parent_collection)
     except Exception as e:
         raise AgentError(
@@ -482,7 +482,7 @@ async def save_papers_to_zotero(
         Dictionary with save results
     """
     try:
-        from mcp_servers.zotero_server import save_papers_to_collection
+        from services.zotero import save_papers_to_collection
         return await save_papers_to_collection(papers, collection_key)
     except Exception as e:
         raise AgentError(
@@ -506,7 +506,7 @@ async def import_zotero_collection(
         Dictionary with papers in unified format
     """
     try:
-        from mcp_servers.zotero_server import import_collection_papers
+        from services.zotero import import_collection_papers
         return await import_collection_papers(collection_key, limit=limit)
     except Exception as e:
         raise AgentError(
@@ -532,7 +532,7 @@ async def write_analysis_to_zotero(
         Dictionary with note creation result
     """
     try:
-        from mcp_servers.zotero_server import add_note
+        from services.zotero import add_note
 
         # Format analysis as HTML note
         findings = analysis.get("key_findings", [])
