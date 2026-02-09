@@ -213,6 +213,7 @@ __marimo__/
 # Data directories (root level only)
 /data/
 /cache/
+/output/
 
 # PDFs and documents
 *.pdf
@@ -222,6 +223,11 @@ __marimo__/
 *.safetensors
 /models/
 /mlx_models/
+
+# Benchmark results (auto-generated)
+/benchmarks/results/*.json
+/benchmarks/results/*.md
+!/benchmarks/results/.gitkeep
 
 # Database files
 *.db

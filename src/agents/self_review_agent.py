@@ -78,6 +78,7 @@ async def assess_review_quality(
     analyzed_papers: List[Dict[str, Any]],
     synthesis: SynthesisOutput,
     model: Optional[str] = None,
+    tracker=None,
 ) -> ReviewAssessment:
     """Assess the quality of a generated literature review.
 
@@ -115,7 +116,7 @@ async def assess_review_quality(
         gaps=gaps_text or "None identified",
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=2000)
+    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=2000, tracker=tracker, agent_name="self_review")
 
     # Parse JSON response (same pattern as other agents)
     response = response.strip()
@@ -164,6 +165,14 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
 
     logger.info("Self-Review Agent starting")
 
+    # Skip if disabled (Phase 9.5 ablation)
+    if state.get("disable_self_review", False):
+        logger.info("Self-review disabled (ablation mode), skipping")
+        return {
+            "self_review": _build_fallback_assessment("Self-review disabled (ablation)"),
+            "current_agent": "complete",
+        }
+
     # Skip if no synthesis to review
     if synthesis is None:
         logger.warning("No synthesis to review, skipping self-review")
@@ -174,12 +183,17 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
 
     sources = state.get("sources", [])
     iteration_count = state.get("iteration_count", 0)
+    llm_config = state.get("llm_config", {})
+    model = llm_config.get("model")
+    tracker = state.get("token_tracker")
 
     try:
         assessment = await assess_review_quality(
             research_question=research_question,
             analyzed_papers=analyzed_papers,
             synthesis=synthesis,
+            model=model,
+            tracker=tracker,
         )
 
         # Log key findings

@@ -1,0 +1,17 @@
+{
+  "id": "cs_transformer",
+  "research_question": "What are the recent advances in transformer architectures for natural language processing?",
+  "domain": "Computer Science",
+  "max_papers": 10,
+  "sources": ["arxiv", "semantic_scholar"],
+  "language": "en",
+  "expected_themes": [
+    "attention mechanisms",
+    "efficiency and scaling",
+    "pre-training methods",
+    "architectural innovations"
+  ],
+  "must_include_keywords": ["transformer", "attention", "language model"],
+  "must_exclude_domains": ["Biology", "Medicine", "Chemistry"],
+  "notes": "CS/NLP focused query. Tests arXiv and Semantic Scholar search quality."
+}

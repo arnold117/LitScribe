@@ -38,6 +38,7 @@ async def expand_queries(
     research_question: str,
     model: Optional[str] = None,
     domain_hint: str = "",
+    tracker=None,
 ) -> List[str]:
     """Expand a research question into multiple search queries.
 
@@ -58,7 +59,7 @@ async def expand_queries(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=500)
+        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=500, tracker=tracker, agent_name="discovery")
 
         # Parse JSON array from response
         # Handle possible markdown code blocks
@@ -234,6 +235,7 @@ async def select_papers(
     max_papers: int = 10,
     model: Optional[str] = None,
     domain_hint: str = "",
+    tracker=None,
 ) -> List[Dict[str, Any]]:
     """Select the most relevant papers for the literature review.
 
@@ -266,7 +268,7 @@ async def select_papers(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=500)
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=500, tracker=tracker, agent_name="discovery")
 
         # Parse JSON array of paper IDs
         response = response.strip()
@@ -444,19 +446,24 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     max_papers = state.get("max_papers", 10)
     cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))
+    tracker = state.get("token_tracker")
 
     research_plan = state.get("research_plan")
     domain_hint = state.get("domain_hint", "")
 
-    # Extract domain filters from research plan
+    # Extract domain filters from research plan (skip if ablation disabled)
     arxiv_categories = None
     s2_fields = None
     pubmed_mesh = None
-    if research_plan:
+    disable_domain_filter = state.get("disable_domain_filter", False)
+    disable_snowball = state.get("disable_snowball", False)
+    if research_plan and not disable_domain_filter:
         domain_hint = domain_hint or research_plan.get("domain_hint", "")
         arxiv_categories = research_plan.get("arxiv_categories") or None
         s2_fields = research_plan.get("s2_fields") or None
         pubmed_mesh = research_plan.get("pubmed_mesh") or None
+    elif disable_domain_filter:
+        logger.info("Domain filtering disabled (ablation mode)")
 
     logger.info(f"Discovery Agent starting for: {research_question}")
     logger.info(f"Cache enabled: {cache_enabled}, domain: {domain_hint or 'undetected'}")
@@ -498,13 +505,13 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     plan_queries.extend(topic.get("custom_queries", []))
             if plan_queries:
                 # Combine plan queries with LLM-expanded queries
-                llm_queries = await expand_queries(research_question, domain_hint=domain_hint)
+                llm_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
                 expanded_queries = plan_queries + [q for q in llm_queries if q not in plan_queries]
                 logger.info(f"Using {len(plan_queries)} plan queries + {len(llm_queries)} expanded queries")
             else:
-                expanded_queries = await expand_queries(research_question, domain_hint=domain_hint)
+                expanded_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
         else:
-            expanded_queries = await expand_queries(research_question, domain_hint=domain_hint)
+            expanded_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
 
         # Step 2: Search all sources (with caching if enabled, with domain filters)
         search_results = await search_all_sources(
@@ -546,10 +553,11 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             research_question=research_question,
             max_papers=max_papers,
             domain_hint=domain_hint,
+            tracker=tracker,
         )
 
         # Step 4: Optional snowball sampling if we need more papers
-        if len(selected_papers) < max_papers and len(selected_papers) > 0:
+        if len(selected_papers) < max_papers and len(selected_papers) > 0 and not disable_snowball:
             additional = await snowball_sampling(
                 seed_papers=selected_papers,
                 max_additional=max_papers - len(selected_papers),
@@ -562,6 +570,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 research_question=research_question,
                 max_papers=max_papers,
                 domain_hint=domain_hint,
+                tracker=tracker,
             )
 
         # Build SearchResult

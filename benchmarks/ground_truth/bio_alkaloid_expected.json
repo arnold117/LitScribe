@@ -1,0 +1,19 @@
+{
+  "id": "bio_alkaloid",
+  "expected_themes": [
+    "pathway elucidation",
+    "enzyme characterization",
+    "metabolic engineering",
+    "gene regulation"
+  ],
+  "must_include_keywords_in_review": [
+    "alkaloid", "biosynthesis", "enzyme", "pathway",
+    "cytochrome P450", "terpene", "indole"
+  ],
+  "domain_keywords": ["biology", "biochemistry", "plant", "metabolism"],
+  "anti_keywords": ["neural network", "transformer", "GPU", "deep learning"],
+  "min_papers": 5,
+  "max_irrelevant_ratio": 0.2,
+  "min_citation_grounding_rate": 0.8,
+  "notes": "Alkaloid biosynthesis is a well-studied area in plant biochemistry. Good reviews should cover major alkaloid classes and their biosynthetic enzymes."
+}

@@ -1,0 +1,17 @@
+{
+  "id": "med_crispr",
+  "research_question": "What are the therapeutic applications of CRISPR-Cas9 gene editing in human diseases?",
+  "domain": "Medicine",
+  "max_papers": 10,
+  "sources": ["pubmed", "semantic_scholar"],
+  "language": "en",
+  "expected_themes": [
+    "gene therapy",
+    "delivery mechanisms",
+    "clinical trials",
+    "safety and off-target effects"
+  ],
+  "must_include_keywords": ["CRISPR", "gene editing", "therapy", "disease"],
+  "must_exclude_domains": ["Physics", "Mathematics", "Computer Science"],
+  "notes": "Biomedical query. Tests PubMed search and medical literature handling."
+}

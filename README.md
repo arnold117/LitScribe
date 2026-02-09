@@ -315,6 +315,7 @@ Export generates additional formats:
 | Phase 9.1 | Self-Review Agent (auto quality assessment, scoring, gap detection) | ✅ Done |
 | Phase 9.2 | Planning Agent (complexity assessment, sub-topic decomposition, `--plan-only`) | ✅ Done |
 | **Phase 9.3** | **Refinement Agent, session management, version tracking, diff & rollback** | **✅ Done** |
+| **Phase 9.5** | **Evaluation & Instrumentation: token tracking, citation grounding, evaluation framework, ablation flags, failure analysis** | **✅ Done** |
 
 ### Planned
 
@@ -324,6 +325,32 @@ Export generates additional formats:
 | Phase 11 | Local LLM support (Ollama/MLX/vLLM) | Medium |
 | Phase 12 | Subscription system, daily digest | Medium |
 | Phase 13 | Web UI (React + FastAPI) | Medium |
+
+## Testing
+
+All tests are standalone scripts — no pytest or external test runner required.
+
+```bash
+# Run all tests
+for f in tests/test_*.py; do echo "=== $f ==="; python "$f"; echo; done
+
+# Run a single test file
+python tests/test_token_tracker.py
+```
+
+| File | Module | Tests | Status |
+|------|--------|-------|--------|
+| `test_cache_manual.py` | Cache DB / Paper Cache / Search Cache | Cache CRUD, async ops | All Pass |
+| `test_discovery_cache.py` | Discovery Agent + Cache | State creation, cache-enabled search | All Pass |
+| `test_critical_reading_cache.py` | Critical Reading Agent + Cache | PDF/parse caching, cached_tools | All Pass |
+| `test_checkpointing.py` | LangGraph Checkpointing | Imports, SQLite saver, graph compilation, ablation flags | 6/6 Pass |
+| `test_exporters.py` | BibTeX / Citation / Pandoc | BibTeX export, citation formatting | All Pass |
+| `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, supervisor routing, tracker params | 8/8 Pass |
+| `test_token_tracker.py` | TokenTracker | Init, multi-agent/model, cost estimation, fuzzy matching, CLI format | 13/13 Pass |
+| `test_citation_grounding.py` | Citation Grounding | Citation extraction, author matching, grounding rate | 15/15 Pass |
+| `test_evaluator.py` | ReviewEvaluator | Search quality, theme coverage, domain purity, failure detection | 18/18 Pass |
+
+See [`tests/README.md`](tests/README.md) for full details.
 
 ## Development Notes
 

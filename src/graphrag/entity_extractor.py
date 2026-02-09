@@ -132,6 +132,7 @@ async def extract_entities_from_paper(
     parsed_doc: Optional[Dict[str, Any]] = None,
     llm_config: Optional[Dict[str, Any]] = None,
     research_question: str = "",
+    tracker=None,
 ) -> Tuple[List[ExtractedEntity], List[EntityMention]]:
     """Extract entities from a single paper using LLM.
 
@@ -170,6 +171,8 @@ async def extract_entities_from_paper(
             model=llm_config.get("model") if llm_config else None,
             temperature=0.3,
             max_tokens=2000,
+            tracker=tracker,
+            agent_name="graphrag",
         )
 
         # Clean and parse response
@@ -242,6 +245,7 @@ async def extract_entities_batch(
     max_concurrent: int = 5,
     llm_config: Optional[Dict[str, Any]] = None,
     research_question: str = "",
+    tracker=None,
 ) -> Tuple[List[ExtractedEntity], List[EntityMention]]:
     """Extract entities from multiple papers with batching.
 
@@ -270,6 +274,7 @@ async def extract_entities_batch(
             parsed_doc = parsed_documents.get(paper_id)
             return await extract_entities_from_paper(
                 paper, parsed_doc, llm_config, research_question=research_question,
+                tracker=tracker,
             )
 
     # Process in batches

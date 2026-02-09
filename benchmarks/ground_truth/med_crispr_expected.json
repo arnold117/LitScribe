@@ -1,0 +1,19 @@
+{
+  "id": "med_crispr",
+  "expected_themes": [
+    "gene therapy",
+    "delivery mechanisms",
+    "clinical trials",
+    "safety and off-target effects"
+  ],
+  "must_include_keywords_in_review": [
+    "CRISPR", "Cas9", "gene editing", "therapy",
+    "off-target", "delivery"
+  ],
+  "domain_keywords": ["medicine", "clinical", "gene", "therapy", "disease"],
+  "anti_keywords": ["transformer", "GPU", "deep learning", "neural network"],
+  "min_papers": 5,
+  "max_irrelevant_ratio": 0.2,
+  "min_citation_grounding_rate": 0.8,
+  "notes": "CRISPR therapeutics is a rapidly advancing field. Reviews should cover both preclinical and clinical developments."
+}

@@ -306,6 +306,8 @@ async def call_llm(
     model: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 2000,
+    tracker: Optional[Any] = None,
+    agent_name: str = "unknown",
 ) -> str:
     """Call LLM for text generation.
 
@@ -314,6 +316,8 @@ async def call_llm(
         model: Model to use (default from config)
         temperature: Sampling temperature
         max_tokens: Maximum tokens to generate
+        tracker: Optional TokenTracker to record usage
+        agent_name: Name of the calling agent (for tracking)
 
     Returns:
         Generated text response
@@ -338,6 +342,13 @@ async def call_llm(
                 "LLM returned empty content",
                 context={"model": model, "prompt_length": len(prompt)}
             )
+
+        if tracker and hasattr(response, "usage") and response.usage:
+            tracker.record(agent_name, model, {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+            })
+
         return content
 
     except LLMError:
@@ -356,6 +367,8 @@ async def call_llm_with_system(
     model: Optional[str] = None,
     temperature: float = 0.7,
     max_tokens: int = 2000,
+    tracker: Optional[Any] = None,
+    agent_name: str = "unknown",
 ) -> str:
     """Call LLM with system and user prompts.
 
@@ -365,6 +378,8 @@ async def call_llm_with_system(
         model: Model to use (default from config)
         temperature: Sampling temperature
         max_tokens: Maximum tokens to generate
+        tracker: Optional TokenTracker to record usage
+        agent_name: Name of the calling agent (for tracking)
 
     Returns:
         Generated text response
@@ -386,7 +401,15 @@ async def call_llm_with_system(
             max_tokens=max_tokens,
         )
 
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+
+        if tracker and hasattr(response, "usage") and response.usage:
+            tracker.record(agent_name, model, {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+            })
+
+        return content
 
     except Exception as e:
         raise LLMError(

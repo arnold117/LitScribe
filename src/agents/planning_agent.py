@@ -26,6 +26,7 @@ async def assess_and_decompose(
     research_question: str,
     max_papers: int = 10,
     model: Optional[str] = None,
+    tracker=None,
 ) -> ResearchPlan:
     """Assess complexity and decompose research question into sub-topics.
 
@@ -43,7 +44,7 @@ async def assess_and_decompose(
         research_question=research_question,
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1500)
+    response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1500, tracker=tracker, agent_name="planning")
 
     # Parse JSON (same pattern as other agents)
     response = response.strip()
@@ -162,12 +163,18 @@ async def planning_agent(state: LitScribeState) -> Dict[str, Any]:
     max_papers = state.get("max_papers", 10)
     errors = list(state.get("errors", []))
 
+    tracker = state.get("token_tracker")
+    llm_config = state.get("llm_config", {})
+    model = llm_config.get("model")
+
     logger.info(f"Planning Agent starting for: {research_question}")
 
     try:
         plan = await assess_and_decompose(
             research_question=research_question,
             max_papers=max_papers,
+            model=model,
+            tracker=tracker,
         )
 
         logger.info(

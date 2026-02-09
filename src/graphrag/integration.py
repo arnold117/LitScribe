@@ -96,6 +96,7 @@ async def run_graphrag_pipeline(
     community_resolutions: List[float] = [0.5, 1.0, 2.0],
     min_community_size: int = 2,
     cache_enabled: bool = True,
+    tracker=None,
 ) -> KnowledgeGraphData:
     """Run the complete GraphRAG pipeline.
 
@@ -188,6 +189,7 @@ async def run_graphrag_pipeline(
             max_concurrent=max_concurrent,
             llm_config=llm_config,
             research_question=research_question,
+            tracker=tracker,
         )
         logger.info(
             f"Extracted {len(new_entities)} entities with {len(new_mentions)} mentions"
@@ -267,6 +269,7 @@ async def run_graphrag_pipeline(
         research_question,
         max_concurrent=max_concurrent,
         llm_config=llm_config,
+        tracker=tracker,
     )
 
     # Step 7: Generate global summary
@@ -277,6 +280,7 @@ async def run_graphrag_pipeline(
         papers,
         research_question,
         llm_config=llm_config,
+        tracker=tracker,
     )
 
     # Export edges
@@ -361,6 +365,7 @@ async def graphrag_agent(state: LitScribeState) -> Dict[str, Any]:
     llm_config = state.get("llm_config", {})
     batch_size = state.get("batch_size", 20)
     cache_enabled = state.get("cache_enabled", True)
+    tracker = state.get("token_tracker")
 
     try:
         knowledge_graph = await run_graphrag_pipeline(
@@ -371,6 +376,7 @@ async def graphrag_agent(state: LitScribeState) -> Dict[str, Any]:
             entity_batch_size=min(batch_size, 10),  # Smaller batches for entity extraction
             max_concurrent=5,
             cache_enabled=cache_enabled,
+            tracker=tracker,
         )
 
         # Log summary

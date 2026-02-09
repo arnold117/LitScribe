@@ -380,6 +380,11 @@ async def cmd_review(args) -> int:
     graphrag_enabled = not getattr(args, "disable_graphrag", False)
     batch_size = getattr(args, "batch_size", 20)
 
+    # Ablation flags (Phase 9.5)
+    disable_self_review = getattr(args, "disable_self_review", False)
+    disable_domain_filter = getattr(args, "disable_domain_filter", False)
+    disable_snowball = getattr(args, "disable_snowball", False)
+
     # Default output: always save to output/ directory
     if args.output:
         output_path = Path(args.output)
@@ -498,6 +503,9 @@ async def cmd_review(args) -> int:
             language=language,
             thread_id=thread_id,
             research_plan=injected_plan,
+            disable_self_review=disable_self_review,
+            disable_domain_filter=disable_domain_filter,
+            disable_snowball=disable_snowball,
         )
 
         # Check for errors
@@ -593,6 +601,21 @@ async def cmd_review(args) -> int:
             if self_review.get("overall_score", 1.0) < 0.7:
                 out.warning("Overall score below 0.7 — review may need revision")
 
+        # Display citation grounding results (Phase 9.5)
+        grounding = final_state.get("_citation_grounding")
+        if grounding:
+            rate = grounding.get("grounding_rate", 1.0)
+            total = grounding.get("total_citations", 0)
+            grounded = grounding.get("grounded_count", 0)
+            ungrounded_count = grounding.get("ungrounded_count", 0)
+            out.subheader("Citation Grounding", "🔗")
+            out.stat("Citations Found", total)
+            out.stat("Grounded", f"{grounded}/{total} ({rate:.0%})")
+            if ungrounded_count > 0:
+                out.warning(f"{ungrounded_count} ungrounded citation(s) — potential hallucinations")
+                for cit in grounding.get("ungrounded", [])[:5]:
+                    out.bullet(f"[{cit}]")
+
         if synthesis:
             # Always save output
             review_text = synthesis.get("review_text", "")
@@ -618,6 +641,8 @@ async def cmd_review(args) -> int:
                     "knowledge_graph": knowledge_graph,  # Phase 7.5
                     "synthesis": dict(synthesis) if synthesis else None,
                     "self_review": dict(self_review) if self_review else None,
+                    "token_usage": final_state.get("_token_usage"),  # Phase 9.5
+                    "citation_grounding": final_state.get("_citation_grounding"),  # Phase 9.5
                     "errors": errors,
                 }
                 json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)
@@ -631,6 +656,16 @@ async def cmd_review(args) -> int:
             )
             if len(review_text) > 500:
                 out.info(f"[full review in {review_file}]")
+
+            # Show token usage summary (Phase 9.5)
+            token_usage = final_state.get("_token_usage")
+            if token_usage:
+                tracker = final_state.get("token_tracker")
+                if tracker:
+                    out.blank()
+                    out.header("LLM COST SUMMARY")
+                    for line in tracker.format_cli_summary().split("\n"):
+                        out.info(line)
 
         else:
             out.error("No synthesis generated")
@@ -1072,6 +1107,21 @@ Examples:
         "--disable-graphrag",
         action="store_true",
         help="Disable GraphRAG for faster processing",
+    )
+    review_parser.add_argument(
+        "--disable-self-review",
+        action="store_true",
+        help="Disable self-review agent (ablation)",
+    )
+    review_parser.add_argument(
+        "--disable-domain-filter",
+        action="store_true",
+        help="Disable domain filtering in search (ablation)",
+    )
+    review_parser.add_argument(
+        "--disable-snowball",
+        action="store_true",
+        help="Disable snowball sampling (ablation)",
     )
     review_parser.add_argument(
         "--batch-size",

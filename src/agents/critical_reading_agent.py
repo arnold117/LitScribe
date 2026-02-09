@@ -223,6 +223,7 @@ async def extract_key_findings(
     paper: Dict[str, Any],
     parsed_doc: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
+    tracker=None,
 ) -> List[str]:
     """Extract key findings from a paper using LLM.
 
@@ -257,7 +258,7 @@ async def extract_key_findings(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1000)
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1000, tracker=tracker, agent_name="critical_reading")
 
         # Parse JSON array
         response = response.strip()
@@ -284,6 +285,7 @@ async def analyze_methodology(
     paper: Dict[str, Any],
     parsed_doc: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
+    tracker=None,
 ) -> str:
     """Analyze and summarize research methodology.
 
@@ -320,7 +322,7 @@ async def analyze_methodology(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=800)
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=800, tracker=tracker, agent_name="critical_reading")
         return response.strip()
     except Exception as e:
         logger.warning(f"Failed to analyze methodology for {title}: {e}")
@@ -332,6 +334,7 @@ async def assess_quality(
     key_findings: List[str],
     parsed_doc: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
+    tracker=None,
 ) -> Dict[str, List[str]]:
     """Assess paper quality, identifying strengths and limitations.
 
@@ -367,7 +370,7 @@ async def assess_quality(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=800)
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=800, tracker=tracker, agent_name="critical_reading")
 
         # Parse JSON
         response = response.strip()
@@ -396,6 +399,7 @@ async def analyze_paper_combined(
     parsed_doc: Optional[Dict[str, Any]] = None,
     model: Optional[str] = None,
     research_question: str = "",
+    tracker=None,
 ) -> Dict[str, Any]:
     """Perform combined analysis using a single LLM call.
 
@@ -434,7 +438,7 @@ async def analyze_paper_combined(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2500)
+        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2500, tracker=tracker, agent_name="critical_reading")
 
         # Parse JSON response
         response = response.strip()
@@ -476,6 +480,7 @@ async def analyze_single_paper(
     cached_tools: Optional[CachedTools] = None,
     use_combined_prompt: bool = True,
     research_question: str = "",
+    tracker=None,
 ) -> PaperSummary:
     """Perform complete critical reading analysis on a single paper.
 
@@ -521,7 +526,7 @@ async def analyze_single_paper(
     if use_combined_prompt:
         # Single LLM call for all analysis
         analysis = await analyze_paper_combined(
-            paper, parsed_doc, model, research_question=research_question,
+            paper, parsed_doc, model, research_question=research_question, tracker=tracker,
         )
         key_findings = analysis["key_findings"]
         methodology = analysis["methodology"]
@@ -534,9 +539,9 @@ async def analyze_single_paper(
             relevance_score = paper.get("relevance_score", 0.5)
     else:
         # Original 3 separate calls
-        key_findings = await extract_key_findings(paper, parsed_doc, model)
-        methodology = await analyze_methodology(paper, parsed_doc, model)
-        quality = await assess_quality(paper, key_findings, parsed_doc, model)
+        key_findings = await extract_key_findings(paper, parsed_doc, model, tracker=tracker)
+        methodology = await analyze_methodology(paper, parsed_doc, model, tracker=tracker)
+        quality = await assess_quality(paper, key_findings, parsed_doc, model, tracker=tracker)
         relevance_score = paper.get("relevance_score", 0.5)
 
     # Build PaperSummary
@@ -625,6 +630,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     cache_enabled = state.get("cache_enabled", True)
     research_question = state.get("research_question", "")
     max_concurrent = state.get("max_concurrent", 3)  # Limit concurrent LLM calls
+    tracker = state.get("token_tracker")
 
     if not papers_to_analyze:
         error_msg = "No papers to analyze"
@@ -666,6 +672,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
                     cached_tools=cached_tools,
                     use_combined_prompt=True,  # Use optimized combined prompt
                     research_question=research_question,
+                    tracker=tracker,
                     max_retries=MAX_RETRIES,
                 )
 

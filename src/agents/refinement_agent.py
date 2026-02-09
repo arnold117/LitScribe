@@ -31,6 +31,7 @@ async def classify_instruction(
     instruction_text: str,
     review_text: str,
     model: Optional[str] = None,
+    tracker=None,
 ) -> RefinementInstruction:
     """Classify a user instruction into a structured action.
 
@@ -53,7 +54,7 @@ async def classify_instruction(
         review_excerpt=excerpt,
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=500)
+    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=500, tracker=tracker, agent_name="refinement")
 
     # Parse JSON
     response = response.strip()
@@ -80,6 +81,7 @@ async def execute_refinement(
     research_question: str,
     language: str = "en",
     model: Optional[str] = None,
+    tracker=None,
 ) -> str:
     """Execute a refinement instruction on the current review.
 
@@ -107,7 +109,7 @@ async def execute_refinement(
         details=instruction["details"],
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=8000)
+    response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=8000, tracker=tracker, agent_name="refinement")
 
     # Clean up: remove any markdown code fences if LLM wraps the output
     response = response.strip()
@@ -138,6 +140,9 @@ async def refinement_agent(state: LitScribeState) -> Dict[str, Any]:
     research_question = state["research_question"]
     language = state.get("language", "en")
     errors = list(state.get("errors", []))
+    llm_config = state.get("llm_config", {})
+    model = llm_config.get("model")
+    tracker = state.get("token_tracker")
 
     if instruction is None:
         error_msg = "No refinement instruction provided"
@@ -169,6 +174,8 @@ async def refinement_agent(state: LitScribeState) -> Dict[str, Any]:
             analyzed_papers=analyzed_papers,
             research_question=research_question,
             language=language,
+            model=model,
+            tracker=tracker,
         )
 
         # Update synthesis

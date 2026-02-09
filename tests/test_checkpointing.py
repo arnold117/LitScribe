@@ -153,7 +153,11 @@ async def test_run_function_signature():
         params = list(sig.parameters.keys())
         print(f"Parameters: {params}")
 
-        required_params = ["thread_id", "checkpoint_enabled", "cache_enabled"]
+        required_params = [
+            "thread_id", "checkpoint_enabled", "cache_enabled",
+            # Phase 9.5 additions
+            "disable_self_review", "disable_domain_filter", "disable_snowball",
+        ]
         for param in required_params:
             if param not in params:
                 print(f"FAIL: {param} parameter not found")
@@ -161,6 +165,57 @@ async def test_run_function_signature():
             print(f"  - {param}: OK")
 
         print("PASS: run_literature_review signature")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+async def test_ablation_flags_in_state():
+    """Test that Phase 9.5 ablation flags are in state. (Phase 9.5)"""
+    print("\n" + "=" * 60)
+    print("Test 6: Ablation flags in state")
+    print("=" * 60)
+
+    try:
+        from agents.state import create_initial_state
+
+        # Default: all ablation flags False
+        state = create_initial_state(research_question="test question")
+        for flag in ["disable_self_review", "disable_domain_filter", "disable_snowball"]:
+            if flag not in state:
+                print(f"FAIL: {flag} not in state")
+                return False
+            if state[flag] is not False:
+                print(f"FAIL: {flag} should default to False, got {state[flag]}")
+                return False
+            print(f"  - {flag}: {state[flag]} (OK)")
+
+        # Explicit: set ablation flags
+        state2 = create_initial_state(
+            research_question="test",
+            disable_self_review=True,
+            disable_domain_filter=True,
+            disable_snowball=True,
+        )
+        for flag in ["disable_self_review", "disable_domain_filter", "disable_snowball"]:
+            if state2[flag] is not True:
+                print(f"FAIL: {flag} should be True, got {state2[flag]}")
+                return False
+
+        # Token tracker field
+        if "token_tracker" not in state:
+            print("FAIL: token_tracker not in state")
+            return False
+        if state["token_tracker"] is not None:
+            print("FAIL: token_tracker should default to None")
+            return False
+        print(f"  - token_tracker: None (OK)")
+
+        print("PASS: Ablation flags in state")
         return True
 
     except Exception as e:
@@ -182,6 +237,7 @@ async def main():
     results.append(("Compile with checkpointer", await test_compile_graph_with_checkpointer()))
     results.append(("State cache_enabled", await test_state_with_cache()))
     results.append(("run_literature_review signature", await test_run_function_signature()))
+    results.append(("Ablation flags in state", await test_ablation_flags_in_state()))
 
     # Summary
     print("\n" + "=" * 60)

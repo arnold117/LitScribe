@@ -176,6 +176,9 @@ async def run_literature_review(
     local_files: Optional[list] = None,
     language: str = "en",
     research_plan: Optional[Dict[str, Any]] = None,
+    disable_self_review: bool = False,
+    disable_domain_filter: bool = False,
+    disable_snowball: bool = False,
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
 
@@ -220,7 +223,15 @@ async def run_literature_review(
         local_files=local_files or [],
         language=language,
         research_plan=research_plan,
+        disable_self_review=disable_self_review,
+        disable_domain_filter=disable_domain_filter,
+        disable_snowball=disable_snowball,
     )
+
+    # Inject token tracker for cost instrumentation (Phase 9.5)
+    from utils.token_tracker import TokenTracker
+    tracker = TokenTracker()
+    initial_state["token_tracker"] = tracker
 
     logger.info(f"Starting literature review for: {research_question}")
 
@@ -269,6 +280,12 @@ async def run_literature_review(
             logger.info(f"Session created: {session_id}")
         except Exception as e:
             logger.warning(f"Failed to create session: {e}")
+
+    # Attach token usage summary to final state (Phase 9.5)
+    if tracker:
+        final_state["_token_usage"] = tracker.summary()
+        logger.info(f"Token usage: {tracker.summary().get('total_tokens', 0):,} tokens, "
+                     f"${tracker.summary().get('estimated_cost_usd', 0):.4f}")
 
     return final_state
 

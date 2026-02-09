@@ -311,6 +311,14 @@ class LitScribeState(TypedDict):
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
 
+    # === Ablation Flags (Phase 9.5) ===
+    disable_self_review: bool  # Skip self-review agent
+    disable_domain_filter: bool  # Skip domain filtering in discovery
+    disable_snowball: bool  # Skip snowball sampling in discovery
+
+    # === Instrumentation (Phase 9.5) ===
+    token_tracker: Optional[Any]  # TokenTracker instance (runtime only, not serialized)
+
 
 def create_initial_state(
     research_question: str,
@@ -324,6 +332,9 @@ def create_initial_state(
     local_files: Optional[List[str]] = None,
     language: str = "en",
     research_plan: Optional[Dict[str, Any]] = None,
+    disable_self_review: bool = False,
+    disable_domain_filter: bool = False,
+    disable_snowball: bool = False,
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
 
@@ -384,4 +395,8 @@ def create_initial_state(
         language=language,
         domain_hint=research_plan.get("domain_hint") if research_plan else None,
         llm_config=llm_config,
+        disable_self_review=disable_self_review,
+        disable_domain_filter=disable_domain_filter,
+        disable_snowball=disable_snowball,
+        token_tracker=None,
     )

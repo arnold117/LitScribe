@@ -150,6 +150,7 @@ async def summarize_community(
     papers_by_id: Dict[str, PaperSummary],
     research_question: str,
     llm_config: Optional[Dict[str, Any]] = None,
+    tracker=None,
 ) -> str:
     """Generate a summary for a single community.
 
@@ -189,6 +190,8 @@ async def summarize_community(
             system_prompt=COMMUNITY_SUMMARY_SYSTEM,
             user_prompt=prompt,
             model=llm_config.get("model") if llm_config else None,
+            tracker=tracker,
+            agent_name="graphrag",
         )
         return response.strip()
 
@@ -210,6 +213,7 @@ async def summarize_all_communities(
     research_question: str,
     max_concurrent: int = 3,
     llm_config: Optional[Dict[str, Any]] = None,
+    tracker=None,
 ) -> List[Community]:
     """Generate summaries for all communities.
 
@@ -244,6 +248,7 @@ async def summarize_all_communities(
                     papers_by_id,
                     research_question,
                     llm_config,
+                    tracker=tracker,
                 )
                 community["summary"] = summary
 
@@ -268,6 +273,7 @@ async def generate_global_summary(
     papers: List[PaperSummary],
     research_question: str,
     llm_config: Optional[Dict[str, Any]] = None,
+    tracker=None,
 ) -> str:
     """Generate a global summary from community summaries.
 
@@ -335,6 +341,8 @@ async def generate_global_summary(
             system_prompt=GLOBAL_SUMMARY_SYSTEM,
             user_prompt=prompt,
             model=llm_config.get("model") if llm_config else None,
+            tracker=tracker,
+            agent_name="graphrag",
         )
         return response.strip()
 

@@ -72,6 +72,13 @@ def test_state_types():
         assert state["max_papers"] == 50
         assert state["knowledge_graph"] is None
 
+        # Phase 9.5: ablation flags should default to False
+        assert state["disable_self_review"] is False
+        assert state["disable_domain_filter"] is False
+        assert state["disable_snowball"] is False
+        assert state["token_tracker"] is None
+        print("  Phase 9.5 fields OK")
+
         print("State types defined correctly")
         print("PASS: State types")
         return True
@@ -277,7 +284,9 @@ def test_supervisor_routing():
         from agents.supervisor import determine_next_agent
 
         # Test case 1: GraphRAG enabled, no knowledge graph yet
+        # Note: research_plan must be non-None to pass the planning check
         state1 = {
+            "research_plan": {"complexity_score": 2, "sub_topics": []},
             "search_results": {"total_found": 10},
             "papers_to_analyze": [{"id": "1"}, {"id": "2"}],
             "analyzed_papers": [{"paper_id": "1"}, {"paper_id": "2"}],
@@ -351,6 +360,44 @@ def test_workflow_routing():
         return False
 
 
+def test_tracker_params_in_graphrag():
+    """Test that GraphRAG functions accept tracker parameter (Phase 9.5)."""
+    print("\n" + "=" * 60)
+    print("Test 8: Tracker params in GraphRAG functions")
+    print("=" * 60)
+
+    try:
+        import inspect
+
+        from graphrag.entity_extractor import extract_entities_from_paper
+        sig = inspect.signature(extract_entities_from_paper)
+        assert "tracker" in sig.parameters, "extract_entities_from_paper missing tracker param"
+        print("  extract_entities_from_paper: tracker param OK")
+
+        from graphrag.summarizer import summarize_community, generate_global_summary
+        sig1 = inspect.signature(summarize_community)
+        assert "tracker" in sig1.parameters, "summarize_community missing tracker param"
+        print("  summarize_community: tracker param OK")
+
+        sig2 = inspect.signature(generate_global_summary)
+        assert "tracker" in sig2.parameters, "generate_global_summary missing tracker param"
+        print("  generate_global_summary: tracker param OK")
+
+        from graphrag.integration import run_graphrag_pipeline
+        sig3 = inspect.signature(run_graphrag_pipeline)
+        assert "tracker" in sig3.parameters, "run_graphrag_pipeline missing tracker param"
+        print("  run_graphrag_pipeline: tracker param OK")
+
+        print("PASS: Tracker params in GraphRAG functions")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Run all tests."""
     print("GraphRAG Module Tests")
@@ -365,6 +412,7 @@ def main():
     results.append(("Community detection", test_community_detection()))
     results.append(("Supervisor routing", test_supervisor_routing()))
     results.append(("Workflow routing", test_workflow_routing()))
+    results.append(("Tracker params in GraphRAG", test_tracker_params_in_graphrag()))
 
     # Summary
     print("\n" + "=" * 60)

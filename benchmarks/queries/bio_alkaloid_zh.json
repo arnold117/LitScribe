@@ -1,0 +1,17 @@
+{
+  "id": "bio_alkaloid_zh",
+  "research_question": "What are the biosynthetic pathways and enzymes involved in alkaloid biosynthesis in plants?",
+  "domain": "Biology",
+  "max_papers": 10,
+  "sources": ["arxiv", "pubmed", "semantic_scholar"],
+  "language": "zh",
+  "expected_themes": [
+    "pathway elucidation",
+    "enzyme characterization",
+    "metabolic engineering",
+    "gene regulation"
+  ],
+  "must_include_keywords": ["alkaloid", "biosynthesis", "enzyme", "pathway"],
+  "must_exclude_domains": ["Physics", "Mathematics", "Computer Science"],
+  "notes": "Same as bio_alkaloid but with Chinese output. Tests cross-language generation."
+}

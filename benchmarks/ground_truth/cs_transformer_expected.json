@@ -1,0 +1,19 @@
+{
+  "id": "cs_transformer",
+  "expected_themes": [
+    "attention mechanisms",
+    "efficiency and scaling",
+    "pre-training methods",
+    "architectural innovations"
+  ],
+  "must_include_keywords_in_review": [
+    "transformer", "attention", "self-attention",
+    "pre-training", "BERT", "GPT"
+  ],
+  "domain_keywords": ["machine learning", "NLP", "language model", "neural"],
+  "anti_keywords": ["alkaloid", "CRISPR", "clinical trial", "patient"],
+  "min_papers": 5,
+  "max_irrelevant_ratio": 0.2,
+  "min_citation_grounding_rate": 0.8,
+  "notes": "Transformer architectures are central to modern NLP. Reviews should cover key models (BERT, GPT, T5) and recent efficiency improvements."
+}

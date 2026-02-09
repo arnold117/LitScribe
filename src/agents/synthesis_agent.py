@@ -192,6 +192,7 @@ async def identify_themes(
     analyzed_papers: List[PaperSummary],
     research_question: str,
     model: Optional[str] = None,
+    tracker=None,
 ) -> List[ThemeCluster]:
     """Identify major themes across analyzed papers.
 
@@ -217,7 +218,7 @@ async def identify_themes(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=2000)
+        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=2000, tracker=tracker, agent_name="synthesis")
 
         # Parse JSON
         response = response.strip()
@@ -264,6 +265,7 @@ async def analyze_gaps(
     themes: List[ThemeCluster],
     research_question: str,
     model: Optional[str] = None,
+    tracker=None,
 ) -> Dict[str, List[str]]:
     """Identify research gaps and future directions.
 
@@ -292,7 +294,7 @@ async def analyze_gaps(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=1000)
+        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=1000, tracker=tracker, agent_name="synthesis")
 
         # Parse JSON
         response = response.strip()
@@ -329,6 +331,7 @@ async def generate_review(
     target_words: int = 2000,
     model: Optional[str] = None,
     language: str = "en",
+    tracker=None,
 ) -> str:
     """Generate the literature review narrative.
 
@@ -372,6 +375,8 @@ async def generate_review(
             model=model,
             temperature=0.5,
             max_tokens=min(4000, target_words * 2),
+            tracker=tracker,
+            agent_name="synthesis",
         )
         logger.info(f"Generated review with {len(response.split())} words")
         return response.strip()
@@ -405,6 +410,7 @@ async def generate_graphrag_review(
     target_words: int = 2500,
     model: Optional[str] = None,
     language: str = "en",
+    tracker=None,
 ) -> str:
     """Generate literature review enhanced with GraphRAG knowledge.
 
@@ -455,6 +461,8 @@ async def generate_graphrag_review(
             model=model,
             temperature=0.5,
             max_tokens=min(5000, target_words * 2),
+            tracker=tracker,
+            agent_name="synthesis",
         )
         logger.info(f"Generated GraphRAG-enhanced review with {len(response.split())} words")
         return response.strip()
@@ -471,6 +479,7 @@ async def generate_graphrag_review(
             target_words=target_words,
             model=model,
             language=language,
+            tracker=tracker,
         )
 
 
@@ -478,6 +487,7 @@ async def format_citations(
     analyzed_papers: List[PaperSummary],
     style: str = "APA",
     model: Optional[str] = None,
+    tracker=None,
 ) -> List[str]:
     """Format paper citations in the specified style.
 
@@ -523,7 +533,7 @@ async def format_citations(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.1, max_tokens=2000)
+        response = await call_llm(prompt, model=model, temperature=0.1, max_tokens=2000, tracker=tracker, agent_name="synthesis")
         citations = [line.strip() for line in response.strip().split("\n") if line.strip()]
         return citations
 
@@ -560,6 +570,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     errors = list(state.get("errors", []))
     llm_config = state.get("llm_config", {})
     model = llm_config.get("model")
+    tracker = state.get("token_tracker")
 
     # Phase 7.5: Check for GraphRAG knowledge graph
     knowledge_graph = state.get("knowledge_graph")
@@ -614,14 +625,14 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 # Fall back to LLM theme identification
                 logger.warning("GraphRAG produced no usable themes, falling back to LLM")
                 use_graphrag = False
-                themes = await identify_themes(analyzed_papers, research_question, model)
+                themes = await identify_themes(analyzed_papers, research_question, model, tracker=tracker)
         else:
             # Fallback: LLM-based theme identification
-            themes = await identify_themes(analyzed_papers, research_question, model)
+            themes = await identify_themes(analyzed_papers, research_question, model, tracker=tracker)
             kg_context = None
 
         # Step 2: Analyze gaps (enhanced with GraphRAG context if available)
-        gap_analysis = await analyze_gaps(analyzed_papers, themes, research_question, model)
+        gap_analysis = await analyze_gaps(analyzed_papers, themes, research_question, model, tracker=tracker)
         gaps = gap_analysis["gaps"]
         future_directions = gap_analysis["future_directions"]
 
@@ -638,6 +649,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 target_words=2500,  # Slightly longer for richer synthesis
                 model=model,
                 language=language,
+                tracker=tracker,
             )
         else:
             review_text = await generate_review(
@@ -649,10 +661,11 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 target_words=2000,
                 model=model,
                 language=language,
+                tracker=tracker,
             )
 
         # Step 4: Format citations
-        citations = await format_citations(analyzed_papers, style="APA", model=model)
+        citations = await format_citations(analyzed_papers, style="APA", model=model, tracker=tracker)
 
         # Build synthesis output
         synthesis = SynthesisOutput(
@@ -665,17 +678,38 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
             papers_cited=len(analyzed_papers),
         )
 
+        # Step 5: Citation grounding check (Phase 9.5)
+        grounding_report = None
+        try:
+            from analysis.citation_grounding import check_citation_grounding
+            grounding_report = check_citation_grounding(review_text, analyzed_papers)
+            if grounding_report["ungrounded_count"] > 0:
+                logger.warning(
+                    f"Citation grounding: {grounding_report['ungrounded_count']} ungrounded citations "
+                    f"(rate={grounding_report['grounding_rate']:.2%})"
+                )
+            else:
+                logger.info(
+                    f"Citation grounding: {grounding_report['grounded_count']}/{grounding_report['total_citations']} "
+                    f"citations grounded (100%)"
+                )
+        except Exception as e:
+            logger.warning(f"Citation grounding check failed: {e}")
+
         mode_str = "GraphRAG-enhanced" if use_graphrag else "standard"
         logger.info(
             f"Synthesis complete ({mode_str}): {synthesis['word_count']} words, "
             f"{len(themes)} themes, {len(gaps)} gaps"
         )
 
-        return {
+        result = {
             "synthesis": synthesis,
             "errors": errors,
             "current_agent": "complete",
         }
+        if grounding_report:
+            result["_citation_grounding"] = grounding_report
+        return result
 
     except Exception as e:
         error_msg = f"Synthesis Agent failed: {e}"
