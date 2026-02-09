@@ -289,7 +289,7 @@ Write a comprehensive {review_type} literature review that:
    - Restate significance of findings
 
 Requirements:
-- Use in-text citations in the format [Author, Year]
+- Use in-text citations with the first author's actual last name, e.g. [Smith, 2020] or [Smith et al., 2020]. NEVER use the generic placeholder [Author, Year] — always use real author surnames from the papers provided
 - Write in formal academic prose
 - Target approximately {word_count} words
 - Maintain objectivity while being analytical
@@ -344,7 +344,7 @@ Write a comprehensive {review_type} literature review that:
    * Synthesize findings across papers (don't just summarize each paper)
    * Highlight connections between methods, datasets, and concepts identified in the knowledge graph
    * Compare and contrast different approaches
-   * Reference specific papers with [Author, Year] citations
+   * Reference specific papers with [LastName, Year] citations using the first author's real surname
    * Note how entities (methods, datasets, metrics) flow between papers
 
 3. CROSS-CUTTING ANALYSIS (1-2 paragraphs)
@@ -368,7 +368,7 @@ Write a comprehensive {review_type} literature review that:
    - Restate significance of findings
 
 Requirements:
-- Use in-text citations in the format [Author, Year]
+- Use in-text citations with the first author's actual last name, e.g. [Smith, 2020] or [Smith et al., 2020]. NEVER use the generic placeholder [Author, Year] — always use real author surnames from the papers provided
 - Write in formal academic prose
 - Target approximately {word_count} words
 - Leverage the knowledge graph context to make explicit connections between papers
@@ -602,7 +602,7 @@ Research Question: {research_question}
 ## Requirements:
 - Apply the requested modification precisely
 - Preserve the overall structure and academic tone
-- Keep all existing in-text citations in [Author, Year] format
+- Keep all existing in-text citations in [LastName, Year] format using real author surnames
 - Only use citations from the available papers list
 - If adding content, integrate it naturally into the existing flow
 - If removing content, ensure remaining text still flows logically
@@ -705,7 +705,7 @@ LANGUAGE_INSTRUCTIONS = {
         "\n\nIMPORTANT LANGUAGE REQUIREMENT: Write the entire review in Chinese (中文). "
         "Use Chinese academic writing conventions and formal scholarly tone. "
         "Section headings should be in Chinese (e.g., 引言, 主题分析, 批判性讨论, 研究空白与未来方向, 结论). "
-        "Keep in-text citations in their original format [Author, Year]. "
+        "Keep in-text citations in [LastName, Year] format using real author surnames (e.g., [张, 2020] or [Smith et al., 2020]). "
         "Do not include an English translation."
     ),
 }
@@ -729,5 +729,5 @@ def get_language_instruction(language: str) -> str:
         f"\n\nIMPORTANT LANGUAGE REQUIREMENT: Write the entire review in {language}. "
         f"Use appropriate academic writing conventions for this language. "
         "Section headings should also be in the target language. "
-        "Keep in-text citations in their original format [Author, Year]."
+        "Keep in-text citations in [LastName, Year] format using real author surnames."
     )

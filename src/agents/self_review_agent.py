@@ -42,10 +42,14 @@ def _build_review_summary(synthesis: SynthesisOutput, max_words: int = 3000) -> 
         Truncated review text
     """
     review_text = synthesis.get("review_text", "")
-    words = review_text.split()
-    if len(words) <= max_words:
+    from agents.synthesis_agent import count_words
+    wc = count_words(review_text)
+    if wc <= max_words:
         return review_text
-    return " ".join(words[:max_words]) + f"\n\n[... truncated, {len(words)} words total]"
+    # For CJK text, truncate by characters (~1 char ≈ 1 word-equivalent)
+    max_chars = max_words * 2  # rough ratio for mixed CJK/Latin
+    truncated = review_text[:max_chars]
+    return truncated + f"\n\n[... truncated, {wc} words total]"
 
 
 def _build_fallback_assessment(error_msg: str) -> ReviewAssessment:

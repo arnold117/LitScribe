@@ -135,8 +135,12 @@ def match_citations_to_papers(
         # "Smith et al." -> "Smith", "Smith & Jones" -> "Smith"
         primary_name = author_part.split()[0].replace(",", "")
 
+        # Detect generic placeholder names that LLMs sometimes emit
+        _GENERIC_NAMES = {"author", "authors", "et"}
+        is_generic = _normalize(primary_name) in _GENERIC_NAMES
+
         key = (_normalize(primary_name), year)
-        if key in paper_lookup:
+        if not is_generic and key in paper_lookup:
             paper = paper_lookup[key]
             grounded.append({
                 "citation": citation,
@@ -146,24 +150,37 @@ def match_citations_to_papers(
         else:
             # Fuzzy: try all papers with matching year
             matched = False
-            for paper in analyzed_papers:
-                if str(paper.get("year", "")) != year:
-                    continue
-                authors = paper.get("authors", [])
-                if isinstance(authors, str):
-                    authors = [authors]
-                last_names = _extract_last_names(authors)
-                for ln in last_names:
-                    if _normalize(ln) == _normalize(primary_name):
-                        grounded.append({
-                            "citation": citation,
-                            "paper_id": paper.get("paper_id", ""),
-                            "title": paper.get("title", ""),
-                        })
-                        matched = True
+            year_matches = [p for p in analyzed_papers if str(p.get("year", "")) == year]
+
+            if not is_generic:
+                # Try author name match
+                for paper in year_matches:
+                    authors = paper.get("authors", [])
+                    if isinstance(authors, str):
+                        authors = [authors]
+                    last_names = _extract_last_names(authors)
+                    for ln in last_names:
+                        if _normalize(ln) == _normalize(primary_name):
+                            grounded.append({
+                                "citation": citation,
+                                "paper_id": paper.get("paper_id", ""),
+                                "title": paper.get("title", ""),
+                            })
+                            matched = True
+                            break
+                    if matched:
                         break
-                if matched:
-                    break
+
+            # Fallback for generic names: if exactly one paper matches the year, ground it
+            if not matched and is_generic and len(year_matches) == 1:
+                paper = year_matches[0]
+                grounded.append({
+                    "citation": citation,
+                    "paper_id": paper.get("paper_id", ""),
+                    "title": paper.get("title", ""),
+                })
+                matched = True
+
             if not matched:
                 ungrounded.append(citation)
 

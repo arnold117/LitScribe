@@ -14,6 +14,7 @@ Phase 7.5 Enhancement:
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from agents.errors import LLMError
@@ -38,6 +39,18 @@ from agents.state import (
 from agents.tools import call_llm
 
 logger = logging.getLogger(__name__)
+
+
+def count_words(text: str) -> int:
+    """Count words in text, handling CJK (Chinese/Japanese/Korean) characters.
+
+    For CJK text, each character is counted as one word-equivalent.
+    For Latin text, standard whitespace splitting is used.
+    Mixed text sums both counts.
+    """
+    cjk_chars = len(re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uf900-\ufaff]', text))
+    latin_words = len(re.findall(r'[a-zA-Zà-ÿ]+', text))
+    return cjk_chars + latin_words
 
 
 def communities_to_themes(
@@ -110,6 +123,16 @@ def communities_to_themes(
             paper_ids=paper_ids,
             key_points=key_points,
         ))
+
+    # Deduplicate themes by name (communities at different hierarchy levels
+    # can produce identical theme names from the same entity cluster)
+    seen_names = set()
+    unique_themes = []
+    for theme in themes:
+        if theme["theme"] not in seen_names:
+            seen_names.add(theme["theme"])
+            unique_themes.append(theme)
+    themes = unique_themes
 
     # If no communities, return empty list (will trigger fallback)
     if not themes:
@@ -378,7 +401,7 @@ async def generate_review(
             tracker=tracker,
             agent_name="synthesis",
         )
-        logger.info(f"Generated review with {len(response.split())} words")
+        logger.info(f"Generated review with {count_words(response)} words")
         return response.strip()
 
     except LLMError as e:
@@ -464,7 +487,7 @@ async def generate_graphrag_review(
             tracker=tracker,
             agent_name="synthesis",
         )
-        logger.info(f"Generated GraphRAG-enhanced review with {len(response.split())} words")
+        logger.info(f"Generated GraphRAG-enhanced review with {count_words(response)} words")
         return response.strip()
 
     except LLMError as e:
@@ -675,7 +698,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
             future_directions=future_directions,
             review_text=review_text,
             citations_formatted=citations,
-            word_count=len(review_text.split()),
+            word_count=count_words(review_text),
             papers_cited=len(analyzed_papers),
         )
 

@@ -328,14 +328,12 @@ Export generates additional formats:
 
 ## Testing
 
-All tests are standalone scripts — no pytest or external test runner required.
-
 ```bash
-# Run all tests
-for f in tests/test_*.py; do echo "=== $f ==="; python "$f"; echo; done
+# Run all tests via pytest
+pytest
 
 # Run a single test file
-python tests/test_token_tracker.py
+pytest tests/test_token_tracker.py -v
 ```
 
 | File | Module | Tests | Status |
@@ -382,7 +380,7 @@ See [`tests/README.md`](tests/README.md) for full details.
 
 ### Architecture Notes
 
-**MCP Integration**: The project uses FastMCP decorators but **directly imports** functions rather than using MCP protocol (stdio/HTTP). This design prioritizes lower latency, simpler error handling, and tighter integration with LangGraph. Phase 10 will add a true MCP server mode for external client access.
+**MCP Integration**: Internal agents directly import service functions for lower latency and tighter LangGraph integration. A unified MCP server (`src/mcp_server.py`) is also available for external client access via stdio/streamable-http.
 
 **Agent Architecture**: 8 agents orchestrated by LangGraph StateGraph:
 - Main pipeline: Supervisor → Planning → Discovery → Critical Reading → GraphRAG → Synthesis → Self-Review

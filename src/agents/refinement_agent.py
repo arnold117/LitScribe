@@ -43,10 +43,9 @@ async def classify_instruction(
     Returns:
         RefinementInstruction with classified action
     """
-    # Use first 500 words as excerpt
-    words = review_text.split()
-    excerpt = " ".join(words[:500])
-    if len(words) > 500:
+    # Use first 2000 chars as excerpt (handles CJK where split() undercounts)
+    excerpt = review_text[:2000]
+    if len(review_text) > 2000:
         excerpt += " ..."
 
     prompt = REFINEMENT_CLASSIFY_PROMPT.format(
@@ -182,10 +181,11 @@ async def refinement_agent(state: LitScribeState) -> Dict[str, Any]:
         # Update synthesis
         updated_synthesis = dict(synthesis)
         updated_synthesis["review_text"] = new_review
-        updated_synthesis["word_count"] = len(new_review.split())
+        from agents.synthesis_agent import count_words
+        updated_synthesis["word_count"] = count_words(new_review)
 
         logger.info(
-            f"Refinement complete: {len(current_review.split())} → "
+            f"Refinement complete: {count_words(current_review)} → "
             f"{updated_synthesis['word_count']} words"
         )
 

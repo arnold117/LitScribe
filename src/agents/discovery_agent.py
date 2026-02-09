@@ -188,11 +188,14 @@ async def search_all_sources(
         papers = result.get("papers", [])
         all_papers.extend(papers)
 
-        # Update source counts
-        for paper in papers:
-            source = paper.get("source", "unknown")
-            if source in source_counts:
-                source_counts[source] += 1
+        # Aggregate source counts from search result (not per-paper "source" field,
+        # since UnifiedPaper uses "sources" dict, not a single "source" string)
+        result_counts = result.get("source_counts", {})
+        for src, count in result_counts.items():
+            if src in source_counts:
+                source_counts[src] += count
+            else:
+                source_counts[src] = count
 
     # Deduplicate by paper_id or title similarity
     seen_ids = set()
