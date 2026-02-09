@@ -195,11 +195,15 @@ class CachedTools:
                 await self._cache_search_results(query, sources, result)
 
             unique_papers = self._deduplicate_papers(all_papers)
+            source_counts = dict(result.get("source_counts", {}))
+            if zotero_papers:
+                source_counts["zotero"] = len(zotero_papers)
             return {
                 "papers": unique_papers,
                 "total_found": len(unique_papers),
                 "from_cache": 0,
                 "from_zotero": len(zotero_papers),
+                "source_counts": source_counts,
                 "sources_fetched": sources,
             }
 
@@ -222,6 +226,7 @@ class CachedTools:
         )
 
         # === Step 3: Fetch from external APIs (only uncached sources) ===
+        fetched_source_counts = {}
         if sources_to_fetch:
             logger.info(f"Fetching from {sources_to_fetch} (not cached)")
             result = await unified_search(
@@ -234,6 +239,7 @@ class CachedTools:
                 pubmed_mesh=pubmed_mesh,
             )
             new_papers = result.get("papers", [])
+            fetched_source_counts = dict(result.get("source_counts", {}))
 
             # Cache the new results by source
             source_papers = {}
@@ -253,11 +259,17 @@ class CachedTools:
         all_papers = zotero_papers + cached_papers
         unique_papers = self._deduplicate_papers(all_papers)
 
+        # Build source_counts from fetched results + Zotero
+        source_counts = fetched_source_counts
+        if zotero_papers:
+            source_counts["zotero"] = len(zotero_papers)
+
         return {
             "papers": unique_papers,
             "total_found": len(unique_papers),
             "from_cache": len(sources) - len(sources_to_fetch),
             "from_zotero": len(zotero_papers),
+            "source_counts": source_counts,
             "sources_fetched": sources_to_fetch,
         }
 

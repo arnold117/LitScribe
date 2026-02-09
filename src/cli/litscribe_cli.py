@@ -385,6 +385,9 @@ async def cmd_review(args) -> int:
     disable_domain_filter = getattr(args, "disable_domain_filter", False)
     disable_snowball = getattr(args, "disable_snowball", False)
 
+    # Zotero collection filter
+    zotero_collection = getattr(args, "zotero_collection", None)
+
     # Default output: always save to output/ directory
     if args.output:
         output_path = Path(args.output)
@@ -506,6 +509,7 @@ async def cmd_review(args) -> int:
             disable_self_review=disable_self_review,
             disable_domain_filter=disable_domain_filter,
             disable_snowball=disable_snowball,
+            zotero_collection=zotero_collection,
         )
 
         # Check for errors
@@ -1080,7 +1084,7 @@ Examples:
     review_parser.add_argument(
         "--sources", "-s",
         default="arxiv,semantic_scholar,pubmed",
-        help="Comma-separated sources: arxiv,pubmed,semantic_scholar (default: arxiv,semantic_scholar,pubmed)",
+        help="Comma-separated sources: arxiv,pubmed,semantic_scholar (default: arxiv,semantic_scholar,pubmed). Zotero is always searched automatically if configured.",
     )
     review_parser.add_argument(
         "--type", "-t",
@@ -1135,6 +1139,11 @@ Examples:
         nargs="+",
         default=[],
         help="Local PDF files to include in review (paths)",
+    )
+    review_parser.add_argument(
+        "--zotero-collection",
+        default=None,
+        help="Zotero collection key to search (default: search entire library or ZOTERO_DEFAULT_COLLECTION)",
     )
     review_parser.add_argument(
         "--lang",

@@ -179,6 +179,7 @@ async def run_literature_review(
     disable_self_review: bool = False,
     disable_domain_filter: bool = False,
     disable_snowball: bool = False,
+    zotero_collection: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run a complete literature review workflow.
 
@@ -203,6 +204,7 @@ async def run_literature_review(
         local_files: List of local PDF file paths to include in review
         language: Output language for review text (default: "en")
         research_plan: Pre-approved research plan (skips planning agent if provided)
+        zotero_collection: Zotero collection key to search (None = entire library)
 
     Returns:
         Final state containing the literature review
@@ -226,6 +228,7 @@ async def run_literature_review(
         disable_self_review=disable_self_review,
         disable_domain_filter=disable_domain_filter,
         disable_snowball=disable_snowball,
+        zotero_collection=zotero_collection,
     )
 
     # Inject token tracker for cost instrumentation (Phase 9.5)
@@ -323,8 +326,8 @@ async def resume_literature_review(
 
         logger.info(f"Resuming from state: current_agent={state_snapshot.values.get('current_agent')}")
 
-        # Resume the workflow
-        final_state = await graph.ainvoke(None, config)
+        # Resume the workflow from checkpoint state
+        final_state = await graph.ainvoke(state_snapshot.values, config)
 
     logger.info("Literature review resumed and completed")
 

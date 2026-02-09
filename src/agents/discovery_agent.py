@@ -108,6 +108,7 @@ async def search_all_sources(
     arxiv_categories: Optional[List[str]] = None,
     s2_fields: Optional[List[str]] = None,
     pubmed_mesh: Optional[List[str]] = None,
+    zotero_collection: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Search multiple sources with multiple queries.
 
@@ -124,6 +125,7 @@ async def search_all_sources(
         arxiv_categories: arXiv category filters (e.g. ["q-bio.BM"])
         s2_fields: Semantic Scholar field filters (e.g. ["Biology"])
         pubmed_mesh: PubMed MeSH term filters (e.g. ["Alkaloids"])
+        zotero_collection: Zotero collection key to search (None = entire library)
 
     Returns:
         Combined search results with deduplication
@@ -148,6 +150,7 @@ async def search_all_sources(
                     query=query,
                     sources=sources,
                     max_per_source=max_per_query,
+                    zotero_collection=zotero_collection,
                     arxiv_categories=arxiv_categories,
                     s2_fields=s2_fields,
                     pubmed_mesh=pubmed_mesh,
@@ -216,6 +219,10 @@ async def search_all_sources(
         if title:
             seen_titles.add(title)
         unique_papers.append(paper)
+
+    # Ensure Zotero count is reflected in source_counts
+    if from_zotero_count > 0 and source_counts.get("zotero", 0) == 0:
+        source_counts["zotero"] = from_zotero_count
 
     origin_parts = []
     if from_cache_count > 0:
@@ -464,6 +471,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     pubmed_mesh = None
     disable_domain_filter = state.get("disable_domain_filter", False)
     disable_snowball = state.get("disable_snowball", False)
+    zotero_collection = state.get("zotero_collection")
     if research_plan and not disable_domain_filter:
         domain_hint = domain_hint or research_plan.get("domain_hint", "")
         arxiv_categories = research_plan.get("arxiv_categories") or None
@@ -529,6 +537,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             arxiv_categories=arxiv_categories,
             s2_fields=s2_fields,
             pubmed_mesh=pubmed_mesh,
+            zotero_collection=zotero_collection,
         )
 
         if search_results.get("errors"):

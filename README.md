@@ -46,7 +46,9 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 
 ### Local-First Search & Zotero Integration
 - **Local-first**: SQLite cache → Zotero library → external APIs (only fetch what's missing)
-- **Zotero bidirectional sync**: Import from collections, auto-save discoveries, write analysis notes back
+- **Zotero auto-search**: Automatically searches your Zotero library before external APIs (requires `ZOTERO_API_KEY` + `ZOTERO_LIBRARY_ID`)
+- **Collection filtering**: `--zotero-collection` to search/save within a specific collection (supports key or name)
+- **Auto-save**: When a collection is specified, discovered papers are automatically saved to it
 - **Local PDF injection**: Include your own PDFs alongside searched papers
 - **User config**: Persistent preferences via `~/.litscribe/config.yaml`
 
@@ -255,6 +257,10 @@ litscribe review "What are the latest advances in LLM reasoning?"
 litscribe review "CRISPR applications" -s pubmed,arxiv -p 15
 litscribe review "石杉碱甲生物合成" --lang zh           # Chinese review
 litscribe review "topic" --local-files a.pdf b.pdf      # Include local PDFs
+
+# === Zotero Integration ===
+litscribe review "topic" --zotero-collection "My Review"     # Search + auto-save to collection (by name)
+litscribe review "topic" --zotero-collection ABC123XY        # Search + auto-save to collection (by key)
 
 # === Planning & GraphRAG ===
 litscribe review "LLM fine-tuning methods" -p 10 --enable-graphrag

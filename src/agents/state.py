@@ -307,6 +307,7 @@ class LitScribeState(TypedDict):
     local_files: List[str]  # Local PDF file paths to include in review
     language: str  # Output language for review text ("en", "zh", etc.)
     domain_hint: Optional[str]  # Detected research domain for filtering
+    zotero_collection: Optional[str]  # Zotero collection key to search (None = entire library)
 
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
@@ -336,6 +337,7 @@ def create_initial_state(
     disable_self_review: bool = False,
     disable_domain_filter: bool = False,
     disable_snowball: bool = False,
+    zotero_collection: Optional[str] = None,
 ) -> LitScribeState:
     """Create an initial state for a new literature review workflow.
 
@@ -399,4 +401,5 @@ def create_initial_state(
         disable_self_review=disable_self_review,
         disable_domain_filter=disable_domain_filter,
         disable_snowball=disable_snowball,
+        zotero_collection=zotero_collection,
     )
