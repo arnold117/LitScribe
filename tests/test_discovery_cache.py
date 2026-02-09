@@ -109,6 +109,10 @@ async def test_search_with_cache_mock():
             print("FAIL: cached_tools parameter not found")
             return False
 
+        if "zotero_collection" not in params:
+            print("FAIL: zotero_collection parameter not found")
+            return False
+
         print("PASS: search_all_sources signature")
         return True
 

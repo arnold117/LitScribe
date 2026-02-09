@@ -157,6 +157,8 @@ async def test_run_function_signature():
             "thread_id", "checkpoint_enabled", "cache_enabled",
             # Phase 9.5 additions
             "disable_self_review", "disable_domain_filter", "disable_snowball",
+            # Zotero collection passthrough
+            "zotero_collection",
         ]
         for param in required_params:
             if param not in params:
