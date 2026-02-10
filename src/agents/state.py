@@ -320,6 +320,7 @@ class LitScribeState(TypedDict):
     # === Instrumentation (Phase 9.5) ===
     # TokenTracker moved to contextvars (utils.token_tracker.get_tracker)
     # to avoid msgpack serialization issues with LangGraph checkpointing
+    citation_grounding: Optional[Dict[str, Any]]  # Citation grounding report
 
 
 def create_initial_state(
@@ -402,4 +403,5 @@ def create_initial_state(
         disable_domain_filter=disable_domain_filter,
         disable_snowball=disable_snowball,
         zotero_collection=zotero_collection,
+        citation_grounding=None,
     )

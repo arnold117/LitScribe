@@ -436,7 +436,7 @@ async def cmd_review(args) -> int:
     out.stat("GraphRAG", "enabled" if graphrag_enabled else "disabled")
     from utils.config import Config as _cfg
     if _cfg.LITELLM_REASONING_MODEL:
-        out.stat("Reasoning Model", f"{_cfg.LITELLM_REASONING_MODEL} (for synthesis/self-review/refinement)")
+        out.stat("Reasoning Model", f"{_cfg.LITELLM_REASONING_MODEL} (for synthesis/refinement)")
     out.stat("Language", language)
     out.stat("Output", output_path)
     out.stat("Thread ID", f"{thread_id}  (for resume if interrupted)")
@@ -633,7 +633,7 @@ async def cmd_review(args) -> int:
                 out.warning("Overall score below 0.7 — review may need revision")
 
         # Display citation grounding results (Phase 9.5)
-        grounding = final_state.get("_citation_grounding")
+        grounding = final_state.get("citation_grounding")
         if grounding:
             rate = grounding.get("grounding_rate", 1.0)
             total = grounding.get("total_citations", 0)
@@ -673,7 +673,7 @@ async def cmd_review(args) -> int:
                     "synthesis": dict(synthesis) if synthesis else None,
                     "self_review": dict(self_review) if self_review else None,
                     "token_usage": final_state.get("_token_usage"),  # Phase 9.5
-                    "citation_grounding": final_state.get("_citation_grounding"),  # Phase 9.5
+                    "citation_grounding": final_state.get("citation_grounding"),  # Phase 9.5
                     "errors": errors,
                 }
                 json.dump(output_data, f, indent=2, ensure_ascii=False, default=str)
@@ -1183,7 +1183,7 @@ Examples:
     review_parser.add_argument(
         "--reasoning-model",
         default=None,
-        help="Reasoning model for synthesis/self-review (e.g. 'deepseek/deepseek-reasoner'). "
+        help="Reasoning model for synthesis/refinement (e.g. 'deepseek/deepseek-reasoner'). "
              "Overrides LITELLM_REASONING_MODEL env var.",
     )
     # Planning options (Phase 9.2)

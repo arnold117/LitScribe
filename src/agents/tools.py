@@ -366,7 +366,10 @@ def extract_json(text: str) -> Union[Dict, List]:
 # =============================================================================
 
 # Task types that benefit from reasoning models (complex synthesis/evaluation)
-REASONING_TASK_TYPES = {"synthesis", "self_review", "refinement"}
+# Note: synthesis excluded — reasoning models cite too few papers (rely on pre-training knowledge)
+#       and crash with large GraphRAG prompts. Chat models follow citation instructions better.
+# Note: self_review excluded — it outputs structured JSON which reasoning models handle poorly
+REASONING_TASK_TYPES = {"refinement"}
 
 
 def _is_reasoning_model(model: str) -> bool:

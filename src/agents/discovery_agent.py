@@ -265,6 +265,13 @@ async def select_papers(
     Returns:
         Selected papers in ranked order
     """
+    # Filter out very low relevance papers regardless of count
+    MIN_RELEVANCE = 0.25
+    pre_filter_count = len(papers)
+    papers = [p for p in papers if (p.get("relevance_score") or 0) >= MIN_RELEVANCE]
+    if len(papers) < pre_filter_count:
+        logger.info(f"Filtered {pre_filter_count - len(papers)} papers below relevance threshold ({MIN_RELEVANCE})")
+
     if len(papers) <= max_papers:
         logger.info(f"Only {len(papers)} papers found, using all")
         return papers
@@ -339,7 +346,7 @@ def _paper_matches_keywords(paper: Dict[str, Any], keywords: List[str], min_matc
     Returns:
         True if paper matches enough keywords
     """
-    text = (paper.get("title", "") + " " + paper.get("abstract", "")).lower()
+    text = ((paper.get("title") or "") + " " + (paper.get("abstract") or "")).lower()
     matches = sum(1 for kw in keywords if kw.lower() in text)
     return matches >= min_matches
 

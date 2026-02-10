@@ -122,15 +122,9 @@ async def assess_review_quality(
 
     response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=2000, tracker=tracker, agent_name="self_review", task_type="self_review")
 
-    # Parse JSON response (same pattern as other agents)
-    response = response.strip()
-    if response.startswith("```"):
-        response = response.split("```")[1]
-        if response.startswith("json"):
-            response = response[4:]
-    response = response.strip()
-
-    data = json.loads(response)
+    # Parse JSON response (robust extraction for reasoning models)
+    from agents.tools import extract_json
+    data = extract_json(response)
 
     # Build ReviewAssessment with caps on list lengths
     return ReviewAssessment(

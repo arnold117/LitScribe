@@ -64,23 +64,24 @@ def test_resolve_model_explicit_wins():
         assert result == "anthropic/claude-sonnet-4-5-20250929"
 
 
-def test_resolve_model_synthesis_uses_reasoning():
-    """Synthesis task should use reasoning model when configured."""
+def test_resolve_model_synthesis_uses_regular_model():
+    """Synthesis should use regular model (reasoning models cite too few papers)."""
     from agents.tools import _resolve_model
     with patch("utils.config.Config") as mock_cfg:
         mock_cfg.LITELLM_MODEL = "deepseek/deepseek-chat"
         mock_cfg.LITELLM_REASONING_MODEL = "deepseek/deepseek-reasoner"
         result = _resolve_model(None, task_type="synthesis")
-        assert result == "deepseek/deepseek-reasoner"
+        assert result == "deepseek/deepseek-chat"
 
 
-def test_resolve_model_self_review_uses_reasoning():
+def test_resolve_model_self_review_uses_regular_model():
+    """self_review should use regular model (reasoning models are poor at JSON output)."""
     from agents.tools import _resolve_model
     with patch("utils.config.Config") as mock_cfg:
         mock_cfg.LITELLM_MODEL = "deepseek/deepseek-chat"
         mock_cfg.LITELLM_REASONING_MODEL = "deepseek/deepseek-reasoner"
         result = _resolve_model(None, task_type="self_review")
-        assert result == "deepseek/deepseek-reasoner"
+        assert result == "deepseek/deepseek-chat"
 
 
 def test_resolve_model_refinement_uses_reasoning():
@@ -126,8 +127,8 @@ def test_resolve_model_no_task_type():
 
 def test_reasoning_task_types_set():
     from agents.tools import REASONING_TASK_TYPES
-    assert "synthesis" in REASONING_TASK_TYPES
-    assert "self_review" in REASONING_TASK_TYPES
+    assert "synthesis" not in REASONING_TASK_TYPES  # Excluded: reasoning models cite too few papers
+    assert "self_review" not in REASONING_TASK_TYPES  # Excluded: reasoning models bad at JSON
     assert "refinement" in REASONING_TASK_TYPES
     assert "discovery" not in REASONING_TASK_TYPES
     assert "planning" not in REASONING_TASK_TYPES

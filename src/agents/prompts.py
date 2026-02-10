@@ -288,8 +288,13 @@ Write a comprehensive {review_type} literature review that:
    - Summarize main insights
    - Restate significance of findings
 
+## Citation Checklist — EVERY paper below MUST be cited at least once:
+{citation_checklist}
+
 Requirements:
-- Use in-text citations with the first author's actual last name, e.g. [Smith, 2020] or [Smith et al., 2020]. NEVER use the generic placeholder [Author, Year] — always use real author surnames from the papers provided
+- CITATION FORMAT: Use [LastName, Year] or [LastName et al., Year] with the real author surnames from the Papers section above. Every citation MUST include the year. NEVER omit the year. NEVER use generic placeholders.
+- CITATION COVERAGE: You MUST cite ALL {num_papers} papers listed above. Every paper in the checklist MUST appear as a [LastName, Year] citation at least once. Do NOT skip any paper. If a paper seems less central, still cite it in a supporting role (e.g., "consistent with [Author, Year]" or "see also [Author, Year]").
+- CITATION DENSITY: Every factual claim, finding, or method description MUST be backed by at least one citation from the provided papers. Do NOT write any factual statement based on your own knowledge without citing a source paper.
 - Write in formal academic prose
 - Target approximately {word_count} words
 - Maintain objectivity while being analytical
@@ -316,7 +321,7 @@ Review Type: {review_type}
 Research Question: {research_question}
 
 ## Knowledge Graph Context
-The following entities, relationships, and research clusters were automatically extracted from the literature. Use these to identify cross-paper connections and ensure comprehensive coverage.
+The following entities, relationships, and research clusters were automatically extracted from the literature. These are provided as BACKGROUND CONTEXT ONLY to help you understand the research landscape — they are NOT citable sources.
 
 {knowledge_graph_context}
 
@@ -326,7 +331,7 @@ The following entities, relationships, and research clusters were automatically 
 ## Papers ({num_papers} papers):
 {paper_summaries}
 
-## Research Clusters (Themes):
+## Thematic Organization (for structuring your review):
 {themes}
 
 ## Research Gaps:
@@ -336,21 +341,21 @@ Write a comprehensive {review_type} literature review that:
 
 1. INTRODUCTION (1-2 paragraphs)
    - Introduce the research question and its significance
-   - Preview the key research clusters/themes you will discuss
+   - Preview the key themes you will discuss
    - Briefly mention the knowledge landscape (key methods, datasets, concepts)
 
-2. THEMATIC ANALYSIS (main body, organized by research clusters)
-   For each research cluster:
+2. THEMATIC ANALYSIS (main body, organized by themes)
+   For each theme:
    * Synthesize findings across papers (don't just summarize each paper)
    * Highlight connections between methods, datasets, and concepts identified in the knowledge graph
    * Compare and contrast different approaches
-   * Reference specific papers with [LastName, Year] citations using the first author's real surname
+   * Cite individual papers using [LastName, Year] format (e.g. [Smith, 2020], [Zhang et al., 2019])
    * Note how entities (methods, datasets, metrics) flow between papers
 
 3. CROSS-CUTTING ANALYSIS (1-2 paragraphs)
-   - Discuss patterns and connections across research clusters
+   - Discuss patterns and connections across themes
    - Identify key methodological trends
-   - Note which entities (methods, datasets) appear across multiple clusters
+   - Note which entities (methods, datasets) appear across multiple themes
    - Address areas of agreement and disagreement
 
 4. CRITICAL DISCUSSION (1-2 paragraphs)
@@ -367,8 +372,14 @@ Write a comprehensive {review_type} literature review that:
    - Summarize main insights from the knowledge graph perspective
    - Restate significance of findings
 
+## Citation Checklist — EVERY paper below MUST be cited at least once:
+{citation_checklist}
+
 Requirements:
-- Use in-text citations with the first author's actual last name, e.g. [Smith, 2020] or [Smith et al., 2020]. NEVER use the generic placeholder [Author, Year] — always use real author surnames from the papers provided
+- CITATION FORMAT: ONLY cite individual papers using [LastName, Year] or [LastName et al., Year] with the real author surnames from the Papers section above (e.g., [Smith, 2020], [Zhang et al., 2019]). Every citation MUST include the year. NEVER omit the year. NEVER use generic placeholders like [Author, Year].
+- DO NOT cite research clusters, themes, knowledge graph summaries, or any non-paper source. "[研究集群]", "[Cluster]", "[知识图谱]" etc. are FORBIDDEN — only [AuthorName, Year] citations are allowed.
+- CITATION COVERAGE: You MUST cite ALL {num_papers} papers listed above. Every paper in the checklist MUST appear as a [LastName, Year] citation at least once. Do NOT skip any paper. If a paper seems less central, still cite it in a supporting role (e.g., "consistent with [Author, Year]" or "see also [Author, Year]").
+- CITATION DENSITY: Every factual claim, finding, or method description MUST be backed by at least one citation from the provided papers. Do NOT write any factual statement based on your own knowledge without citing a source paper.
 - Write in formal academic prose
 - Target approximately {word_count} words
 - Leverage the knowledge graph context to make explicit connections between papers
@@ -656,6 +667,27 @@ def format_papers_for_prompt(papers: list, max_chars: int = 20000) -> str:
     return "\n".join(lines)
 
 
+def _extract_cite_name(author: str) -> str:
+    """Extract last name from an author string for citation.
+
+    Handles: "John Smith" -> "Smith", "Smith, J." -> "Smith",
+    "Ma X" -> "Ma", "Zhang ZJ" -> "Zhang" (PubMed Chinese format).
+    """
+    author = author.strip()
+    if not author:
+        return "Unknown"
+    if "," in author:
+        return author.split(",")[0].strip()
+    parts = author.split()
+    if not parts:
+        return "Unknown"
+    last_part = parts[-1].rstrip(".")
+    # PubMed "LastName Initials" format: last word is all uppercase and short
+    if len(parts) > 1 and last_part.isupper() and len(last_part) <= 3:
+        return parts[0].strip()
+    return parts[-1].strip()
+
+
 def format_summaries_for_prompt(summaries: list, max_chars: int = 20000) -> str:
     """Format paper summaries for inclusion in prompts.
 
@@ -673,10 +705,20 @@ def format_summaries_for_prompt(summaries: list, max_chars: int = 20000) -> str:
         paper_id = summary.get("paper_id", "Unknown")
         title = summary.get("title", "Unknown Title")
         year = summary.get("year", "N/A")
+        authors = summary.get("authors", [])
+        if isinstance(authors, str):
+            authors = [authors]
+        # Format: "LastName et al." or "LastName & LastName" for citation guidance
+        author_str = ", ".join(authors[:3])
+        if len(authors) > 3:
+            author_str += " et al."
         findings = summary.get("key_findings", [])
+        cite_name = _extract_cite_name(authors[0]) if authors else "Unknown"
 
         section = f"""
 ### {title} ({year}) [ID: {paper_id}]
+Authors: {author_str}
+Cite as: [{cite_name} et al., {year}]
 Key Findings:
 {chr(10).join(f"- {f}" for f in findings[:5])}
 
@@ -695,6 +737,33 @@ Limitations: {", ".join(summary.get("limitations", [])[:3])}
     return "\n".join(lines)
 
 
+def build_citation_checklist(summaries: list) -> str:
+    """Build a numbered checklist of papers that MUST be cited in the review.
+
+    Args:
+        summaries: List of PaperSummary dictionaries
+
+    Returns:
+        Numbered checklist like "1. [Ma et al., 2006] — A survey of potential..."
+    """
+    lines = []
+    seen = set()
+    for summary in summaries:
+        authors = summary.get("authors", [])
+        if isinstance(authors, str):
+            authors = [authors]
+        year = summary.get("year", "N/A")
+        title = summary.get("title", "Unknown")
+        cite_name = _extract_cite_name(authors[0]) if authors else "Unknown"
+        cite_key = f"[{cite_name} et al., {year}]"
+        # Deduplicate by cite_key
+        if cite_key in seen:
+            continue
+        seen.add(cite_key)
+        lines.append(f"{len(lines) + 1}. {cite_key} — {title[:80]}")
+    return "\n".join(lines)
+
+
 # =============================================================================
 # Language Instructions for Multi-Language Review Generation (Phase 8.6)
 # =============================================================================
@@ -705,7 +774,9 @@ LANGUAGE_INSTRUCTIONS = {
         "\n\nIMPORTANT LANGUAGE REQUIREMENT: Write the entire review in Chinese (中文). "
         "Use Chinese academic writing conventions and formal scholarly tone. "
         "Section headings should be in Chinese (e.g., 引言, 主题分析, 批判性讨论, 研究空白与未来方向, 结论). "
-        "Keep in-text citations in [LastName, Year] format using real author surnames (e.g., [张, 2020] or [Smith et al., 2020]). "
+        "Keep in-text citations in [LastName, Year] format — every citation MUST include the year (e.g., [Zhang, 2020] or [Smith et al., 2020]). NEVER omit the year. "
+        "NEVER cite research clusters or themes — only cite individual papers by author name and year. "
+        "You MUST cite ALL papers from the Citation Checklist — do not skip any. "
         "Do not include an English translation."
     ),
 }

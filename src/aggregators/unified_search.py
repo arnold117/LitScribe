@@ -277,10 +277,10 @@ class UnifiedSearchAggregator:
             return []
 
         try:
-            # Append MeSH terms to query for domain filtering
+            # Append MeSH terms to query for domain filtering (OR = inclusive)
             filtered_query = query
             if mesh_terms:
-                mesh_filter = " AND ".join(f"{m}[MeSH]" for m in mesh_terms[:3])
+                mesh_filter = " OR ".join(f"{m}[MeSH]" for m in mesh_terms[:3])
                 filtered_query = f"({query}) AND ({mesh_filter})"
 
             result = await self._pubmed_search(query=filtered_query, max_results=max_results)

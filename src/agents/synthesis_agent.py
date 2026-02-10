@@ -24,6 +24,7 @@ from agents.prompts import (
     GRAPHRAG_LITERATURE_REVIEW_PROMPT,
     LITERATURE_REVIEW_PROMPT,
     THEME_IDENTIFICATION_PROMPT,
+    build_citation_checklist,
     format_summaries_for_prompt,
     get_language_instruction,
 )
@@ -199,10 +200,10 @@ def format_knowledge_graph_context(
             if entity_count >= max_entities:
                 break
 
-    # Community summaries
+    # Community summaries (context only — not citable)
     communities = knowledge_graph.get("communities") or []
     if communities:
-        lines.append("\n## Research Clusters")
+        lines.append("\n## Research Clusters (background context only — do NOT cite these)")
         for comm in communities[:5]:
             summary = comm.get("summary") or "Unnamed cluster"
             paper_count = len(comm.get("papers") or [])
@@ -375,6 +376,7 @@ async def generate_review(
         return "No papers available for literature review."
 
     paper_summaries = format_summaries_for_prompt(analyzed_papers)
+    citation_checklist = build_citation_checklist(analyzed_papers)
     themes_text = "\n\n".join(
         f"**{t['theme']}**\n{t['description']}\nKey points:\n" +
         "\n".join(f"  - {p}" for p in t["key_points"][:5])
@@ -387,6 +389,7 @@ async def generate_review(
         research_question=research_question,
         num_papers=len(analyzed_papers),
         paper_summaries=paper_summaries,
+        citation_checklist=citation_checklist,
         themes=themes_text,
         gaps=gaps_text,
         word_count=target_words,
@@ -460,6 +463,7 @@ async def generate_graphrag_review(
         return "No papers available for literature review."
 
     paper_summaries = format_summaries_for_prompt(analyzed_papers)
+    citation_checklist = build_citation_checklist(analyzed_papers)
     themes_text = "\n\n".join(
         f"**{t['theme']}**\n{t['description']}\nKey points:\n"
         + "\n".join(f"  - {p}" for p in t["key_points"][:5])
@@ -472,6 +476,7 @@ async def generate_graphrag_review(
         research_question=research_question,
         num_papers=len(analyzed_papers),
         paper_summaries=paper_summaries,
+        citation_checklist=citation_checklist,
         themes=themes_text,
         gaps=gaps_text,
         knowledge_graph_context=knowledge_graph_context,
@@ -588,7 +593,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     Returns:
         State updates with synthesis output
     """
-    analyzed_papers = state.get("analyzed_papers", [])
+    analyzed_papers_raw = state.get("analyzed_papers", [])
     research_question = state["research_question"]
     review_type = state.get("review_type", "narrative")
     language = state.get("language", "en")
@@ -597,6 +602,22 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     model = llm_config.get("model")
     from utils.token_tracker import get_tracker
     tracker = get_tracker()
+
+    # Deduplicate analyzed papers by paper_id
+    seen_ids = set()
+    analyzed_papers = []
+    for p in analyzed_papers_raw:
+        pid = p.get("paper_id", "")
+        if pid and pid in seen_ids:
+            logger.debug(f"Skipping duplicate paper: {pid}")
+            continue
+        if pid:
+            seen_ids.add(pid)
+        analyzed_papers.append(p)
+    if len(analyzed_papers) < len(analyzed_papers_raw):
+        logger.info(
+            f"Deduplicated papers: {len(analyzed_papers_raw)} → {len(analyzed_papers)}"
+        )
 
     # Phase 7.5: Check for GraphRAG knowledge graph
     knowledge_graph = state.get("knowledge_graph")
@@ -690,8 +711,37 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 tracker=tracker,
             )
 
-        # Step 4: Format citations
-        citations = await format_citations(analyzed_papers, style="APA", model=model, tracker=tracker)
+        # Step 4: Filter to cited papers and format citations
+        # Extract all cited authors (handles both [Author, Year] and [Author et al.] formats)
+        from analysis.citation_grounding import (
+            extract_inline_citations, extract_all_cited_authors,
+            _parse_citation, _extract_last_names,
+        )
+        cited_authors = extract_all_cited_authors(review_text)
+        # Also extract years from year-bearing citations for stricter matching
+        cited_years = set()
+        for cit in extract_inline_citations(review_text):
+            parsed = _parse_citation(cit)
+            if parsed:
+                cited_years.add(parsed[1])
+
+        if cited_authors:
+            cited_papers = []
+            for p in analyzed_papers:
+                authors = p.get("authors", [])
+                if isinstance(authors, str):
+                    authors = [authors]
+                last_names = _extract_last_names(authors)
+                if any(ln.lower() in cited_authors for ln in last_names):
+                    cited_papers.append(p)
+            if cited_papers:
+                logger.info(f"Filtered references: {len(cited_papers)} cited out of {len(analyzed_papers)} analyzed")
+            else:
+                cited_papers = analyzed_papers  # Fallback: keep all
+        else:
+            cited_papers = analyzed_papers
+
+        citations = await format_citations(cited_papers, style="APA", model=model, tracker=tracker)
 
         # Build synthesis output
         synthesis = SynthesisOutput(
@@ -701,7 +751,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
             review_text=review_text,
             citations_formatted=citations,
             word_count=count_words(review_text),
-            papers_cited=len(analyzed_papers),
+            papers_cited=len(cited_papers),
         )
 
         # Step 5: Citation grounding check (Phase 9.5)
@@ -734,7 +784,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
             "current_agent": "complete",
         }
         if grounding_report:
-            result["_citation_grounding"] = grounding_report
+            result["citation_grounding"] = grounding_report
         return result
 
     except Exception as e:
