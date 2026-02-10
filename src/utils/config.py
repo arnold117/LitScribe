@@ -21,6 +21,7 @@ class Config:
 
     # LLM Configuration (via LiteLLM)
     LITELLM_MODEL = os.getenv("LITELLM_MODEL", "deepseek/deepseek-chat")
+    LITELLM_REASONING_MODEL = os.getenv("LITELLM_REASONING_MODEL", "")  # e.g. "deepseek/deepseek-reasoner"
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")

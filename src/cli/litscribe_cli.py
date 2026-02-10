@@ -388,6 +388,12 @@ async def cmd_review(args) -> int:
     # Zotero collection filter
     zotero_collection = getattr(args, "zotero_collection", None)
 
+    # Reasoning model override
+    reasoning_model = getattr(args, "reasoning_model", None)
+    if reasoning_model:
+        from utils.config import Config
+        Config.LITELLM_REASONING_MODEL = reasoning_model
+
     # Default output: always save to output/ directory
     if args.output:
         output_path = Path(args.output)
@@ -428,6 +434,9 @@ async def cmd_review(args) -> int:
     thread_id = str(_uuid.uuid4())
 
     out.stat("GraphRAG", "enabled" if graphrag_enabled else "disabled")
+    from utils.config import Config as _cfg
+    if _cfg.LITELLM_REASONING_MODEL:
+        out.stat("Reasoning Model", f"{_cfg.LITELLM_REASONING_MODEL} (for synthesis/self-review/refinement)")
     out.stat("Language", language)
     out.stat("Output", output_path)
     out.stat("Thread ID", f"{thread_id}  (for resume if interrupted)")
@@ -490,6 +499,24 @@ async def cmd_review(args) -> int:
                     out.info("Review cancelled.")
                     return 0
             injected_plan = plan
+
+            # Override max_papers with plan's estimated total
+            selected_topics = [t for t in plan.get("sub_topics", []) if t.get("selected", True)]
+            if selected_topics:
+                plan_total = sum(t.get("estimated_papers", 5) for t in selected_topics)
+                plan_total = min(plan_total, 500)  # Cap at 500
+                if plan_total != max_papers:
+                    user_explicit = args.papers != 10  # 10 is argparse default
+                    if user_explicit and plan_total > max_papers:
+                        out.info(f"Planning suggests ~{plan_total} papers, but you set -p {max_papers}.")
+                        override = input(f"  Use plan's suggestion ({plan_total} papers)? (Y/n): ").strip()
+                        if override.lower() != "n":
+                            max_papers = plan_total
+                            out.info(f"Max papers updated to {max_papers} (from plan).")
+                    else:
+                        max_papers = plan_total
+                        out.info(f"Max papers set to {max_papers} (from plan: {len(selected_topics)} sub-topics).")
+
         except Exception as e:
             out.warning(f"Planning pre-check failed ({e}), will plan during workflow.")
 
@@ -1151,6 +1178,13 @@ Examples:
         choices=["en", "zh"],
         default="en",
         help="Language for the generated review (default: en). 'zh' generates directly in Chinese.",
+    )
+    # Reasoning model option
+    review_parser.add_argument(
+        "--reasoning-model",
+        default=None,
+        help="Reasoning model for synthesis/self-review (e.g. 'deepseek/deepseek-reasoner'). "
+             "Overrides LITELLM_REASONING_MODEL env var.",
     )
     # Planning options (Phase 9.2)
     review_parser.add_argument(

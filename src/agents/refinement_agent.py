@@ -53,17 +53,11 @@ async def classify_instruction(
         review_excerpt=excerpt,
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=500, tracker=tracker, agent_name="refinement")
+    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=500, tracker=tracker, agent_name="refinement", task_type="refinement")
 
-    # Parse JSON
-    response = response.strip()
-    if response.startswith("```"):
-        response = response.split("```")[1]
-        if response.startswith("json"):
-            response = response[4:]
-    response = response.strip()
-
-    data = json.loads(response)
+    # Parse JSON (use robust extraction for reasoning models)
+    from agents.tools import extract_json
+    data = extract_json(response)
 
     return RefinementInstruction(
         instruction_text=instruction_text,
@@ -108,7 +102,7 @@ async def execute_refinement(
         details=instruction["details"],
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=8000, tracker=tracker, agent_name="refinement")
+    response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=8000, tracker=tracker, agent_name="refinement", task_type="refinement")
 
     # Clean up: remove any markdown code fences if LLM wraps the output
     response = response.strip()

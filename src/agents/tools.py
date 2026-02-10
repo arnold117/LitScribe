@@ -5,9 +5,11 @@ that can be used by LangGraph agents. Each tool handles error conversion and
 rate limiting appropriately.
 """
 
+import json
+import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -298,8 +300,101 @@ async def extract_pdf_tables(pdf_path: str) -> Dict[str, Any]:
 
 
 # =============================================================================
+# JSON Extraction Helper
+# =============================================================================
+
+def extract_json(text: str) -> Union[Dict, List]:
+    """Robustly extract JSON from LLM response text.
+
+    Handles:
+    - Clean JSON
+    - JSON wrapped in ```json ... ``` code blocks
+    - JSON preceded by reasoning/thinking text (reasoning models)
+    - JSON with trailing text
+
+    Args:
+        text: Raw LLM response text
+
+    Returns:
+        Parsed JSON object (dict or list)
+
+    Raises:
+        json.JSONDecodeError: If no valid JSON found
+    """
+    text = text.strip()
+
+    # Try 1: Direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try 2: Strip markdown code fences
+    if "```" in text:
+        # Extract content between first pair of ```
+        parts = text.split("```")
+        if len(parts) >= 3:
+            inner = parts[1]
+            if inner.startswith("json"):
+                inner = inner[4:]
+            inner = inner.strip()
+            try:
+                return json.loads(inner)
+            except json.JSONDecodeError:
+                pass
+
+    # Try 3: Find first { or [ and match to last } or ]
+    # This handles reasoning models that prepend thinking text
+    for start_char, end_char in [("{", "}"), ("[", "]")]:
+        start_idx = text.find(start_char)
+        if start_idx == -1:
+            continue
+        end_idx = text.rfind(end_char)
+        if end_idx <= start_idx:
+            continue
+        candidate = text[start_idx:end_idx + 1]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
+
+
+# =============================================================================
 # LLM Tools - For text generation and analysis
 # =============================================================================
+
+# Task types that benefit from reasoning models (complex synthesis/evaluation)
+REASONING_TASK_TYPES = {"synthesis", "self_review", "refinement"}
+
+
+def _is_reasoning_model(model: str) -> bool:
+    """Check if a model is a reasoning/thinking model that doesn't support temperature."""
+    reasoning_patterns = ["reasoner", "deepseek-r1", "o1", "o3"]
+    model_lower = model.lower()
+    return any(p in model_lower for p in reasoning_patterns)
+
+
+def _resolve_model(model: Optional[str], task_type: Optional[str] = None) -> str:
+    """Resolve the model to use based on explicit model, task type, and config.
+
+    Priority:
+    1. Explicit model parameter (always wins)
+    2. Reasoning model for heavy tasks (if LITELLM_REASONING_MODEL is set)
+    3. Default LITELLM_MODEL
+    """
+    from utils.config import Config
+
+    if model is not None:
+        return model
+
+    # Use reasoning model for heavy tasks if configured
+    if task_type in REASONING_TASK_TYPES and Config.LITELLM_REASONING_MODEL:
+        return Config.LITELLM_REASONING_MODEL
+
+    return Config.LITELLM_MODEL
+
 
 async def call_llm(
     prompt: str,
@@ -308,43 +403,47 @@ async def call_llm(
     max_tokens: int = 2000,
     tracker: Optional[Any] = None,
     agent_name: str = "unknown",
+    task_type: Optional[str] = None,
 ) -> str:
-    """Call LLM for text generation.
+    """Call LLM for text generation with optional task-based model routing.
 
     Args:
         prompt: The prompt to send to the LLM
-        model: Model to use (default from config)
-        temperature: Sampling temperature
+        model: Model to use (default from config; overrides task_type routing)
+        temperature: Sampling temperature (ignored for reasoning models)
         max_tokens: Maximum tokens to generate
         tracker: Optional TokenTracker to record usage
         agent_name: Name of the calling agent (for tracking)
+        task_type: Task type for model routing. Reasoning models used for:
+                   "synthesis", "self_review", "refinement".
 
     Returns:
         Generated text response
     """
     try:
         from litellm import acompletion
-        from utils.config import Config
 
-        if model is None:
-            model = Config.LITELLM_MODEL
+        resolved_model = _resolve_model(model, task_type)
+
+        # Reasoning models don't support temperature
+        kwargs = {"model": resolved_model, "max_tokens": max_tokens}
+        if not _is_reasoning_model(resolved_model):
+            kwargs["temperature"] = temperature
 
         response = await acompletion(
-            model=model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=temperature,
-            max_tokens=max_tokens,
+            **kwargs,
         )
 
         content = response.choices[0].message.content
         if content is None:
             raise LLMError(
                 "LLM returned empty content",
-                context={"model": model, "prompt_length": len(prompt)}
+                context={"model": resolved_model, "prompt_length": len(prompt)}
             )
 
         if tracker and hasattr(response, "usage") and response.usage:
-            tracker.record(agent_name, model, {
+            tracker.record(agent_name, resolved_model, {
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,
             })
@@ -357,7 +456,7 @@ async def call_llm(
         raise LLMError(
             f"LLM call failed: {e}",
             original_error=e,
-            context={"model": model, "prompt_length": len(prompt)}
+            context={"model": _resolve_model(model, task_type), "prompt_length": len(prompt)}
         )
 
 
@@ -369,42 +468,45 @@ async def call_llm_with_system(
     max_tokens: int = 2000,
     tracker: Optional[Any] = None,
     agent_name: str = "unknown",
+    task_type: Optional[str] = None,
 ) -> str:
     """Call LLM with system and user prompts.
 
     Args:
         system_prompt: System message defining agent behavior
         user_prompt: User message/query
-        model: Model to use (default from config)
-        temperature: Sampling temperature
+        model: Model to use (default from config; overrides task_type routing)
+        temperature: Sampling temperature (ignored for reasoning models)
         max_tokens: Maximum tokens to generate
         tracker: Optional TokenTracker to record usage
         agent_name: Name of the calling agent (for tracking)
+        task_type: Task type for model routing.
 
     Returns:
         Generated text response
     """
     try:
         from litellm import acompletion
-        from utils.config import Config
 
-        if model is None:
-            model = Config.LITELLM_MODEL
+        resolved_model = _resolve_model(model, task_type)
+
+        # Reasoning models don't support temperature
+        kwargs = {"model": resolved_model, "max_tokens": max_tokens}
+        if not _is_reasoning_model(resolved_model):
+            kwargs["temperature"] = temperature
 
         response = await acompletion(
-            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
+            **kwargs,
         )
 
         content = response.choices[0].message.content
 
         if tracker and hasattr(response, "usage") and response.usage:
-            tracker.record(agent_name, model, {
+            tracker.record(agent_name, resolved_model, {
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,
             })
@@ -415,7 +517,7 @@ async def call_llm_with_system(
         raise LLMError(
             f"LLM call failed: {e}",
             original_error=e,
-            context={"model": model}
+            context={"model": _resolve_model(model, task_type)}
         )
 
 

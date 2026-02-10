@@ -134,6 +134,10 @@ def format_plan_for_user(plan: ResearchPlan) -> str:
     lines = []
     lines.append(f"Complexity: {plan['complexity_score']}/5")
     lines.append(f"Scope: {plan['scope_estimate']}")
+
+    selected_topics = [t for t in plan["sub_topics"] if t.get("selected", True)]
+    total_estimated = sum(t.get("estimated_papers", 5) for t in selected_topics)
+    lines.append(f"Estimated papers: ~{total_estimated} (across {len(selected_topics)} sub-topics)")
     lines.append("")
 
     for i, topic in enumerate(plan["sub_topics"], 1):

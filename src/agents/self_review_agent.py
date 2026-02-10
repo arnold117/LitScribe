@@ -120,7 +120,7 @@ async def assess_review_quality(
         gaps=gaps_text or "None identified",
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=2000, tracker=tracker, agent_name="self_review")
+    response = await call_llm(prompt, model=model, temperature=0.2, max_tokens=2000, tracker=tracker, agent_name="self_review", task_type="self_review")
 
     # Parse JSON response (same pattern as other agents)
     response = response.strip()

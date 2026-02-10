@@ -400,6 +400,7 @@ async def generate_review(
             max_tokens=min(4000, target_words * 2),
             tracker=tracker,
             agent_name="synthesis",
+            task_type="synthesis",
         )
         logger.info(f"Generated review with {count_words(response)} words")
         return response.strip()
@@ -486,6 +487,7 @@ async def generate_graphrag_review(
             max_tokens=min(5000, target_words * 2),
             tracker=tracker,
             agent_name="synthesis",
+            task_type="synthesis",
         )
         logger.info(f"Generated GraphRAG-enhanced review with {count_words(response)} words")
         return response.strip()

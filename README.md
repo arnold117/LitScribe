@@ -1,6 +1,6 @@
 # LitScribe
 
-**LitScribe** is an autonomous academic synthesis engine designed to transform how researchers conduct literature reviews. By leveraging the **Model Context Protocol (MCP)** and a **Multi-Agent** architecture, LitScribe goes beyond simple summarization to provide deep, cross-paper synthesis and gap analysis.
+**LitScribe** is an autonomous academic synthesis engine designed to transform how researchers conduct literature reviews. Built on a **LangGraph Multi-Agent** architecture with **GraphRAG** knowledge synthesis, LitScribe goes beyond simple summarization to provide deep, cross-paper synthesis and gap analysis.
 
 ---
 
@@ -81,11 +81,11 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **Language:** Python 3.12+
 - **Orchestration:** LangGraph (multi-agent framework with state management)
 - **Async Processing:** asyncio with concurrent batching and semaphore control
-- **Interface:** FastMCP 2.0 (unified MCP server for external clients)
+- **Interface:** CLI + optional MCP server for external clients
 - **Storage:** SQLite (cache, checkpointing, GraphRAG data)
 - **Knowledge Graph:** NetworkX + graspologic (Leiden community detection)
 - **Embeddings:** sentence-transformers (entity linking)
-- **Cloud LLM:** Claude Opus 4.5 / Sonnet 4.5 / DeepSeek-R1
+- **Cloud LLM:** DeepSeek Chat (default) / Claude Opus 4.5 / Sonnet 4.5 (production)
 - **PDF Processing:** pymupdf4llm (default) / marker-pdf (OCR)
 
 ## Architecture
@@ -110,7 +110,7 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 │         │                                                │               │
 │         ▼                                                │               │
 │  ┌──────────────┐     ┌─────────────────┐               │               │
-│  │  Discovery   │────▶│ MCP Servers     │               │               │
+│  │  Discovery   │────▶│ Search APIs     │               │               │
 │  │    Agent     │◄┐   │ • arXiv/PubMed  │               │               │
 │  │ • Domain-    │ │   │ • Semantic S.   │               │               │
 │  │   aware      │ │   │ • Zotero        │               │               │
@@ -225,13 +225,13 @@ sequenceDiagram
 ### Prerequisites
 
 - Python 3.12+ (via mamba/conda)
-- API keys: Anthropic (Claude), optional: NCBI, Semantic Scholar, Zotero
+- API keys: DeepSeek (default LLM) or Anthropic (Claude), optional: NCBI, Semantic Scholar, Zotero
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/LitScribe.git
+git clone https://github.com/arnold117/LitScribe.git
 cd LitScribe
 
 # Create environment
@@ -312,7 +312,7 @@ Export generates additional formats:
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| MVP | MCP servers, unified search, CLI | ✅ Done |
+| MVP | Search services, unified search, CLI | ✅ Done |
 | Iteration 2 | Multi-agent system, LangGraph | ✅ Done |
 | Phase 6.5 | SQLite cache, checkpointing | ✅ Done |
 | Phase 7 | BibTeX, export, citation styles | ✅ Done |
@@ -348,6 +348,7 @@ pytest tests/test_token_tracker.py -v
 | `test_discovery_cache.py` | Discovery Agent + Cache | State creation, cache-enabled search | All Pass |
 | `test_critical_reading_cache.py` | Critical Reading Agent + Cache | PDF/parse caching, cached_tools | All Pass |
 | `test_checkpointing.py` | LangGraph Checkpointing | Imports, SQLite saver, graph compilation, ablation flags | 6/6 Pass |
+| `test_zotero_integration.py` | Zotero Integration | Collection resolution, key/name detection, item conversion, state wiring | 18/18 Pass |
 | `test_exporters.py` | BibTeX / Citation / Pandoc | BibTeX export, citation formatting | All Pass |
 | `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, supervisor routing, tracker params, **retry logic, threshold clustering** | **10/10 Pass** |
 | `test_token_tracker.py` | TokenTracker | Init, multi-agent/model, cost estimation, fuzzy matching, CLI format | 13/13 Pass |
@@ -375,18 +376,20 @@ See [`tests/README.md`](tests/README.md) for full details.
 
 ### LLM Strategy
 
-| Task | Model | Reason |
-|------|-------|--------|
-| Query expansion | Haiku | Simple, low cost |
-| Paper analysis | Sonnet 4.5 | Balance quality/cost |
-| Entity extraction | Sonnet 4.5 | Structured output |
-| Community summary | Sonnet 4.5 | Synthesis quality |
-| Review synthesis | Opus 4.5 | Complex reasoning |
-| Batch processing | DeepSeek-R3 | Cost-effective |
+Default LLM is **DeepSeek Chat** (via LiteLLM). Configurable via `LITELLM_MODEL` env var or `litscribe config set model`.
+
+| Task | Default (Testing) | Production | Reason |
+|------|-------------------|------------|--------|
+| Query expansion | DeepSeek Chat | Haiku | Simple, low cost |
+| Paper analysis | DeepSeek Chat | Sonnet 4.5 | Balance quality/cost |
+| Entity extraction | DeepSeek Chat | Sonnet 4.5 | Structured output |
+| Community summary | DeepSeek Chat | Sonnet 4.5 | Synthesis quality |
+| Review synthesis | DeepSeek Chat | Opus 4.5 | Complex reasoning |
+| Batch processing | DeepSeek Chat | DeepSeek Chat | Cost-effective |
 
 ### Architecture Notes
 
-**MCP Integration**: Internal agents directly import service functions for lower latency and tighter LangGraph integration. A unified MCP server (`src/mcp_server.py`) is also available for external client access via stdio/streamable-http.
+**Service Layer**: Internal agents directly import service functions (`src/services/`) for lower latency and tighter LangGraph integration. A unified MCP server (`src/mcp_server.py`) is also available for external client access via stdio/streamable-http.
 
 **Agent Architecture**: 8 agents orchestrated by LangGraph StateGraph:
 - Main pipeline: Supervisor → Planning → Discovery → Critical Reading → GraphRAG → Synthesis → Self-Review
