@@ -12,6 +12,7 @@ Supports local-first search with SQLite caching (Phase 6.5).
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +25,7 @@ from agents.prompts import (
 from agents.state import LitScribeState, SearchResult
 from agents.tools import (
     call_llm,
+    extract_json,
     get_paper_citations,
     get_paper_references,
     get_recommendations,
@@ -61,16 +63,7 @@ async def expand_queries(
     try:
         response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=500, tracker=tracker, agent_name="discovery")
 
-        # Parse JSON array from response
-        # Handle possible markdown code blocks
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        queries = json.loads(response)
+        queries = extract_json(response)
 
         if not isinstance(queries, list):
             raise ValueError("Expected JSON array")
@@ -138,9 +131,9 @@ async def search_all_sources(
     from_cache_count = 0
     from_zotero_count = 0
 
-    # Search with each query in parallel (limit to top 3 queries to avoid rate limits)
-    queries_to_search = queries[:3]
-    max_per_query = max_per_source // len(queries_to_search)
+    # Search with each query in parallel (limit to top 6 queries for broader coverage)
+    queries_to_search = queries[:6]
+    max_per_query = max(max_per_source // len(queries_to_search), 5)
 
     async def search_single_query(query: str):
         """Search a single query across all sources."""
@@ -266,7 +259,7 @@ async def select_papers(
         Selected papers in ranked order
     """
     # Filter out very low relevance papers regardless of count
-    MIN_RELEVANCE = 0.25
+    MIN_RELEVANCE = 0.35
     pre_filter_count = len(papers)
     papers = [p for p in papers if (p.get("relevance_score") or 0) >= MIN_RELEVANCE]
     if len(papers) < pre_filter_count:
@@ -290,15 +283,7 @@ async def select_papers(
     try:
         response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=500, tracker=tracker, agent_name="discovery")
 
-        # Parse JSON array of paper IDs
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        selected_ids = json.loads(response)
+        selected_ids = extract_json(response)
 
         if not isinstance(selected_ids, list):
             raise ValueError("Expected JSON array of paper IDs")
@@ -347,7 +332,7 @@ def _paper_matches_keywords(paper: Dict[str, Any], keywords: List[str], min_matc
         True if paper matches enough keywords
     """
     text = ((paper.get("title") or "") + " " + (paper.get("abstract") or "")).lower()
-    matches = sum(1 for kw in keywords if kw.lower() in text)
+    matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw.lower()) + r'\b', text))
     return matches >= min_matches
 
 
@@ -365,6 +350,83 @@ def _extract_keywords(research_question: str) -> List[str]:
     words = research_question.lower().split()
     # Keep words >= 3 chars that aren't stopwords
     return [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in stopwords]
+
+
+def _extract_queries_from_papers(
+    papers: List[Dict[str, Any]],
+    research_question: str,
+    max_queries: int = 3,
+) -> List[str]:
+    """Extract additional search queries from initial search results.
+
+    Analyzes titles and keywords of top papers to discover domain-specific
+    terms not in the original query, then builds new queries from them.
+    No LLM call needed — purely statistical keyword extraction.
+
+    Args:
+        papers: Papers from initial search
+        research_question: Original research question
+        max_queries: Maximum queries to generate
+
+    Returns:
+        List of new search queries derived from paper keywords
+    """
+    from collections import Counter
+
+    # Existing keywords from the question (to avoid duplicating)
+    question_keywords = set(_extract_keywords(research_question))
+
+    stopwords = {
+        "the", "a", "an", "in", "on", "of", "for", "and", "or", "to", "is",
+        "are", "was", "were", "what", "how", "which", "that", "this", "with",
+        "from", "by", "at", "its", "their", "have", "has", "been", "be",
+        "do", "does", "did", "will", "can", "could", "would", "should",
+        "about", "into", "through", "during", "before", "after", "between",
+        "using", "based", "novel", "new", "study", "analysis", "paper",
+        "research", "results", "method", "approach", "review", "effect",
+        "effects", "role", "via", "two", "one", "high", "low", "different",
+        "specific", "related", "associated", "potential", "used", "use",
+    }
+
+    # Count terms from titles and keywords of top papers
+    term_counter = Counter()
+    top_papers = sorted(papers, key=lambda p: p.get("relevance_score", 0) or 0, reverse=True)[:15]
+
+    for paper in top_papers:
+        # Extract from title
+        title = (paper.get("title") or "").lower()
+        for word in title.split():
+            word = word.strip(".,;:!?()[]\"'-")
+            if len(word) >= 4 and word not in stopwords and word not in question_keywords:
+                term_counter[word] += 1
+
+        # Extract from fields_of_study / keywords
+        fields = paper.get("fields_of_study") or paper.get("keywords") or []
+        if isinstance(fields, str):
+            fields = [fields]
+        for field in fields:
+            for word in field.lower().split():
+                word = word.strip(".,;:!?()[]\"'-")
+                if len(word) >= 4 and word not in stopwords and word not in question_keywords:
+                    term_counter[word] += 1
+
+    # Get the most frequent novel terms (appearing in 3+ papers)
+    frequent_terms = [term for term, count in term_counter.most_common(20) if count >= 2]
+
+    if not frequent_terms:
+        return []
+
+    # Build queries by combining question keywords with novel terms
+    queries = []
+    q_kw_list = list(question_keywords)[:3]  # Top question keywords
+    q_base = " ".join(q_kw_list) if q_kw_list else research_question[:50]
+
+    for term in frequent_terms[:max_queries]:
+        query = f"{q_base} {term}"
+        queries.append(query)
+
+    logger.info(f"Paper keyword extraction: {len(queries)} additional queries from {len(frequent_terms)} novel terms")
+    return queries
 
 
 async def snowball_sampling(
@@ -396,6 +458,8 @@ async def snowball_sampling(
 
     # Extract keywords for relevance validation
     keywords = _extract_keywords(research_question) if research_question else []
+    # Require more keyword matches when query has enough keywords
+    snowball_min_matches = 3 if len(keywords) >= 4 else 2
 
     # Sample from top cited papers to avoid too many API calls
     top_seeds = sorted(
@@ -417,7 +481,7 @@ async def snowball_sampling(
                     cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
                     if cited_id and cited_id not in seen_ids:
                         # Validate relevance before adding
-                        if keywords and not _paper_matches_keywords(cited_paper, keywords):
+                        if keywords and not _paper_matches_keywords(cited_paper, keywords, min_matches=snowball_min_matches):
                             logger.debug(f"Snowball: skipping irrelevant citation {cited_id}")
                             continue
                         seen_ids.add(cited_id)
@@ -430,7 +494,7 @@ async def snowball_sampling(
                     ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
                     if ref_id and ref_id not in seen_ids:
                         # Validate relevance before adding
-                        if keywords and not _paper_matches_keywords(ref_paper, keywords):
+                        if keywords and not _paper_matches_keywords(ref_paper, keywords, min_matches=snowball_min_matches):
                             logger.debug(f"Snowball: skipping irrelevant reference {ref_id}")
                             continue
                         seen_ids.add(ref_id)
@@ -532,11 +596,21 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     try:
         # Step 1: Expand queries (use research plan sub-topics if available)
         if research_plan and research_plan.get("sub_topics"):
-            # Use sub-topic queries from planning agent
+            # Use sub-topic queries from planning agent, scaled by priority
             plan_queries = []
             for topic in research_plan["sub_topics"]:
                 if topic.get("selected", True):
-                    plan_queries.extend(topic.get("custom_queries", []))
+                    queries_for_topic = topic.get("custom_queries", [])
+                    priority = topic.get("priority", 0.5)
+                    if priority >= 0.8:
+                        # High-priority topics: use all queries (up to 3)
+                        plan_queries.extend(queries_for_topic[:3])
+                    elif priority >= 0.5:
+                        # Medium-priority: use top 2
+                        plan_queries.extend(queries_for_topic[:2])
+                    else:
+                        # Low-priority: use top 1
+                        plan_queries.extend(queries_for_topic[:1])
             if plan_queries:
                 # Combine plan queries with LLM-expanded queries
                 llm_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
@@ -581,6 +655,46 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 "errors": errors,
                 "current_agent": "complete",  # End if no papers found
             }
+
+        # Step 2b: Second-round search using keywords extracted from initial results
+        keyword_queries = _extract_queries_from_papers(papers, research_question, max_queries=3)
+        if keyword_queries:
+            # Only search queries that weren't already used
+            novel_queries = [q for q in keyword_queries if q not in expanded_queries]
+            if novel_queries:
+                round2_results = await search_all_sources(
+                    queries=novel_queries,
+                    sources=sources,
+                    max_per_source=10,
+                    cached_tools=cached_tools,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
+                    zotero_collection=zotero_collection,
+                )
+                round2_papers = round2_results.get("papers", [])
+                if round2_papers:
+                    # Merge with existing papers (dedup by id/title)
+                    existing_ids = {p.get("paper_id") or p.get("arxiv_id") or p.get("doi") for p in papers}
+                    existing_titles = {(p.get("title") or "").lower().strip() for p in papers}
+                    new_count = 0
+                    for p in round2_papers:
+                        pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+                        ptitle = (p.get("title") or "").lower().strip()
+                        if (pid and pid not in existing_ids) and (ptitle and ptitle not in existing_titles):
+                            papers.append(p)
+                            if pid:
+                                existing_ids.add(pid)
+                            if ptitle:
+                                existing_titles.add(ptitle)
+                            new_count += 1
+                    logger.info(f"Second-round search: {new_count} new papers from {len(novel_queries)} keyword queries")
+                    expanded_queries.extend(novel_queries)
+
+                    # Update source counts
+                    for src, count in round2_results.get("source_counts", {}).items():
+                        current = search_results.get("source_counts", {}).get(src, 0)
+                        search_results.setdefault("source_counts", {})[src] = current + count
 
         # Step 3: Select best papers
         selected_papers = await select_papers(

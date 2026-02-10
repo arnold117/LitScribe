@@ -13,22 +13,26 @@ QUERY_EXPANSION_PROMPT = """You are an expert academic researcher. Given a resea
 Research Question: {research_question}
 Research Domain: {domain_hint}
 
-Generate exactly 5 search queries that:
+Generate exactly 8 search queries that:
 1. Rephrase the original question with precise academic terminology
 2. Focus on specific methodologies or techniques mentioned or implied
 3. Target application domains or use cases
 4. Use synonyms and related concepts from the field
 5. Include combinations of key concepts
-6. STAY WITHIN the research domain "{domain_hint}". Do NOT generate queries that would match papers from unrelated fields.
+6. Explore cross-disciplinary angles within {domain_hint}
+7. Use alternative nomenclature or classification terms
+8. Target review/survey papers on the topic
+9. STAY WITHIN the research domain "{domain_hint}". Do NOT generate queries that would match papers from unrelated fields.
 
 Requirements:
 - Each query should be 3-8 words, optimized for academic search engines
 - Avoid overly generic terms that could match unrelated fields
 - Include field-specific terminology from {domain_hint}
+- Maximize diversity: each query should find DIFFERENT papers, not repeat the same results
 - IMPORTANT: All queries MUST be in English, even if the research question is in another language. Academic databases (arXiv, PubMed, Semantic Scholar) are English-based.
 
 Output as a JSON array of strings:
-["query1", "query2", "query3", "query4", "query5"]"""
+["query1", "query2", "query3", "query4", "query5", "query6", "query7", "query8"]"""
 
 
 PAPER_SELECTION_PROMPT = """You are an expert at evaluating academic papers for literature reviews.
@@ -469,6 +473,50 @@ For domain detection:
 - arxiv_categories: Use official arXiv taxonomy (cs.*, q-bio.*, physics.*, math.*, stat.*, etc.)
 - s2_fields: Use Semantic Scholar fields (Biology, Chemistry, Computer Science, Medicine, Physics, etc.)
 - pubmed_mesh: Use 2-4 top-level MeSH terms that define the research scope"""
+
+
+PLAN_REVISION_PROMPT = """You are an expert academic researcher. A user has rejected a proposed research plan and provided feedback. Revise the plan accordingly.
+
+Research Question: {research_question}
+
+## Current Plan:
+{current_plan_json}
+
+## User Feedback:
+{user_feedback}
+
+Revise the plan to address the user's feedback. You may:
+- Add, remove, or modify sub-topics
+- Adjust estimated paper counts
+- Change priority ordering
+- Modify search queries
+- Adjust complexity assessment
+- Update domain filters (arxiv_categories, s2_fields, pubmed_mesh)
+
+IMPORTANT:
+- Preserve any aspects of the original plan that the user did NOT criticize
+- Keep all search queries in English
+- Maintain the same JSON output format as the original plan
+
+Output the revised plan as JSON:
+{{
+  "complexity_score": 1-5,
+  "reasoning": "Why this revised complexity level...",
+  "domain": "Primary academic field",
+  "arxiv_categories": ["arXiv category codes"],
+  "s2_fields": ["Semantic Scholar fields"],
+  "pubmed_mesh": ["PubMed MeSH terms"],
+  "sub_topics": [
+    {{
+      "name": "Sub-topic name",
+      "description": "What this covers",
+      "estimated_papers": 5-20,
+      "priority": 0.0-1.0,
+      "custom_queries": ["search query 1", "search query 2"]
+    }}
+  ],
+  "scope_estimate": "Estimated X-Y papers across N sub-topics"
+}}"""
 
 
 # =============================================================================

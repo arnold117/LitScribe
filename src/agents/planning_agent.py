@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from agents.errors import LLMError
 from agents.prompts import COMPLEXITY_ASSESSMENT_PROMPT
 from agents.state import LitScribeState, ResearchPlan, SubTopic
-from agents.tools import call_llm
+from agents.tools import call_llm, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -46,15 +46,7 @@ async def assess_and_decompose(
 
     response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1500, tracker=tracker, agent_name="planning")
 
-    # Parse JSON (same pattern as other agents)
-    response = response.strip()
-    if response.startswith("```"):
-        response = response.split("```")[1]
-        if response.startswith("json"):
-            response = response[4:]
-    response = response.strip()
-
-    data = json.loads(response)
+    data = extract_json(response)
 
     complexity = int(data.get("complexity_score", 2))
     raw_topics = data.get("sub_topics", [])
@@ -85,6 +77,74 @@ async def assess_and_decompose(
         arxiv_categories=data.get("arxiv_categories", []),
         s2_fields=data.get("s2_fields", []),
         pubmed_mesh=data.get("pubmed_mesh", []),
+    )
+
+
+async def revise_plan(
+    research_question: str,
+    current_plan: ResearchPlan,
+    user_feedback: str,
+    model: Optional[str] = None,
+    tracker=None,
+) -> ResearchPlan:
+    """Revise a research plan based on user feedback.
+
+    Args:
+        research_question: The original research question
+        current_plan: The current plan to revise
+        user_feedback: User's feedback/criticism of the current plan
+        model: LLM model to use
+        tracker: Token tracker for cost instrumentation
+
+    Returns:
+        Revised ResearchPlan
+    """
+    from agents.prompts import PLAN_REVISION_PROMPT
+
+    plan_json = json.dumps(dict(current_plan), indent=2, ensure_ascii=False)
+
+    prompt = PLAN_REVISION_PROMPT.format(
+        research_question=research_question,
+        current_plan_json=plan_json,
+        user_feedback=user_feedback,
+    )
+
+    response = await call_llm(
+        prompt, model=model, temperature=0.3, max_tokens=1500,
+        tracker=tracker, agent_name="planning",
+    )
+
+    data = extract_json(response)
+
+    complexity = int(data.get("complexity_score", current_plan["complexity_score"]))
+    raw_topics = data.get("sub_topics", [])
+
+    sub_topics = []
+    for t in raw_topics[:6]:
+        sub_topics.append(SubTopic(
+            name=t.get("name", "Unknown"),
+            description=t.get("description", ""),
+            estimated_papers=int(t.get("estimated_papers", 5)),
+            priority=float(t.get("priority", 0.5)),
+            custom_queries=t.get("custom_queries", [])[:3],
+            selected=True,
+        ))
+
+    # If LLM returns no topics, fall back to current plan's topics
+    if not sub_topics:
+        sub_topics = list(current_plan["sub_topics"])
+
+    is_interactive = complexity >= 3
+    return ResearchPlan(
+        complexity_score=complexity,
+        sub_topics=sub_topics,
+        scope_estimate=data.get("scope_estimate", current_plan["scope_estimate"]),
+        is_interactive=is_interactive,
+        confirmed=False,
+        domain_hint=data.get("domain", current_plan.get("domain_hint", "")),
+        arxiv_categories=data.get("arxiv_categories", current_plan.get("arxiv_categories", [])),
+        s2_fields=data.get("s2_fields", current_plan.get("s2_fields", [])),
+        pubmed_mesh=data.get("pubmed_mesh", current_plan.get("pubmed_mesh", [])),
     )
 
 

@@ -482,10 +482,9 @@ async def cmd_review(args) -> int:
             else:
                 out.info("Will analyze local files AND search online.")
 
-        # Planning confirmation (Emergency Fix Step 7a)
-        # Run planning agent first; if complex, show plan and ask for confirmation
+        # Planning confirmation with feedback loop
         injected_plan = None
-        from agents.planning_agent import assess_and_decompose, format_plan_for_user
+        from agents.planning_agent import assess_and_decompose, format_plan_for_user, revise_plan
         try:
             out.info("Assessing research complexity...")
             plan = await assess_and_decompose(research_question, max_papers=max_papers)
@@ -494,10 +493,46 @@ async def cmd_review(args) -> int:
                 out.subheader("Research Plan", "📋")
                 out.info(format_plan_for_user(plan))
                 out.blank()
-                confirm = input("Proceed with this plan? (Y/n): ").strip()
-                if confirm.lower() == "n":
-                    out.info("Review cancelled.")
-                    return 0
+
+                MAX_PLAN_REVISIONS = 3
+                revision_count = 0
+                while True:
+                    if revision_count >= MAX_PLAN_REVISIONS:
+                        out.info(f"Maximum revisions ({MAX_PLAN_REVISIONS}) reached.")
+                        confirm = input("Accept current plan? (Y/q to quit): ").strip()
+                        if confirm.lower() == "q":
+                            out.info("Review cancelled.")
+                            return 0
+                        break  # Accept plan
+
+                    confirm = input("Proceed with this plan? (Y/n/q): ").strip()
+                    if confirm.lower() in ("", "y"):
+                        break  # Accept plan
+                    elif confirm.lower() == "q":
+                        out.info("Review cancelled.")
+                        return 0
+                    else:
+                        # User wants to revise
+                        if confirm.lower() == "n":
+                            feedback = input("What would you like to change? ").strip()
+                        else:
+                            feedback = confirm  # User typed feedback directly
+                        if not feedback:
+                            out.info("No feedback provided. Review cancelled.")
+                            return 0
+
+                        out.info("Revising plan based on your feedback...")
+                        try:
+                            plan = await revise_plan(research_question, plan, feedback)
+                            revision_count += 1
+                            out.subheader(f"Revised Research Plan (revision {revision_count})", "📋")
+                            out.info(format_plan_for_user(plan))
+                            out.blank()
+                        except Exception as e:
+                            out.warning(f"Plan revision failed: {e}")
+                            out.info("Keeping previous plan.")
+                            break  # Fall through to accept previous plan
+
             injected_plan = plan
 
             # Override max_papers with plan's estimated total

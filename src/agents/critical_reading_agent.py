@@ -31,6 +31,7 @@ from agents.state import LitScribeState, PaperSummary
 from agents.tools import (
     call_llm,
     download_arxiv_pdf,
+    extract_json,
     extract_pdf_section,
     get_zotero_pdf_path,
     parse_pdf,
@@ -315,15 +316,7 @@ async def extract_key_findings(
     try:
         response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1000, tracker=tracker, agent_name="critical_reading")
 
-        # Parse JSON array
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        findings = json.loads(response)
+        findings = extract_json(response)
         if isinstance(findings, list):
             return findings[:5]  # Max 5 findings
 
@@ -427,15 +420,7 @@ async def assess_quality(
     try:
         response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=800, tracker=tracker, agent_name="critical_reading")
 
-        # Parse JSON
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        result = json.loads(response)
+        result = extract_json(response)
         return {
             "strengths": result.get("strengths", [])[:4],
             "limitations": result.get("limitations", [])[:4],
@@ -495,19 +480,7 @@ async def analyze_paper_combined(
     try:
         response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2500, tracker=tracker, agent_name="critical_reading")
 
-        # Parse JSON response
-        response = response.strip()
-        if response.startswith("```"):
-            parts = response.split("```")
-            for part in parts:
-                part = part.strip()
-                if part.startswith("json"):
-                    part = part[4:].strip()
-                if part.startswith("{"):
-                    response = part
-                    break
-
-        result = json.loads(response)
+        result = extract_json(response)
 
         return {
             "key_findings": result.get("key_findings", [])[:8],
@@ -834,8 +807,52 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
 
     logger.info(f"Critical Reading complete: {len(analyzed_papers)} papers analyzed")
 
+    # Pre-synthesis relevance filter: remove papers with low LLM-assigned relevance
+    PRE_SYNTHESIS_MIN_RELEVANCE = 0.4
+    pre_filter_count = len(analyzed_papers)
+    filtered_papers = []
+    removed_papers = []
+    for paper in analyzed_papers:
+        score = paper.get("relevance_score", 0.5)
+        if score >= PRE_SYNTHESIS_MIN_RELEVANCE:
+            filtered_papers.append(paper)
+        else:
+            removed_papers.append(paper)
+            logger.info(
+                f"Pre-synthesis filter: removed '{paper.get('title', '?')}' "
+                f"(relevance={score:.2f} < {PRE_SYNTHESIS_MIN_RELEVANCE})"
+            )
+
+    if removed_papers:
+        logger.info(
+            f"Pre-synthesis filter: {len(removed_papers)}/{pre_filter_count} papers removed "
+            f"(relevance < {PRE_SYNTHESIS_MIN_RELEVANCE})"
+        )
+        errors.append(
+            f"Pre-synthesis filter removed {len(removed_papers)} low-relevance paper(s): "
+            + ", ".join(
+                f"'{p.get('title', '?')}' ({p.get('relevance_score', 0):.2f})"
+                for p in removed_papers[:5]
+            )
+        )
+
+    analyzed_papers = filtered_papers
+
+    # Update parsed_documents to match filtered set
+    filtered_ids = {p["paper_id"] for p in analyzed_papers}
+    parsed_documents = {k: v for k, v in parsed_documents.items() if k in filtered_ids}
+
+    logger.info(f"Critical Reading: {len(analyzed_papers)} papers after relevance filter")
+
+    # Sync papers_to_analyze with filtered set so supervisor doesn't loop back
+    filtered_papers_to_analyze = [
+        p for p in papers_to_analyze
+        if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in filtered_ids
+    ]
+
     return {
         "analyzed_papers": list(analyzed_papers),
+        "papers_to_analyze": filtered_papers_to_analyze,
         "parsed_documents": parsed_documents,
         "errors": errors,
         "current_agent": "synthesis",  # Next stage

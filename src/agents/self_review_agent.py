@@ -224,6 +224,13 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
             if removed > 0:
                 logger.info(f"Self-review: removed {removed} irrelevant papers from analyzed_papers")
                 updates["analyzed_papers"] = cleaned_papers
+                # Sync papers_to_analyze so supervisor doesn't route back to critical_reading
+                cleaned_ids = {p.get("paper_id") for p in cleaned_papers}
+                papers_to_analyze = state.get("papers_to_analyze", [])
+                updates["papers_to_analyze"] = [
+                    p for p in papers_to_analyze
+                    if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in cleaned_ids
+                ]
 
         # Step 4c: Loop-back if quality is low and online search is available
         if (

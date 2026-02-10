@@ -440,6 +440,152 @@ def test_reference_filtering_yearless_citations():
     assert "Heptapeptide junk" not in titles
 
 
+# === Test 7: Word-boundary keyword matching ===
+
+def test_keyword_matching_word_boundary_negative():
+    """Keyword matching should use word boundaries, not substring."""
+    from agents.discovery_agent import _paper_matches_keywords
+
+    # "bio" should NOT match "biography"
+    paper = {"title": "Biography of a scientist", "abstract": "Life story of Dr. Smith"}
+    keywords = ["bio", "synthesis"]
+    result = _paper_matches_keywords(paper, keywords, min_matches=1)
+    assert result is False, "'bio' should not match 'biography' with word boundaries"
+
+
+def test_keyword_matching_word_boundary_positive():
+    """Word-boundary matching should still match exact words."""
+    from agents.discovery_agent import _paper_matches_keywords
+
+    paper = {"title": "Bio synthesis of alkaloids", "abstract": "A bio approach"}
+    keywords = ["bio", "synthesis"]
+    result = _paper_matches_keywords(paper, keywords, min_matches=2)
+    assert result is True, "Exact word 'bio' and 'synthesis' should match"
+
+
+def test_keyword_matching_hyphenated():
+    """Word-boundary matching should match across hyphens."""
+    from agents.discovery_agent import _paper_matches_keywords
+
+    paper = {"title": "Huperzine-A biosynthesis pathway", "abstract": ""}
+    keywords = ["huperzine", "biosynthesis"]
+    result = _paper_matches_keywords(paper, keywords, min_matches=2)
+    assert result is True, "huperzine should match in 'Huperzine-A'"
+
+
+# === Test 8: Pre-synthesis relevance filter ===
+
+def test_pre_synthesis_filter_exists():
+    """critical_reading_agent should filter low-relevance papers before synthesis."""
+    source = Path(__file__).parent.parent / "src" / "agents" / "critical_reading_agent.py"
+    code = source.read_text()
+    assert "PRE_SYNTHESIS_MIN_RELEVANCE" in code, \
+        "critical_reading_agent should have PRE_SYNTHESIS_MIN_RELEVANCE threshold"
+
+
+def test_pre_synthesis_filter_logic():
+    """Papers below pre-synthesis threshold should be removed."""
+    PRE_SYNTHESIS_MIN_RELEVANCE = 0.4
+    papers = [
+        {"paper_id": "p1", "title": "Relevant", "relevance_score": 0.8},
+        {"paper_id": "p2", "title": "Irrelevant SARS paper", "relevance_score": 0.1},
+        {"paper_id": "p3", "title": "Tangential", "relevance_score": 0.45},
+    ]
+
+    filtered = [p for p in papers if p.get("relevance_score", 0.5) >= PRE_SYNTHESIS_MIN_RELEVANCE]
+    assert len(filtered) == 2, "Should keep papers with relevance >= 0.4"
+    assert filtered[0]["paper_id"] == "p1"
+    assert filtered[1]["paper_id"] == "p3"
+
+
+# === Test 9: Snowball dynamic min_matches ===
+
+def test_snowball_dynamic_min_matches():
+    """Snowball sampling should require more keyword matches when >= 4 keywords."""
+    source = Path(__file__).parent.parent / "src" / "agents" / "discovery_agent.py"
+    code = source.read_text()
+    assert "snowball_min_matches" in code, \
+        "Snowball sampling should use dynamic snowball_min_matches"
+
+
+# === Test 10: MeSH filtering improvement ===
+
+def test_mesh_filter_requires_primary_term():
+    """When 3+ MeSH terms, primary term should be required (AND)."""
+    source = Path(__file__).parent.parent / "src" / "aggregators" / "unified_search.py"
+    code = source.read_text()
+    assert "len(mesh_terms) >= 3" in code, \
+        "Should have conditional logic for 3+ MeSH terms"
+
+
+# === Test 11: Word-boundary in unified_search ===
+
+def test_unified_search_uses_word_boundary():
+    """_compute_keyword_relevance should use re.search for word-boundary matching."""
+    source = Path(__file__).parent.parent / "src" / "aggregators" / "unified_search.py"
+    code = source.read_text()
+    assert "re.search" in code, \
+        "_compute_keyword_relevance should use re.search for word-boundary matching"
+    assert r"\b" in code, \
+        "Should use \\b word boundary pattern"
+
+
+# === Test 12: Query expansion generates 8 queries ===
+
+def test_query_expansion_prompt_asks_for_8():
+    """QUERY_EXPANSION_PROMPT should request 8 queries (was 5)."""
+    from agents.prompts import QUERY_EXPANSION_PROMPT
+    assert "exactly 8 search queries" in QUERY_EXPANSION_PROMPT, \
+        "Should request exactly 8 queries"
+
+
+# === Test 13: Search query cap raised to 6 ===
+
+def test_search_query_cap_raised():
+    """Discovery agent should search at least 6 queries (was 3)."""
+    source = Path(__file__).parent.parent / "src" / "agents" / "discovery_agent.py"
+    code = source.read_text()
+    assert "queries[:6]" in code, \
+        "Should search top 6 queries (was queries[:3])"
+
+
+# === Test 14: Paper keyword extraction function exists ===
+
+def test_paper_keyword_extraction_exists():
+    """_extract_queries_from_papers should be defined in discovery_agent."""
+    from agents.discovery_agent import _extract_queries_from_papers
+    assert callable(_extract_queries_from_papers)
+
+
+def test_paper_keyword_extraction_basic():
+    """Paper keyword extraction should find novel terms from paper titles."""
+    from agents.discovery_agent import _extract_queries_from_papers
+
+    papers = [
+        {"title": "Alkaloid biosynthesis in endophytic fungi", "relevance_score": 0.9},
+        {"title": "Endophytic fungi produce huperzine compounds", "relevance_score": 0.8},
+        {"title": "Fermentation optimization for endophytic alkaloid production", "relevance_score": 0.7},
+        {"title": "Endophytic fungal metabolites in medicinal plants", "relevance_score": 0.6},
+    ]
+
+    queries = _extract_queries_from_papers(papers, "alkaloid biosynthesis", max_queries=3)
+    assert len(queries) >= 1, f"Should generate at least 1 query, got {len(queries)}"
+    # "endophytic" appears in 4/4 papers but not in the research question
+    assert any("endophytic" in q for q in queries), \
+        f"Should extract 'endophytic' as novel term, got: {queries}"
+
+
+# === Test 15: Sub-topic priority scaling ===
+
+def test_subtopic_priority_scaling():
+    """High-priority sub-topics should get more queries than low-priority."""
+    source = Path(__file__).parent.parent / "src" / "agents" / "discovery_agent.py"
+    code = source.read_text()
+    assert "priority >= 0.8" in code, "Should have priority scaling logic"
+    assert "queries_for_topic[:3]" in code, "High-priority should get up to 3 queries"
+    assert "queries_for_topic[:1]" in code, "Low-priority should get 1 query"
+
+
 # === Entrypoint ===
 
 async def main():

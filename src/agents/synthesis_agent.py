@@ -37,7 +37,7 @@ from agents.state import (
     SynthesisOutput,
     ThemeCluster,
 )
-from agents.tools import call_llm
+from agents.tools import call_llm, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -244,15 +244,7 @@ async def identify_themes(
     try:
         response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=2000, tracker=tracker, agent_name="synthesis")
 
-        # Parse JSON
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        themes_data = json.loads(response)
+        themes_data = extract_json(response)
 
         if not isinstance(themes_data, list):
             raise ValueError("Expected JSON array of themes")
@@ -320,15 +312,7 @@ async def analyze_gaps(
     try:
         response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=1000, tracker=tracker, agent_name="synthesis")
 
-        # Parse JSON
-        response = response.strip()
-        if response.startswith("```"):
-            response = response.split("```")[1]
-            if response.startswith("json"):
-                response = response[4:]
-        response = response.strip()
-
-        result = json.loads(response)
+        result = extract_json(response)
         return {
             "gaps": result.get("gaps", [])[:5],
             "future_directions": result.get("future_directions", [])[:5],

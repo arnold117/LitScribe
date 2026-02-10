@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -168,10 +169,10 @@ def _compute_keyword_relevance(papers: List["UnifiedPaper"], research_question: 
         abstract = (paper.abstract or "").lower()
         paper_keywords = " ".join(getattr(paper, "keywords", None) or []).lower()
 
-        # Calculate match ratios
-        title_matches = sum(1 for kw in keywords if kw in title)
-        abstract_matches = sum(1 for kw in keywords if kw in abstract)
-        keyword_matches = sum(1 for kw in keywords if kw in paper_keywords)
+        # Calculate match ratios (word-boundary matching to avoid substring false positives)
+        title_matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', title))
+        abstract_matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', abstract))
+        keyword_matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', paper_keywords))
 
         n = len(keywords)
         title_score = min(title_matches / n, 1.0) * 0.4
@@ -277,10 +278,16 @@ class UnifiedSearchAggregator:
             return []
 
         try:
-            # Append MeSH terms to query for domain filtering (OR = inclusive)
+            # Append MeSH terms to query for domain filtering
             filtered_query = query
             if mesh_terms:
-                mesh_filter = " OR ".join(f"{m}[MeSH]" for m in mesh_terms[:3])
+                if len(mesh_terms) >= 3:
+                    # Require primary MeSH term AND at least one secondary
+                    primary = f"{mesh_terms[0]}[MeSH]"
+                    secondary = " OR ".join(f"{m}[MeSH]" for m in mesh_terms[1:3])
+                    mesh_filter = f"{primary} AND ({secondary})"
+                else:
+                    mesh_filter = " OR ".join(f"{m}[MeSH]" for m in mesh_terms[:3])
                 filtered_query = f"({query}) AND ({mesh_filter})"
 
             result = await self._pubmed_search(query=filtered_query, max_results=max_results)

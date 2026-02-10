@@ -171,10 +171,13 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
         and self_review is not None
         and state.get("synthesis") is not None
     ):
-        logger.info("Loop-back to discovery: clearing synthesis, self_review, knowledge_graph")
+        logger.info("Loop-back to discovery: clearing downstream state for fresh analysis")
         updates["synthesis"] = None
         updates["self_review"] = None
         updates["knowledge_graph"] = None
+        updates["analyzed_papers"] = []
+        updates["papers_to_analyze"] = []
+        updates["parsed_documents"] = {}
 
     return updates
 

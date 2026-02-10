@@ -207,6 +207,55 @@ def test_assess_decompose_output_has_estimated_papers():
         assert topic["estimated_papers"] > 0
 
 
+# === Test 6: Plan revision prompt exists ===
+
+def test_plan_revision_prompt_exists():
+    """PLAN_REVISION_PROMPT should be defined in prompts.py."""
+    from agents.prompts import PLAN_REVISION_PROMPT
+    assert "research_question" in PLAN_REVISION_PROMPT
+    assert "current_plan_json" in PLAN_REVISION_PROMPT
+    assert "user_feedback" in PLAN_REVISION_PROMPT
+
+
+# === Test 7: revise_plan function exists ===
+
+def test_revise_plan_function_exists():
+    """revise_plan should be importable from planning_agent."""
+    import inspect
+    from agents.planning_agent import revise_plan
+    assert inspect.iscoroutinefunction(revise_plan), "revise_plan should be async"
+
+    sig = inspect.signature(revise_plan)
+    params = list(sig.parameters.keys())
+    assert "research_question" in params
+    assert "current_plan" in params
+    assert "user_feedback" in params
+
+
+# === Test 8: CLI has feedback loop ===
+
+def test_cli_has_plan_feedback_loop():
+    """litscribe_cli should support plan revision loop (not just Y/n)."""
+    source = Path(__file__).parent.parent / "src" / "cli" / "litscribe_cli.py"
+    code = source.read_text()
+    assert "Y/n/q" in code, "CLI should offer Y/n/q options"
+    assert "revise_plan" in code, "CLI should call revise_plan"
+    assert "MAX_PLAN_REVISIONS" in code, "CLI should cap revision rounds"
+
+
+# === Test 9: Max revisions cap ===
+
+def test_max_plan_revisions_is_reasonable():
+    """MAX_PLAN_REVISIONS should be a small positive integer."""
+    import re as _re
+    source = Path(__file__).parent.parent / "src" / "cli" / "litscribe_cli.py"
+    code = source.read_text()
+    match = _re.search(r'MAX_PLAN_REVISIONS\s*=\s*(\d+)', code)
+    assert match, "MAX_PLAN_REVISIONS should be defined"
+    max_rev = int(match.group(1))
+    assert 2 <= max_rev <= 5, f"MAX_PLAN_REVISIONS={max_rev} should be between 2 and 5"
+
+
 # === Entrypoint ===
 
 async def main():
