@@ -33,6 +33,7 @@ class Config:
     NCBI_API_KEY = os.getenv("NCBI_API_KEY", "")
     NCBI_EMAIL = os.getenv("NCBI_EMAIL", "")
     SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
+    UNPAYWALL_EMAIL = os.getenv("UNPAYWALL_EMAIL", "")
 
     # Zotero configuration
     ZOTERO_API_KEY = os.getenv("ZOTERO_API_KEY", "")

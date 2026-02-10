@@ -425,6 +425,36 @@ class CachedTools:
             except Exception as e:
                 logger.warning(f"Failed to download arXiv PDF {arxiv_id}: {e}")
 
+        # Try Unpaywall (legal OA lookup by DOI)
+        if not pdf_path:
+            doi = paper.get("doi")
+            if doi:
+                try:
+                    from services.unpaywall import get_oa_pdf_url
+                    from agents.critical_reading_agent import _download_pdf_from_url
+                    oa_url = await get_oa_pdf_url(doi)
+                    if oa_url:
+                        downloaded = await _download_pdf_from_url(oa_url, paper_id)
+                        if downloaded:
+                            pdf_path = downloaded
+                            logger.info(f"Downloaded PDF via Unpaywall for {paper_id}")
+                except Exception as e:
+                    logger.warning(f"Unpaywall lookup failed for {paper_id}: {e}")
+
+        # Try PMC (PubMed Central free full text)
+        if not pdf_path:
+            pmc_id = paper.get("pmc_id")
+            if pmc_id:
+                try:
+                    from agents.critical_reading_agent import _download_pdf_from_url
+                    pmc_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/"
+                    downloaded = await _download_pdf_from_url(pmc_url, paper_id)
+                    if downloaded:
+                        pdf_path = downloaded
+                        logger.info(f"Downloaded PDF from PMC for {paper_id} ({pmc_id})")
+                except Exception as e:
+                    logger.warning(f"PMC PDF download failed for {pmc_id}: {e}")
+
         # Fall back to direct URL download (e.g. Semantic Scholar openAccessPdf)
         if not pdf_path:
             pdf_urls = paper.get("pdf_urls") or []

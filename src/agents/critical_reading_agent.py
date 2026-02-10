@@ -22,6 +22,7 @@ T = TypeVar("T")
 
 from agents.errors import AgentError, ErrorType, LLMError, PDFNotFoundError, PDFParseError
 from agents.prompts import (
+    ABSTRACT_ONLY_ANALYSIS_PROMPT,
     COMBINED_PAPER_ANALYSIS_PROMPT,
     KEY_FINDINGS_PROMPT,
     METHODOLOGY_ANALYSIS_PROMPT,
@@ -169,6 +170,32 @@ async def acquire_pdf(
         except Exception as e:
             logger.warning(f"Failed to get Zotero PDF {zotero_key}: {e}")
 
+    # Try Unpaywall (legal OA lookup by DOI)
+    doi = paper.get("doi")
+    if doi:
+        try:
+            from services.unpaywall import get_oa_pdf_url
+            oa_url = await get_oa_pdf_url(doi)
+            if oa_url:
+                downloaded = await _download_pdf_from_url(oa_url, paper_id)
+                if downloaded:
+                    logger.info(f"Downloaded PDF via Unpaywall for {paper_id}")
+                    return downloaded
+        except Exception as e:
+            logger.warning(f"Unpaywall lookup failed for {doi}: {e}")
+
+    # Try PMC (PubMed Central free full text)
+    pmc_id = paper.get("pmc_id")
+    if pmc_id:
+        try:
+            pmc_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/"
+            downloaded = await _download_pdf_from_url(pmc_url, paper_id)
+            if downloaded:
+                logger.info(f"Downloaded PDF from PMC for {paper_id} ({pmc_id})")
+                return downloaded
+        except Exception as e:
+            logger.warning(f"PMC PDF download failed for {pmc_id}: {e}")
+
     # Try direct URL download (e.g. Semantic Scholar openAccessPdf)
     pdf_urls = paper.get("pdf_urls") or []
     if isinstance(pdf_urls, str):
@@ -215,13 +242,29 @@ async def _download_pdf_from_url(url: str, paper_id: str) -> Optional[str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status == 200 and "pdf" in resp.content_type.lower():
-                    content = await resp.read()
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=True,
+            ) as resp:
+                if resp.status != 200:
+                    logger.debug(f"URL {url} returned status={resp.status}")
+                    return None
+
+                content_type = resp.content_type.lower() if resp.content_type else ""
+
+                # Accept application/pdf; reject text/html (common for paywalls)
+                if "html" in content_type:
+                    logger.debug(f"URL {url} returned HTML (paywall or landing page)")
+                    return None
+
+                # Read content and verify it looks like a PDF
+                content = await resp.read()
+                if content[:5] == b"%PDF-" or "pdf" in content_type:
                     pdf_path.write_bytes(content)
                     return str(pdf_path)
                 else:
-                    logger.debug(f"URL {url} returned status={resp.status}, type={resp.content_type}")
+                    logger.debug(f"URL {url} returned non-PDF content (type={content_type})")
                     return None
     except Exception as e:
         logger.debug(f"Download failed from {url}: {e}")
@@ -461,21 +504,50 @@ async def analyze_paper_combined(
     year = paper.get("year", "N/A")
     abstract = paper.get("abstract", "")
 
-    # Use parsed content if available, otherwise just abstract
+    # Use parsed content if available, otherwise abstract-only path
     full_text = ""
     if parsed_doc:
         full_text = parsed_doc.get("markdown", "")[:8000]
-    if not full_text:
-        full_text = abstract
 
-    prompt = COMBINED_PAPER_ANALYSIS_PROMPT.format(
-        title=title,
-        authors=authors,
-        year=year,
-        abstract=abstract,
-        full_text=full_text,
-        research_question=research_question or "General academic review",
-    )
+    if full_text:
+        # Full-text analysis
+        prompt = COMBINED_PAPER_ANALYSIS_PROMPT.format(
+            title=title,
+            authors=authors,
+            year=year,
+            abstract=abstract,
+            full_text=full_text,
+            research_question=research_question or "General academic review",
+        )
+    else:
+        # Abstract-only analysis with enriched metadata
+        metadata_parts = []
+        mesh_terms = paper.get("mesh_terms", [])
+        if mesh_terms:
+            metadata_parts.append(f"- MeSH terms: {', '.join(mesh_terms[:10])}")
+        fields = paper.get("fields_of_study") or paper.get("s2_fields") or paper.get("categories", [])
+        if fields:
+            metadata_parts.append(f"- Fields of study: {', '.join(fields[:5])}")
+        keywords = paper.get("keywords", [])
+        if keywords:
+            metadata_parts.append(f"- Keywords: {', '.join(keywords[:10])}")
+        citations = paper.get("citations") or paper.get("citation_count", 0)
+        if citations:
+            metadata_parts.append(f"- Citation count: {citations}")
+        doi = paper.get("doi")
+        if doi:
+            metadata_parts.append(f"- DOI: {doi}")
+        metadata_section = "\n".join(metadata_parts) if metadata_parts else "No additional metadata available."
+
+        prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
+            title=title,
+            authors=authors,
+            year=year,
+            venue=paper.get("venue") or paper.get("journal", "Unknown venue"),
+            abstract=abstract,
+            metadata_section=metadata_section,
+            research_question=research_question or "General academic review",
+        )
 
     try:
         response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=2500, tracker=tracker, agent_name="critical_reading")

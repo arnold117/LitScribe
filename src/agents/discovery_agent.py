@@ -242,6 +242,7 @@ async def select_papers(
     model: Optional[str] = None,
     domain_hint: str = "",
     tracker=None,
+    sub_topics: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     """Select the most relevant papers for the literature review.
 
@@ -254,6 +255,7 @@ async def select_papers(
         max_papers: Maximum number of papers to select
         model: LLM model to use
         domain_hint: Research domain for filtering
+        sub_topics: Sub-topic list from research plan
 
     Returns:
         Selected papers in ranked order
@@ -272,9 +274,17 @@ async def select_papers(
     # Format papers for prompt
     papers_list = format_papers_for_prompt(papers)
 
+    # Format sub-topics section if available
+    sub_topics_section = ""
+    if sub_topics:
+        topic_names = [t.get("name", "") for t in sub_topics if t.get("selected", True)]
+        if topic_names:
+            sub_topics_section = "Sub-topics to cover:\n" + "\n".join(f"- {name}" for name in topic_names)
+
     prompt = PAPER_SELECTION_PROMPT.format(
         research_question=research_question,
         domain_hint=domain_hint or "General",
+        sub_topics_section=sub_topics_section,
         total_papers=len(papers),
         papers_list=papers_list,
         max_papers=max_papers,
@@ -697,12 +707,14 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                         search_results.setdefault("source_counts", {})[src] = current + count
 
         # Step 3: Select best papers
+        plan_sub_topics = research_plan.get("sub_topics") if research_plan else None
         selected_papers = await select_papers(
             papers=papers,
             research_question=research_question,
             max_papers=max_papers,
             domain_hint=domain_hint,
             tracker=tracker,
+            sub_topics=plan_sub_topics,
         )
 
         # Step 4: Optional snowball sampling if we need more papers
@@ -720,6 +732,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 max_papers=max_papers,
                 domain_hint=domain_hint,
                 tracker=tracker,
+                sub_topics=plan_sub_topics,
             )
 
         # Build SearchResult

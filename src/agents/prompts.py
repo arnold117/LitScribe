@@ -39,21 +39,29 @@ PAPER_SELECTION_PROMPT = """You are an expert at evaluating academic papers for 
 
 Research Question: {research_question}
 Research Domain: {domain_hint}
-
+{sub_topics_section}
 Papers Found ({total_papers} total):
 {papers_list}
 
 Select the top {max_papers} most relevant papers for this literature review.
 
-Selection Criteria:
-1. Direct relevance to the research question — the paper must address the specific topic
-2. Domain match — paper must be from the {domain_hint} field. REJECT papers from unrelated fields (e.g., physics papers in a biology review)
-3. Citation count and impact
-4. Recency (prefer recent work unless seminal papers)
-5. Methodological rigor
-6. Diversity of perspectives
+SELECTION criteria (paper MUST meet these):
+1. Directly addresses the research question or one of the sub-topics listed above
+2. From the correct domain ({domain_hint}). REJECT papers from unrelated fields
+3. The paper's primary focus is on the target topic, not just a passing mention
+4. Citation count and impact (prefer well-cited papers)
+5. Recency (prefer recent work unless seminal papers)
+6. Diversity of perspectives and methods
 
-IMPORTANT: Do NOT select papers from unrelated academic fields, even if they share some keywords with the research question.
+EXCLUSION criteria (MUST reject papers matching ANY of these):
+- Papers that only tangentially mention the topic (e.g., uses a keyword as a tool/example but studies something else entirely)
+- Papers from clearly unrelated domains, even if they share keywords
+- Broad review papers where the target topic is just one of many subjects covered
+- Papers where keyword match is coincidental (e.g., same compound name in a completely different biological context)
+- Clinical trials, drug delivery, or pharmacology papers when the research question is about basic science (biosynthesis, mechanisms, etc.), and vice versa
+- Papers primarily about a different organism/system that happen to reference the target topic
+
+When in doubt, prefer papers that would be cited in a focused review specifically about "{research_question}".
 
 Output as a JSON array of paper IDs:
 ["paper_id_1", "paper_id_2", ...]"""
@@ -190,6 +198,47 @@ Output as JSON:
   "methodology": "Study design paragraph...\\n\\nData collection paragraph...\\n\\nAnalysis techniques paragraph...",
   "strengths": ["strength1", "strength2", ...],
   "limitations": ["limitation1", "limitation2", ...],
+  "relevance_to_question": 0.0-1.0
+}}"""
+
+
+ABSTRACT_ONLY_ANALYSIS_PROMPT = """You are an expert academic researcher analyzing a paper based on its ABSTRACT and metadata ONLY (full text is unavailable).
+
+Research Question Context: {research_question}
+
+Paper Title: {title}
+Authors: {authors}
+Year: {year}
+Venue: {venue}
+
+Abstract:
+{abstract}
+
+Additional Metadata:
+{metadata_section}
+
+Since you only have the abstract and metadata, focus your analysis on:
+- What specific research question does this paper address?
+- What methodology is described or implied in the abstract?
+- What are the main claims/results explicitly stated?
+- How does this relate to the research question: "{research_question}"?
+- What can you infer about the methodology from the venue and field?
+
+IMPORTANT:
+- Do NOT fabricate findings not present in the abstract
+- Mark uncertain inferences with [inferred from abstract]
+- Be honest about the depth limitations of abstract-only analysis
+
+Output as JSON:
+{{
+  "key_findings": [
+    "Finding 1: ...",
+    "Finding 2: ...",
+    "Finding 3: ..."
+  ],
+  "methodology": "Brief methodology summary based on what the abstract reveals...",
+  "strengths": ["strength1", "strength2"],
+  "limitations": ["limitation1", "Abstract-only analysis — findings may be incomplete"],
   "relevance_to_question": 0.0-1.0
 }}"""
 
