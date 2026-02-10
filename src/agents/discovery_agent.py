@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from agents.errors import AgentError, ErrorType, LLMError
 from agents.prompts import (
+    ABSTRACT_SCREENING_PROMPT,
     PAPER_SELECTION_PROMPT,
     QUERY_EXPANSION_PROMPT,
     format_papers_for_prompt,
@@ -444,18 +445,21 @@ async def snowball_sampling(
     max_additional: int = 5,
     direction: str = "both",
     research_question: str = "",
+    max_rounds: int = 2,
 ) -> List[Dict[str, Any]]:
-    """Find additional papers through citation network.
+    """Find additional papers through multi-round citation network expansion.
 
-    Performs forward (citations) and backward (references) snowball sampling
-    to discover related papers not found in initial search. Validates that
-    discovered papers are relevant to the research question.
+    Round 1: Expand from top-3 seed papers (citations + references).
+    Round 2: Expand from best papers found in round 1 + co-citation analysis.
+
+    Co-citation: papers referenced by >=2 seed papers are likely core literature.
 
     Args:
         seed_papers: Initial set of papers to expand from
         max_additional: Maximum additional papers to add
         direction: "citations", "references", or "both"
         research_question: Research question for keyword-based relevance filtering
+        max_rounds: Number of snowball rounds (default: 2)
 
     Returns:
         List of additional papers found through snowball sampling
@@ -468,57 +472,232 @@ async def snowball_sampling(
 
     # Extract keywords for relevance validation
     keywords = _extract_keywords(research_question) if research_question else []
-    # Require more keyword matches when query has enough keywords
     snowball_min_matches = 3 if len(keywords) >= 4 else 2
 
-    # Sample from top cited papers to avoid too many API calls
-    top_seeds = sorted(
+    current_seeds = sorted(
         seed_papers,
         key=lambda x: x.get("citations", 0) or 0,
-        reverse=True
+        reverse=True,
     )[:3]
 
-    for paper in top_seeds:
-        paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi")
-        if not paper_id:
+    for round_num in range(max_rounds):
+        round_papers = []
+
+        for paper in current_seeds:
+            paper_id = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi")
+            if not paper_id:
+                continue
+
+            try:
+                # Get citations (papers citing this one)
+                if direction in ("citations", "both"):
+                    citations_result = await get_paper_citations(paper_id, limit=5)
+                    for cited_paper in (citations_result or {}).get("citations", [])[:3]:
+                        cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
+                        if cited_id and cited_id not in seen_ids:
+                            if keywords and not _paper_matches_keywords(cited_paper, keywords, min_matches=snowball_min_matches):
+                                continue
+                            seen_ids.add(cited_id)
+                            round_papers.append(cited_paper)
+
+                # Get references (papers this one cites)
+                if direction in ("references", "both"):
+                    refs_result = await get_paper_references(paper_id, limit=5)
+                    for ref_paper in (refs_result or {}).get("references", [])[:3]:
+                        ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
+                        if ref_id and ref_id not in seen_ids:
+                            if keywords and not _paper_matches_keywords(ref_paper, keywords, min_matches=snowball_min_matches):
+                                continue
+                            seen_ids.add(ref_id)
+                            round_papers.append(ref_paper)
+
+            except Exception as e:
+                logger.warning(f"Snowball round {round_num + 1} failed for {paper_id}: {e}")
+                continue
+
+        # Co-citation analysis on round 1: find papers referenced by multiple seeds
+        if round_num == 0 and len(current_seeds) >= 2:
+            try:
+                co_cited = await _extract_common_references(
+                    current_seeds, seen_ids, keywords, snowball_min_matches,
+                )
+                round_papers.extend(co_cited)
+                if co_cited:
+                    logger.info(f"Co-citation analysis found {len(co_cited)} commonly referenced papers")
+            except Exception as e:
+                logger.warning(f"Co-citation analysis failed: {e}")
+
+        additional_papers.extend(round_papers)
+        logger.info(f"Snowball round {round_num + 1}: found {len(round_papers)} papers")
+
+        if len(additional_papers) >= max_additional:
+            break
+
+        # Prepare seeds for next round: best papers from this round
+        if round_papers:
+            current_seeds = sorted(
+                round_papers,
+                key=lambda x: x.get("citations", 0) or x.get("citationCount", 0) or 0,
+                reverse=True,
+            )[:3]
+        else:
+            break  # No new papers found, stop
+
+    logger.info(f"Snowball sampling found {len(additional_papers)} additional papers over {min(round_num + 1, max_rounds)} rounds")
+    return additional_papers[:max_additional]
+
+
+async def _extract_common_references(
+    seed_papers: List[Dict[str, Any]],
+    seen_ids: set,
+    keywords: List[str],
+    min_matches: int,
+    min_co_citations: int = 2,
+) -> List[Dict[str, Any]]:
+    """Find papers commonly referenced by multiple seed papers.
+
+    If seeds A, B, C all cite paper X, then X is likely core literature.
+
+    Args:
+        seed_papers: Papers to analyze references from
+        seen_ids: Already-seen paper IDs to skip (will be modified)
+        keywords: Keywords for relevance filtering
+        min_matches: Minimum keyword matches required
+        min_co_citations: Minimum number of seeds that must cite the paper
+
+    Returns:
+        List of commonly referenced papers
+    """
+    from collections import Counter
+
+    ref_count: Counter = Counter()
+    ref_info: Dict[str, Dict[str, Any]] = {}
+
+    for seed in seed_papers:
+        seed_id = seed.get("paper_id") or seed.get("arxiv_id") or seed.get("doi")
+        if not seed_id:
             continue
 
         try:
-            # Get citations (papers citing this one)
-            if direction in ("citations", "both"):
-                citations_result = await get_paper_citations(paper_id, limit=5)
-                for cited_paper in (citations_result or {}).get("citations", [])[:3]:
-                    cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
-                    if cited_id and cited_id not in seen_ids:
-                        # Validate relevance before adding
-                        if keywords and not _paper_matches_keywords(cited_paper, keywords, min_matches=snowball_min_matches):
-                            logger.debug(f"Snowball: skipping irrelevant citation {cited_id}")
-                            continue
-                        seen_ids.add(cited_id)
-                        additional_papers.append(cited_paper)
+            refs_result = await get_paper_references(seed_id, limit=20)
+            for ref in (refs_result or {}).get("references", []):
+                ref_id = ref.get("paper_id") or ref.get("paperId")
+                if ref_id and ref_id not in seen_ids:
+                    ref_count[ref_id] += 1
+                    ref_info[ref_id] = ref
+        except Exception as e:
+            logger.debug(f"Co-citation: failed to get references for {seed_id}: {e}")
 
-            # Get references (papers this one cites)
-            if direction in ("references", "both"):
-                refs_result = await get_paper_references(paper_id, limit=5)
-                for ref_paper in (refs_result or {}).get("references", [])[:3]:
-                    ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
-                    if ref_id and ref_id not in seen_ids:
-                        # Validate relevance before adding
-                        if keywords and not _paper_matches_keywords(ref_paper, keywords, min_matches=snowball_min_matches):
-                            logger.debug(f"Snowball: skipping irrelevant reference {ref_id}")
-                            continue
-                        seen_ids.add(ref_id)
-                        additional_papers.append(ref_paper)
+    # Return papers cited by >= min_co_citations seeds
+    co_cited = []
+    for pid, count in ref_count.items():
+        if count >= min_co_citations and pid not in seen_ids:
+            paper = ref_info[pid]
+            # Still validate keywords
+            if keywords and not _paper_matches_keywords(paper, keywords, min_matches=max(1, min_matches - 1)):
+                continue
+            seen_ids.add(pid)
+            co_cited.append(paper)
 
-            if len(additional_papers) >= max_additional:
-                break
+    return co_cited
+
+
+async def screen_papers_by_abstract(
+    papers: List[Dict[str, Any]],
+    research_question: str,
+    domain_hint: str = "",
+    batch_size: int = 10,
+    tracker=None,
+) -> List[Dict[str, Any]]:
+    """Screen papers by abstract using a lightweight LLM call.
+
+    Quickly filters obviously irrelevant papers before expensive
+    critical_reading analysis. Uses batch LLM calls for efficiency.
+
+    Args:
+        papers: Papers to screen (each must have title and abstract)
+        research_question: The research question
+        domain_hint: Research domain for context
+        batch_size: Number of papers per LLM call
+        tracker: Token tracker
+
+    Returns:
+        Papers that passed screening (classified as relevant)
+    """
+    if not papers:
+        return papers
+
+    relevant_papers = []
+    paper_id_map = {}
+
+    for i in range(0, len(papers), batch_size):
+        batch = papers[i:i + batch_size]
+
+        # Format batch for prompt
+        batch_lines = []
+        for paper in batch:
+            pid = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi") or f"paper_{i}"
+            paper_id_map[pid] = paper
+            title = paper.get("title", "Unknown")
+            abstract = (paper.get("abstract") or "")[:500]
+            batch_lines.append(f"[{pid}] {title}\nAbstract: {abstract}\n")
+
+        papers_batch = "\n".join(batch_lines)
+
+        prompt = ABSTRACT_SCREENING_PROMPT.format(
+            research_question=research_question,
+            domain_hint=domain_hint or "General",
+            papers_batch=papers_batch,
+        )
+
+        try:
+            response = await call_llm(
+                prompt, temperature=0.2, max_tokens=800,
+                tracker=tracker, agent_name="discovery",
+            )
+            results = extract_json(response)
+
+            if not isinstance(results, list):
+                # If parsing fails, keep all papers in this batch
+                logger.warning("Abstract screening: failed to parse response, keeping all papers in batch")
+                relevant_papers.extend(batch)
+                continue
+
+            # Collect relevant paper IDs
+            relevant_ids = set()
+            for entry in results:
+                if entry.get("relevant", True):  # Default to relevant if unclear
+                    relevant_ids.add(entry.get("paper_id", ""))
+
+            # Match back to papers
+            batch_relevant = []
+            batch_removed = []
+            for paper in batch:
+                pid = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi") or ""
+                if pid in relevant_ids:
+                    batch_relevant.append(paper)
+                else:
+                    batch_removed.append(paper.get("title", "Unknown"))
+
+            if batch_removed:
+                logger.info(
+                    f"Abstract screening: removed {len(batch_removed)} papers from batch: "
+                    + "; ".join(batch_removed[:3])
+                )
+
+            relevant_papers.extend(batch_relevant)
 
         except Exception as e:
-            logger.warning(f"Snowball sampling failed for {paper_id}: {e}")
-            continue
+            logger.warning(f"Abstract screening batch failed: {e}, keeping all papers in batch")
+            relevant_papers.extend(batch)
 
-    logger.info(f"Snowball sampling found {len(additional_papers)} additional papers")
-    return additional_papers[:max_additional]
+    removed_count = len(papers) - len(relevant_papers)
+    if removed_count > 0:
+        logger.info(f"Abstract screening: {removed_count}/{len(papers)} papers removed, {len(relevant_papers)} passed")
+    else:
+        logger.info(f"Abstract screening: all {len(papers)} papers passed")
+
+    return relevant_papers
 
 
 async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
@@ -734,6 +913,19 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 tracker=tracker,
                 sub_topics=plan_sub_topics,
             )
+
+        # Step 5: Abstract screening — lightweight LLM check before critical_reading
+        if len(selected_papers) > 3:
+            pre_screen_count = len(selected_papers)
+            selected_papers = await screen_papers_by_abstract(
+                papers=selected_papers,
+                research_question=research_question,
+                domain_hint=domain_hint,
+                tracker=tracker,
+            )
+            screened_out = pre_screen_count - len(selected_papers)
+            if screened_out > 0:
+                logger.info(f"Abstract screening removed {screened_out} papers before critical_reading")
 
         # Build SearchResult
         search_result = SearchResult(

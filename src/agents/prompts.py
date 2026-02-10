@@ -67,6 +67,33 @@ Output as a JSON array of paper IDs:
 ["paper_id_1", "paper_id_2", ...]"""
 
 
+ABSTRACT_SCREENING_PROMPT = """You are screening papers for a literature review. Your job is to quickly classify each paper as "relevant" or "irrelevant" based on its abstract.
+
+Research Question: {research_question}
+Research Domain: {domain_hint}
+
+For each paper below, decide if it is RELEVANT (should be analyzed in depth) or IRRELEVANT (should be excluded).
+
+A paper is IRRELEVANT if:
+- It is from a completely different field/domain
+- It only mentions the topic in passing (not its main focus)
+- The keyword match is coincidental (different context)
+- It is about a different application/organism/system
+
+A paper is RELEVANT if:
+- It directly studies the research question or a closely related aspect
+- Its findings would be cited in a focused review on this topic
+
+Papers:
+{papers_batch}
+
+Output as a JSON array (one entry per paper):
+[
+  {{"paper_id": "...", "relevant": true, "reason": "1-sentence explanation"}},
+  {{"paper_id": "...", "relevant": false, "reason": "1-sentence explanation"}}
+]"""
+
+
 # =============================================================================
 # Critical Reading Agent Prompts
 # =============================================================================
