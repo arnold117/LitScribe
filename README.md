@@ -2,6 +2,8 @@
 
 **LitScribe** is an autonomous academic synthesis engine designed to transform how researchers conduct literature reviews. Built on a **LangGraph Multi-Agent** architecture with **GraphRAG** knowledge synthesis, LitScribe goes beyond simple summarization to provide deep, cross-paper synthesis and gap analysis.
 
+> **Latest run**: 24-paper CHO metabolism review, 7,679 words, 100% citation grounding, $0.098 total cost, 15 minutes end-to-end.
+
 ---
 
 ## Vision
@@ -12,21 +14,22 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 
 ### Multi-Agent Literature Review
 - **Supervisor Agent**: LangGraph-based workflow orchestration with state routing, self-review loop-back
-- **Planning Agent**: Complexity assessment (1-5), sub-topic decomposition, **domain detection** (arXiv categories, S2 fields, PubMed MeSH), CLI confirmation for complex plans
-- **Discovery Agent**: **Domain-aware** query expansion, multi-source search with field filtering, keyword-validated snowball sampling
-- **Critical Reading Agent**: PDF parsing, 5-8 key findings extraction, methodology analysis, **LLM-assessed relevance scoring**
+- **Planning Agent**: Complexity assessment (1-5), sub-topic decomposition, **domain detection** (arXiv categories, S2 fields, PubMed MeSH), **interactive plan revision** (user feedback loop, up to 3 rounds)
+- **Discovery Agent**: **Per-sub-topic search**, domain-aware query expansion, **two-stage abstract screening** (keyword + LLM), **multi-round snowball with co-citation analysis**, **review tier system** (standard/large/massive)
+- **Critical Reading Agent**: PDF parsing, 5-8 key findings extraction, methodology analysis, **LLM-assessed relevance scoring**, **pre-synthesis filtering** (removes papers with relevance < 0.4)
 - **GraphRAG Agent**: Knowledge graph construction, entity extraction with research context, **relevance-gated** (filters low-relevance papers)
-- **Synthesis Agent**: GraphRAG-enhanced theme identification, gap analysis, review generation with formatted citations
-- **Self-Review Agent**: Quality assessment, **actionable irrelevant paper removal**, loop-back to Discovery when score < 0.6
+- **Synthesis Agent**: GraphRAG-enhanced theme identification, gap analysis, **citation name normalization** (edit-distance fuzzy matching), **auto-generated review titles**
+- **Self-Review Agent**: Quality assessment, **actionable irrelevant paper removal**, **incremental loop-back** to Discovery (targeted re-search, not full restart)
 - **Refinement Agent**: Iterative review modification via natural language instructions, in-process refinement from post-review menu
 
 ### Multi-Source Search
 - Unified search across **arXiv**, **PubMed**, **Semantic Scholar**
 - **Domain filtering**: arXiv category, Semantic Scholar `fields_of_study`, PubMed MeSH terms
-- **Keyword-based relevance scoring** (replaces positional scoring) — title/abstract/keyword matching
-- **Zotero** integration for personal library management
+- **Word-boundary keyword matching** — prevents false positives (e.g., "bio" won't match "biography")
+- **Zotero** integration for personal library management (auto-search when configured)
+- **Unpaywall** open-access PDF acquisition (legal OA lookup by DOI)
 - Intelligent deduplication and merging across sources
-- Citation tracking and paper recommendations
+- Citation tracking, paper recommendations, and **co-citation analysis**
 
 ### Export & Citations
 - **BibTeX** export with auto-detected entry types
@@ -55,6 +58,8 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 ### Multi-Language Review Generation
 - **Direct generation**: Write reviews in the target language (not translate after)
 - `--lang zh`: Chinese academic writing with formal scholarly tone
+- **CJK-aware word counting**: Correctly counts Chinese/Japanese/Korean characters (regex-based, not `split()`)
+- **Language mismatch detection**: Warns on English query + `--lang zh`, suggests correction
 - Generic fallback for other languages
 - Search queries always in English for optimal database coverage
 
@@ -67,13 +72,14 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **Deep integration**: Communities used directly as themes in synthesis
 
 ### Quality Assurance & Iterative Refinement
-- **Self-Review**: Automated scoring (relevance, coverage, coherence, argumentation), **actionable** irrelevant paper removal, loop-back to Discovery when quality < 0.6
-- **Planning**: Complexity-aware sub-topic decomposition, **domain detection** for search filtering, CLI confirmation before execution
+- **Self-Review**: Automated scoring (relevance, coverage, coherence, argumentation), **actionable** irrelevant paper removal, **incremental** loop-back to Discovery
+- **Planning**: Complexity-aware sub-topic decomposition, **domain detection** for search filtering, **interactive plan revision** (feedback loop)
+- **Citation Normalization**: Post-generation fuzzy matching corrects misspelled author names (Levenshtein distance <= 2)
+- **Citation Grounding**: Verifies every `[Author, Year]` citation maps to an actual paper (100% grounding rate achieved)
+- **Token Tracking**: Per-agent and per-model cost breakdown with Qwen/DeepSeek/Anthropic pricing
 - **Refinement**: Natural language instructions to modify reviews (add/remove/modify/rewrite sections)
 - **Post-Review Menu**: Interactive choices after review — refine in-process, show full text, or save & exit
 - **Session Management**: Git-like version tracking with unified diffs, rollback support
-- **Language Detection**: Warns on mismatch (e.g., English query + `--lang zh`), auto-suggests correction
-- **Local-Files-First**: `--local-files` prompts whether to also search online; supports offline-only analysis
 - **Non-blocking**: All quality agents use graceful fallbacks — never block the main workflow
 
 ## Tech Stack
@@ -85,7 +91,7 @@ The goal of LitScribe is to act as a rigorous "Digital Scribe" for scholars—fa
 - **Storage:** SQLite (cache, checkpointing, GraphRAG data)
 - **Knowledge Graph:** NetworkX + graspologic (Leiden community detection)
 - **Embeddings:** sentence-transformers (entity linking)
-- **Cloud LLM:** DeepSeek Chat (default) / Claude Opus 4.5 / Sonnet 4.5 (production)
+- **Cloud LLM:** Qwen3-Max via DashScope (default) / DeepSeek Chat / Claude Opus 4.5 (via LiteLLM)
 - **PDF Processing:** pymupdf4llm (default) / marker-pdf (OCR)
 
 ## Architecture
@@ -225,7 +231,7 @@ sequenceDiagram
 ### Prerequisites
 
 - Python 3.12+ (via mamba/conda)
-- API keys: DeepSeek (default LLM) or Anthropic (Claude), optional: NCBI, Semantic Scholar, Zotero
+- API keys: DashScope (Qwen3, default LLM) or DeepSeek / Anthropic (Claude), optional: NCBI, Semantic Scholar, Zotero
 
 ### Installation
 
@@ -323,6 +329,8 @@ Export generates additional formats:
 | **Phase 9.3** | **Refinement Agent, session management, version tracking, diff & rollback** | **✅ Done** |
 | **Phase 9.5** | **Evaluation & Instrumentation: token tracking, citation grounding, evaluation framework, ablation flags, failure analysis** | **✅ Done** |
 | **Phase 10** | **MCP cleanup → services/, unified MCP server, GraphRAG optimization (threshold clustering, retry, concurrency)** | **✅ Done** |
+| **Post-10 Patches** | **Unpaywall PDF, two-stage screening, co-citation snowball, tier system, plan iteration, CJK word count, citation normalization** | **✅ Done** |
+| **Qwen3 Migration** | **Switch to Qwen3-Max (65K output), `enable_thinking: False`, `<think>` stripping, Qwen pricing** | **✅ Done** |
 
 ### Planned
 
@@ -335,27 +343,36 @@ Export generates additional formats:
 ## Testing
 
 ```bash
-# Run all tests via pytest
+# Run all tests (272 tests)
 pytest
 
 # Run a single test file
 pytest tests/test_token_tracker.py -v
 ```
 
-| File | Module | Tests | Status |
-|------|--------|-------|--------|
-| `test_cache_manual.py` | Cache DB / Paper Cache / Search Cache | Cache CRUD, async ops | All Pass |
-| `test_discovery_cache.py` | Discovery Agent + Cache | State creation, cache-enabled search | All Pass |
-| `test_critical_reading_cache.py` | Critical Reading Agent + Cache | PDF/parse caching, cached_tools | All Pass |
-| `test_checkpointing.py` | LangGraph Checkpointing | Imports, SQLite saver, graph compilation, ablation flags | 6/6 Pass |
-| `test_zotero_integration.py` | Zotero Integration | Collection resolution, key/name detection, item conversion, state wiring | 18/18 Pass |
-| `test_exporters.py` | BibTeX / Citation / Pandoc | BibTeX export, citation formatting | All Pass |
-| `test_graphrag.py` | GraphRAG Pipeline | State types, entity normalization, supervisor routing, tracker params, **retry logic, threshold clustering** | **10/10 Pass** |
-| `test_token_tracker.py` | TokenTracker | Init, multi-agent/model, cost estimation, fuzzy matching, CLI format | 13/13 Pass |
-| `test_citation_grounding.py` | Citation Grounding | Citation extraction, author matching, grounding rate | 15/15 Pass |
-| `test_evaluator.py` | ReviewEvaluator | Search quality, theme coverage, domain purity, failure detection | 18/18 Pass |
-
-See [`tests/README.md`](tests/README.md) for full details.
+| File | Module | Tests | Key Coverage |
+|------|--------|-------|-------------|
+| `test_search_quality.py` | Search filtering & relevance | 34 | Word-boundary matching, MeSH logic, pre-synthesis filter |
+| `test_reasoning_model.py` | Model routing | 26 | Reasoning model detection, Qwen3 thinking mode |
+| `test_citation_grounding.py` | Citation grounding | 25 | Citation extraction, author matching, fuzzy grounding |
+| `test_tier_system.py` | Review tiers | 22 | Standard/large/massive tiers, per-sub-topic search |
+| `test_graphrag.py` | GraphRAG pipeline | 22 | Entity normalization, threshold clustering, retry logic |
+| `test_exporters.py` | BibTeX / Citation / Pandoc | 20 | BibTeX export, citation formatting |
+| `test_zotero_integration.py` | Zotero integration | 18 | Collection resolution, auto-save, state wiring |
+| `test_evaluator.py` | Review evaluation | 18 | Search quality, theme coverage, domain purity |
+| `test_plan_override.py` | Plan iteration | 14 | Revision prompt, feedback loop, MAX_PLAN_REVISIONS |
+| `test_token_tracker.py` | Token tracking | 13 | Multi-model cost, Qwen pricing, CLI format |
+| `test_unpaywall.py` | Unpaywall PDF | 12 | OA lookup, timeout handling, integration points |
+| `test_screening_snowball.py` | Abstract screening | 11 | Two-stage screening, co-citation snowball |
+| `test_review_title.py` | Title generation | 11 | Auto title, plan-based titles |
+| `test_loopback.py` | Self-review loop-back | 10 | Incremental re-search, state clearing |
+| `test_abstract_analysis.py` | Abstract-only analysis | 10 | No-PDF fallback, findings extraction |
+| `test_cache_manual.py` | Cache DB | 9 | Cache CRUD, async ops |
+| `test_arxiv_ratelimit.py` | arXiv rate limit | 8 | 429 retry, exponential backoff |
+| `test_checkpointing.py` | LangGraph checkpointing | 6 | SQLite saver, graph compilation, ablation flags |
+| `test_critical_reading_cache.py` | Critical Reading + Cache | 5 | PDF/parse caching |
+| `test_discovery_cache.py` | Discovery + Cache | 4 | State creation, cache-enabled search |
+| **Total** | **20 test files** | **272** | |
 
 ## Development Notes
 
@@ -376,16 +393,16 @@ See [`tests/README.md`](tests/README.md) for full details.
 
 ### LLM Strategy
 
-Default LLM is **DeepSeek Chat** (via LiteLLM). Configurable via `LITELLM_MODEL` env var or `litscribe config set model`.
+Default LLM is **Qwen3-Max** via DashScope (65K max output tokens, non-thinking mode). Configurable via `LITELLM_MODEL` env var or `litscribe config set model`. All models routed through LiteLLM.
 
-| Task | Default (Testing) | Production | Reason |
-|------|-------------------|------------|--------|
-| Query expansion | DeepSeek Chat | Haiku | Simple, low cost |
-| Paper analysis | DeepSeek Chat | Sonnet 4.5 | Balance quality/cost |
-| Entity extraction | DeepSeek Chat | Sonnet 4.5 | Structured output |
-| Community summary | DeepSeek Chat | Sonnet 4.5 | Synthesis quality |
-| Review synthesis | DeepSeek Chat | Opus 4.5 | Complex reasoning |
-| Batch processing | DeepSeek Chat | DeepSeek Chat | Cost-effective |
+| Task | Default | Alternative | Cost (per 1M tokens) |
+|------|---------|-------------|---------------------|
+| All agents | Qwen3-Max | DeepSeek Chat | $0.35 in / $1.39 out |
+| Review synthesis (reasoning) | DeepSeek-Reasoner | Opus 4.5 | $0.55 in / $2.19 out |
+
+**Qwen3 specifics**: `enable_thinking: False` is automatically set for `qwen3*` models to avoid `<think>` blocks consuming output tokens. Fallback `<think>` stripping is applied in both `call_llm()` and `extract_json()`.
+
+**Supported providers**: `dashscope/qwen3-max-*`, `deepseek/deepseek-chat`, `deepseek/deepseek-reasoner`, `anthropic/claude-*`, `openai/gpt-*`, or any LiteLLM-compatible model string.
 
 ### Architecture Notes
 
@@ -393,8 +410,10 @@ Default LLM is **DeepSeek Chat** (via LiteLLM). Configurable via `LITELLM_MODEL`
 
 **Agent Architecture**: 8 agents orchestrated by LangGraph StateGraph:
 - Main pipeline: Supervisor → Planning → Discovery → Critical Reading → GraphRAG → Synthesis → Self-Review
-- **Loop-back**: Self-Review can route back to Discovery (score < 0.6), clearing downstream state (synthesis, graphrag, self-review) for a fresh pass
-- **Pre-workflow planning**: CLI runs Planning Agent before the graph, injects the approved plan to skip re-planning inside the workflow
+- **Discovery pipeline**: Per-sub-topic search → keyword extraction → second-round search → two-stage abstract screening (keyword + LLM) → co-citation snowball → relevance filtering → paper selection
+- **Loop-back**: Self-Review can route back to Discovery (score < 0.6), **incremental** re-search using `additional_queries` (not full restart)
+- **Pre-workflow planning**: CLI runs Planning Agent before the graph, injects the approved plan; users can **iterate** on the plan with feedback (up to 3 rounds)
+- **PDF acquisition chain**: Cache → arXiv → Zotero → Unpaywall (OA by DOI) → direct URL
 - Standalone: Refinement Agent (bypasses main graph, invoked via `session refine` or post-review interactive menu)
 - All quality agents (Self-Review, Refinement) use graceful fallbacks and never block the main workflow
 
