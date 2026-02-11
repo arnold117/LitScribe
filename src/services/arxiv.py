@@ -1,7 +1,16 @@
-"""arXiv MCP Server - Search and download papers from arXiv."""
+"""arXiv service - Search and download papers from arXiv.
+
+Rate limiting strategy:
+- Global singleton client (reuses HTTP connection)
+- 3.5s cooldown between requests (arXiv asks for >= 3s)
+- Client-level retry with 5s delay (handles transient errors)
+- Cooldown enforced in blocking thread (run_in_executor)
+"""
 
 import asyncio
+import logging
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,6 +21,36 @@ import arxiv
 
 from models.paper import Paper
 from utils.config import Config
+
+logger = logging.getLogger(__name__)
+
+# Global singleton client — reuses connection, respects delay_seconds between pages
+_arxiv_client: Optional[arxiv.Client] = None
+_last_request_time: float = 0.0
+_ARXIV_COOLDOWN = 3.5  # seconds between requests (arXiv asks for 3s minimum)
+
+
+def _get_client() -> arxiv.Client:
+    """Get or create the global arXiv client singleton."""
+    global _arxiv_client
+    if _arxiv_client is None:
+        _arxiv_client = arxiv.Client(
+            page_size=20,
+            num_retries=3,
+            delay_seconds=5,
+        )
+    return _arxiv_client
+
+
+def _wait_cooldown():
+    """Block until cooldown period has passed since last request."""
+    global _last_request_time
+    elapsed = time.monotonic() - _last_request_time
+    if elapsed < _ARXIV_COOLDOWN:
+        wait = _ARXIV_COOLDOWN - elapsed
+        logger.debug(f"arXiv cooldown: waiting {wait:.1f}s")
+        time.sleep(wait)
+    _last_request_time = time.monotonic()
 
 
 def _parse_arxiv_result(result: arxiv.Result) -> Paper:
@@ -62,7 +101,8 @@ async def search_papers(
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client(page_size=max_results, num_retries=1, delay_seconds=3)
+        _wait_cooldown()
+        client = _get_client()
         search = arxiv.Search(
             query=query,
             max_results=max_results,
@@ -96,7 +136,8 @@ async def get_paper_metadata(arxiv_id: str) -> dict:
     loop = asyncio.get_event_loop()
 
     def do_fetch():
-        client = arxiv.Client()
+        _wait_cooldown()
+        client = _get_client()
         search = arxiv.Search(id_list=[arxiv_id])
         results = list(client.results(search))
         return results[0] if results else None
@@ -145,7 +186,8 @@ async def download_pdf(
         pdf_path = pdf_dir / f"{clean_id}.pdf"
 
     def do_download():
-        client = arxiv.Client()
+        _wait_cooldown()
+        client = _get_client()
         search = arxiv.Search(id_list=[arxiv_id])
         results = list(client.results(search))
 
@@ -184,7 +226,8 @@ async def get_paper_by_doi(doi: str) -> dict:
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client()
+        _wait_cooldown()
+        client = _get_client()
         # Search by DOI in all fields
         search = arxiv.Search(
             query=f'doi:"{doi}"',
@@ -222,7 +265,8 @@ async def get_recent_papers(
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client(page_size=max_results, num_retries=1, delay_seconds=3)
+        _wait_cooldown()
+        client = _get_client()
         search = arxiv.Search(
             query=f"cat:{category}",
             max_results=max_results,
@@ -262,7 +306,8 @@ async def search_by_author(
     loop = asyncio.get_event_loop()
 
     def do_search():
-        client = arxiv.Client(page_size=max_results, num_retries=1, delay_seconds=3)
+        _wait_cooldown()
+        client = _get_client()
         search = arxiv.Search(
             query=f'au:"{author_name}"',
             max_results=max_results,
@@ -298,7 +343,8 @@ async def batch_get_papers(arxiv_ids: List[str]) -> dict:
     loop = asyncio.get_event_loop()
 
     def do_fetch():
-        client = arxiv.Client()
+        _wait_cooldown()
+        client = _get_client()
         search = arxiv.Search(id_list=arxiv_ids)
         results = list(client.results(search))
         return results
@@ -312,5 +358,3 @@ async def batch_get_papers(arxiv_ids: List[str]) -> dict:
         "found": len(papers),
         "papers": [p.to_dict() for p in papers],
     }
-
-

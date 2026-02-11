@@ -519,6 +519,9 @@ Output as JSON:
 {{
   "complexity_score": 1-5,
   "reasoning": "Why this complexity level...",
+  "review_title": "A formal academic title for the review (in English, concise, descriptive, suitable as a paper title)",
+  "needs_clarification": false,
+  "clarification_questions": [],
   "domain": "Primary academic field (e.g., Biology, Computer Science, Medicine, Chemistry, Physics)",
   "arxiv_categories": ["arXiv category codes, e.g. q-bio.BM, cs.AI, cs.CL"],
   "s2_fields": ["Semantic Scholar fields, e.g. Biology, Computer Science, Medicine"],
@@ -534,6 +537,16 @@ Output as JSON:
   ],
   "scope_estimate": "Estimated X-Y papers across N sub-topics"
 }}
+
+For "review_title": Generate a formal, publication-ready academic title (in English) based on the research question. The title should be concise (under 20 words), descriptive, and suitable as a literature review paper title. Example: if the user asks "我想看CHO CRISPR knockout相关研究", the title could be "CRISPR-Mediated Gene Knockouts in CHO Cells: Targets and Productivity Impact".
+
+For "needs_clarification": Set to true ONLY if the research question is too vague or ambiguous to produce a meaningful search plan. Examples that need clarification:
+- "I want to read about biology" (too broad, which area?)
+- "Compare methods for X" (which methods? what criteria?)
+- "Recent advances in Y" (how recent? which aspects?)
+Do NOT set needs_clarification for questions that are simply informal or in non-English — you can infer intent from context. Most questions do NOT need clarification.
+
+For "clarification_questions": If needs_clarification is true, provide 1-3 specific questions to help narrow the scope. Each question should be concise and actionable.
 
 For complexity 1-2, provide 1-2 sub-topics (the question itself is essentially the topic).
 For complexity 3-5, provide 3-6 sub-topics that together cover the research question comprehensively.
@@ -578,6 +591,7 @@ Output the revised plan as JSON:
 {{
   "complexity_score": 1-5,
   "reasoning": "Why this revised complexity level...",
+  "review_title": "Updated formal academic title for the review (in English)",
   "domain": "Primary academic field",
   "arxiv_categories": ["arXiv category codes"],
   "s2_fields": ["Semantic Scholar fields"],

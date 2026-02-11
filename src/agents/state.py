@@ -104,6 +104,11 @@ class ResearchPlan(TypedDict):
     s2_fields: List[str]  # Semantic Scholar field filters, e.g. ["Biology"]
     pubmed_mesh: List[str]  # PubMed MeSH term filters, e.g. ["Alkaloids"]
 
+    # Review title + clarification
+    review_title: str  # Academic title for the review, e.g. "CRISPR Knockouts in CHO Cells: Targets and Impact"
+    needs_clarification: bool  # Whether the query is ambiguous and needs user input
+    clarification_questions: List[str]  # Questions to ask user if needs_clarification is True
+
 
 # === Phase 9.1: Self-Review Types ===
 

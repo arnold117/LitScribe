@@ -488,6 +488,24 @@ async def cmd_review(args) -> int:
         try:
             out.info("Assessing research complexity...")
             plan = await assess_and_decompose(research_question, max_papers=max_papers)
+
+            # Clarification loop: if query is too vague, ask user for more info
+            if plan.get("needs_clarification") and plan.get("clarification_questions"):
+                out.subheader("Clarification Needed", "?")
+                out.info("Your query needs a bit more detail for a focused review:")
+                answers = []
+                for q in plan["clarification_questions"]:
+                    answer = input(f"  {q} ").strip()
+                    if answer:
+                        answers.append(answer)
+                if answers:
+                    # Augment research question with answers and re-plan
+                    augmented = research_question + "\n\nAdditional context: " + "; ".join(answers)
+                    out.info("Re-planning with your clarifications...")
+                    plan = await assess_and_decompose(augmented, max_papers=max_papers)
+                    # Update research_question for the workflow
+                    research_question = augmented
+
             complexity = plan.get("complexity_score", 1)
             if complexity >= 3:
                 out.subheader("Research Plan", "📋")
@@ -534,6 +552,18 @@ async def cmd_review(args) -> int:
                             break  # Fall through to accept previous plan
 
             injected_plan = plan
+
+            # Update output path with review_title if available (and user didn't specify --output)
+            review_title = plan.get("review_title", "")
+            if review_title and not args.output:
+                output_dir = Path("output")
+                output_dir.mkdir(exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_title = "".join(c if c.isalnum() or c in " -_" else "" for c in review_title[:60])
+                safe_title = safe_title.strip().replace(" ", "_")
+                if safe_title:
+                    output_path = output_dir / f"review_{safe_title}_{timestamp}"
+                    out.stat("Output (updated)", output_path)
 
             # Override max_papers with plan's estimated total
             selected_topics = [t for t in plan.get("sub_topics", []) if t.get("selected", True)]
@@ -687,9 +717,12 @@ async def cmd_review(args) -> int:
             review_text = synthesis.get("review_text", "")
 
             # Save review markdown
+            # Use review_title from plan if available, otherwise fall back to research_question
+            plan_data = final_state.get("research_plan")
+            md_title = (plan_data.get("review_title") if plan_data else "") or research_question
             review_file = output_path.with_suffix(".md")
             with open(review_file, "w", encoding="utf-8") as f:
-                f.write(f"# Literature Review: {research_question}\n\n")
+                f.write(f"# {md_title}\n\n")
                 f.write(review_text)
                 f.write("\n\n## References\n\n")
                 for cit in synthesis.get("citations_formatted", []):
@@ -760,8 +793,10 @@ async def cmd_review(args) -> int:
                             # Update saved files (include references)
                             review_file = output_path.with_suffix(".md")
                             citations = synthesis.get("citations_formatted", [])
+                            refine_plan = final_state.get("research_plan")
+                            refine_title = (refine_plan.get("review_title") if refine_plan else "") or research_question
                             with open(review_file, "w", encoding="utf-8") as f:
-                                f.write(f"# Literature Review: {research_question}\n\n")
+                                f.write(f"# {refine_title}\n\n")
                                 f.write(result["review_text"])
                                 if citations:
                                     f.write("\n\n## References\n\n")
@@ -856,9 +891,11 @@ async def cmd_resume(args) -> int:
 
             # Save review markdown
             review_text = synthesis.get("review_text", "")
+            resume_plan = final_state.get("research_plan")
+            resume_title = (resume_plan.get("review_title") if resume_plan else "") or research_question
             review_file = output_path.with_suffix(".md")
             with open(review_file, "w", encoding="utf-8") as f:
-                f.write(f"# Literature Review: {research_question}\n\n")
+                f.write(f"# {resume_title}\n\n")
                 f.write(review_text)
                 f.write("\n\n## References\n\n")
                 for cit in synthesis.get("citations_formatted", []):

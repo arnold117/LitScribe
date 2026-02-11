@@ -77,6 +77,9 @@ async def assess_and_decompose(
         arxiv_categories=data.get("arxiv_categories", []),
         s2_fields=data.get("s2_fields", []),
         pubmed_mesh=data.get("pubmed_mesh", []),
+        review_title=data.get("review_title", ""),
+        needs_clarification=bool(data.get("needs_clarification", False)),
+        clarification_questions=data.get("clarification_questions", []),
     )
 
 
@@ -145,6 +148,9 @@ async def revise_plan(
         arxiv_categories=data.get("arxiv_categories", current_plan.get("arxiv_categories", [])),
         s2_fields=data.get("s2_fields", current_plan.get("s2_fields", [])),
         pubmed_mesh=data.get("pubmed_mesh", current_plan.get("pubmed_mesh", [])),
+        review_title=data.get("review_title", current_plan.get("review_title", "")),
+        needs_clarification=False,  # Revised plans don't need further clarification
+        clarification_questions=[],
     )
 
 
@@ -179,6 +185,9 @@ def _build_fallback_plan(research_question: str, max_papers: int) -> ResearchPla
         arxiv_categories=[],
         s2_fields=[],
         pubmed_mesh=[],
+        review_title="",
+        needs_clarification=False,
+        clarification_questions=[],
     )
 
 
@@ -192,6 +201,9 @@ def format_plan_for_user(plan: ResearchPlan) -> str:
         Formatted string for terminal display
     """
     lines = []
+    review_title = plan.get("review_title", "")
+    if review_title:
+        lines.append(f"Review Title: {review_title}")
     lines.append(f"Complexity: {plan['complexity_score']}/5")
     lines.append(f"Scope: {plan['scope_estimate']}")
 
