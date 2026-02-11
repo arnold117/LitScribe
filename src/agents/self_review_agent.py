@@ -83,6 +83,7 @@ async def assess_review_quality(
     synthesis: SynthesisOutput,
     model: Optional[str] = None,
     tracker=None,
+    plan_subtopics: Optional[List[Dict[str, Any]]] = None,
 ) -> ReviewAssessment:
     """Assess the quality of a generated literature review.
 
@@ -94,6 +95,7 @@ async def assess_review_quality(
         analyzed_papers: List of analyzed paper summaries
         synthesis: The synthesis output to assess
         model: LLM model to use (optional)
+        plan_subtopics: Sub-topics from the research plan (for context-aware query generation)
 
     Returns:
         ReviewAssessment with scores and findings
@@ -111,8 +113,18 @@ async def assess_review_quality(
     gaps = synthesis.get("gaps", [])
     gaps_text = "\n".join(f"- {g}" for g in gaps)
 
+    # Format plan sub-topics for context
+    if plan_subtopics:
+        subtopics_text = "\n".join(
+            f"- {t.get('name', '?')}: {t.get('description', '')[:150]}"
+            for t in plan_subtopics if t.get("selected", True)
+        )
+    else:
+        subtopics_text = "Not available"
+
     prompt = SELF_REVIEW_PROMPT.format(
         research_question=research_question,
+        plan_subtopics=subtopics_text,
         num_papers=len(analyzed_papers),
         paper_list=paper_list,
         review_summary=review_summary,
@@ -186,6 +198,10 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
     from utils.token_tracker import get_tracker
     tracker = get_tracker()
 
+    # Extract plan sub-topics for context-aware query generation
+    research_plan = state.get("research_plan")
+    plan_subtopics = research_plan.get("sub_topics", []) if research_plan else []
+
     try:
         assessment = await assess_review_quality(
             research_question=research_question,
@@ -193,6 +209,7 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
             synthesis=synthesis,
             model=model,
             tracker=tracker,
+            plan_subtopics=plan_subtopics,
         )
 
         # Log key findings
@@ -227,20 +244,31 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
                 # Sync papers_to_analyze so supervisor doesn't route back to critical_reading
                 cleaned_ids = {p.get("paper_id") for p in cleaned_papers}
                 papers_to_analyze = state.get("papers_to_analyze", [])
-                updates["papers_to_analyze"] = [
+                synced = [
                     p for p in papers_to_analyze
                     if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in cleaned_ids
                 ]
+                # After loop-back, papers_to_analyze may be empty (discovery returned 0 new).
+                # Fall back to cleaned_papers so the count stays consistent.
+                if not synced and cleaned_papers:
+                    synced = list(cleaned_papers)
+                updates["papers_to_analyze"] = synced
 
-        # Step 4c: Loop-back if quality is below threshold and online search is available
+        # Step 4c: Loop-back if quality needs improvement and online search is available
+        # Trigger when: (LLM requests more search AND coverage is genuinely low) OR overall score is poor
+        score = assessment.get("overall_score", 1.0)
+        coverage = assessment.get("coverage_score", 1.0)
+        wants_more = assessment.get("needs_additional_search", False)
         if (
-            assessment.get("overall_score", 1.0) < 0.7
-            and assessment.get("needs_additional_search", False)
+            ((wants_more and coverage < 0.7) or score < 0.65)
             and iteration_count < 8
         ):
             if sources:
                 # Online mode: loop back to discovery for more papers
-                logger.info("Self-review: low quality score, routing back to discovery")
+                logger.info(
+                    f"Self-review: routing back to discovery "
+                    f"(score={score:.2f}, needs_additional_search={wants_more})"
+                )
                 updates["current_agent"] = "discovery"
             else:
                 # Local-only mode: flag for CLI to handle

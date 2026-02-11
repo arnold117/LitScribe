@@ -150,8 +150,8 @@ async def get_paper_citations(
         return result
 
     citations = []
-    for item in result.get("data", []):
-        citing_paper = item.get("citingPaper", {})
+    for item in (result.get("data") or []):
+        citing_paper = item.get("citingPaper") or {}
         if citing_paper:
             citations.append(_format_paper(citing_paper))
 
@@ -194,8 +194,8 @@ async def get_paper_references(
         return result
 
     references = []
-    for item in result.get("data", []):
-        cited_paper = item.get("citedPaper", {})
+    for item in (result.get("data") or []):
+        cited_paper = item.get("citedPaper") or {}
         if cited_paper:
             references.append(_format_paper(cited_paper))
 
@@ -352,7 +352,7 @@ async def batch_get_papers(
 def _format_paper(paper: dict) -> dict:
     """Format paper data for output."""
     authors = []
-    for author in paper.get("authors", []):
+    for author in (paper.get("authors") or []):
         authors.append(author.get("name", ""))
 
     external_ids = paper.get("externalIds", {}) or {}

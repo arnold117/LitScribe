@@ -744,6 +744,17 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
             "current_agent": "synthesis",  # Move to synthesis even with no papers
         }
 
+    # Dedup: skip papers already analyzed in previous rounds (e.g. circuit breaker retry)
+    existing_analyzed = state.get("analyzed_papers", [])
+    if existing_analyzed:
+        already_ids = {p.get("paper_id") for p in existing_analyzed if p.get("paper_id")}
+        new_papers = [p for p in papers_to_analyze
+                      if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) not in already_ids]
+        skipped = len(papers_to_analyze) - len(new_papers)
+        if skipped > 0:
+            logger.info(f"Skipping {skipped} already-analyzed papers from previous round")
+            papers_to_analyze = new_papers
+
     logger.info(f"Critical Reading Agent starting: {len(papers_to_analyze)} papers")
     logger.info(f"Cache enabled: {cache_enabled}, Max concurrent: {max_concurrent}")
 
@@ -880,13 +891,18 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     logger.info(f"Critical Reading complete: {len(analyzed_papers)} papers analyzed")
 
     # Pre-synthesis relevance filter: remove papers with low LLM-assigned relevance
+    # Floor: always keep at least MIN_PAPERS_FLOOR so narrow topics aren't gutted
     PRE_SYNTHESIS_MIN_RELEVANCE = 0.4
+    MIN_PAPERS_FLOOR = 8
     pre_filter_count = len(analyzed_papers)
+
+    # Sort by relevance so the floor keeps the best ones
+    scored = sorted(analyzed_papers, key=lambda p: p.get("relevance_score", 0.5), reverse=True)
     filtered_papers = []
     removed_papers = []
-    for paper in analyzed_papers:
+    for paper in scored:
         score = paper.get("relevance_score", 0.5)
-        if score >= PRE_SYNTHESIS_MIN_RELEVANCE:
+        if score >= PRE_SYNTHESIS_MIN_RELEVANCE or len(filtered_papers) < MIN_PAPERS_FLOOR:
             filtered_papers.append(paper)
         else:
             removed_papers.append(paper)
@@ -898,7 +914,7 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     if removed_papers:
         logger.info(
             f"Pre-synthesis filter: {len(removed_papers)}/{pre_filter_count} papers removed "
-            f"(relevance < {PRE_SYNTHESIS_MIN_RELEVANCE})"
+            f"(relevance < {PRE_SYNTHESIS_MIN_RELEVANCE}), floor kept {min(MIN_PAPERS_FLOOR, pre_filter_count)}"
         )
         errors.append(
             f"Pre-synthesis filter removed {len(removed_papers)} low-relevance paper(s): "
@@ -910,17 +926,31 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
 
     analyzed_papers = filtered_papers
 
+    # Merge with previously analyzed papers from earlier rounds (circuit breaker / loop-back)
+    if existing_analyzed:
+        new_ids = {p["paper_id"] for p in analyzed_papers}
+        carried_over = [p for p in existing_analyzed if p.get("paper_id") not in new_ids]
+        if carried_over:
+            logger.info(f"Merging {len(carried_over)} papers from previous round with {len(analyzed_papers)} new")
+            analyzed_papers = list(analyzed_papers) + carried_over
+
     # Update parsed_documents to match filtered set
     filtered_ids = {p["paper_id"] for p in analyzed_papers}
     parsed_documents = {k: v for k, v in parsed_documents.items() if k in filtered_ids}
 
     logger.info(f"Critical Reading: {len(analyzed_papers)} papers after relevance filter")
 
-    # Sync papers_to_analyze with filtered set so supervisor doesn't loop back
+    # Sync papers_to_analyze with analyzed set so supervisor doesn't loop back
+    current_pta_ids = {(p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) for p in papers_to_analyze}
     filtered_papers_to_analyze = [
         p for p in papers_to_analyze
         if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in filtered_ids
     ]
+    # Add carried-over papers not already in papers_to_analyze
+    for p in analyzed_papers:
+        pid = p.get("paper_id")
+        if pid and pid not in current_pta_ids and pid in filtered_ids:
+            filtered_papers_to_analyze.append(p)
 
     return {
         "analyzed_papers": list(analyzed_papers),

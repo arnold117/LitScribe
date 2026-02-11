@@ -323,6 +323,7 @@ class LitScribeState(TypedDict):
 
     # === Loop-back Support ===
     additional_queries: List[str]  # Extra queries from self-review for next discovery round
+    _circuit_breaker_retried: bool  # Whether circuit breaker already fired once (prevents infinite loop)
 
     # === Ablation Flags (Phase 9.5) ===
     disable_self_review: bool  # Skip self-review agent
@@ -373,7 +374,7 @@ TIER_CONFIG = {
     },
     "standard": {
         "per_subtopic_search": True,
-        "max_queries_per_topic": 3,
+        "max_queries_per_topic": 5,
         "snowball_rounds": 2,
         "snowball_seeds": 3,
         "snowball_cites_per_seed": 5,
@@ -471,6 +472,7 @@ def create_initial_state(
         domain_hint=research_plan.get("domain_hint") if research_plan else None,
         llm_config=llm_config,
         additional_queries=[],
+        _circuit_breaker_retried=False,
         disable_self_review=disable_self_review,
         disable_domain_filter=disable_domain_filter,
         disable_snowball=disable_snowball,

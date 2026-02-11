@@ -261,9 +261,11 @@ async def select_papers(
         Selected papers in ranked order
     """
     # Filter out very low relevance papers regardless of count
+    # Papers without a relevance_score (e.g. from snowball/citation APIs) get a
+    # neutral default so they aren't silently killed by the threshold.
     MIN_RELEVANCE = 0.35
     pre_filter_count = len(papers)
-    papers = [p for p in papers if (p.get("relevance_score") or 0) >= MIN_RELEVANCE]
+    papers = [p for p in papers if (p.get("relevance_score") or 0.5) >= MIN_RELEVANCE]
     if len(papers) < pre_filter_count:
         logger.info(f"Filtered {pre_filter_count - len(papers)} papers below relevance threshold ({MIN_RELEVANCE})")
 
@@ -789,12 +791,31 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
 
         logger.info(f"Discovery using tier '{review_tier}': per_subtopic={use_per_subtopic}, max_per_source={max_per_src}")
 
+        # Detect loop-back round: additional_queries present AND we already have papers
+        additional_queries = state.get("additional_queries", [])
+        is_loopback = bool(additional_queries) and len(state.get("analyzed_papers", [])) > 0
+        if is_loopback:
+            logger.info(
+                f"Loop-back discovery: skipping Step 1 (plan queries), "
+                f"using {len(additional_queries)} refined queries only"
+            )
+
         # Step 1: Build queries — per-sub-topic for standard/comprehensive, flat for quick
+        # On loop-back: skip plan queries entirely, jump to additional_queries only
         selected_topics = []
         if research_plan and research_plan.get("sub_topics"):
             selected_topics = [t for t in research_plan["sub_topics"] if t.get("selected", True)]
 
-        if use_per_subtopic and selected_topics:
+        if is_loopback:
+            # Loop-back mode: start with existing kept papers, only search new queries
+            # Seed with papers_to_analyze so they participate in selection + dedup
+            kept_papers = list(state.get("papers_to_analyze", []))
+            papers = list(kept_papers)
+            expanded_queries = []
+            search_results = {"papers": kept_papers, "source_counts": {}, "errors": []}
+            logger.info(f"Loop-back: skipping Step 1, starting with {len(kept_papers)} kept papers")
+
+        elif use_per_subtopic and selected_topics:
             # Per-sub-topic search: each topic gets its own search round
             all_papers = []
             all_source_counts: Dict[str, int] = {}
@@ -907,7 +928,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             papers = search_results.get("papers", [])
 
         # Step 1b: Append additional_queries from self-review loop-back (if any)
-        additional_queries = state.get("additional_queries", [])
+        # additional_queries already read from state at top of function
         if additional_queries:
             new_queries = [q for q in additional_queries if q not in expanded_queries]
             if new_queries:
@@ -1018,6 +1039,19 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 tracker=tracker,
                 sub_topics=plan_sub_topics,
             )
+
+        # Dedup against papers already analyzed in previous rounds (circuit breaker)
+        old_analyzed = state.get("analyzed_papers", [])
+        if old_analyzed:
+            old_ids = {p.get("paper_id") for p in old_analyzed if p.get("paper_id")}
+            before_dedup = len(selected_papers)
+            selected_papers = [
+                p for p in selected_papers
+                if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) not in old_ids
+            ]
+            deduped = before_dedup - len(selected_papers)
+            if deduped > 0:
+                logger.info(f"Deduped {deduped} papers already analyzed in previous round")
 
         # Step 5: Abstract screening — lightweight LLM check before critical_reading
         if len(selected_papers) > 3:

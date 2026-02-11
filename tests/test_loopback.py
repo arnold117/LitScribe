@@ -96,12 +96,12 @@ def test_discovery_appends_additional_queries():
 # === Test 8: self-review threshold is 0.7 ===
 
 def test_self_review_threshold():
-    """Self-review loop-back threshold should be 0.7."""
+    """Self-review loop-back uses coverage < 0.7 + overall < 0.65 (tightened to avoid wasteful loops)."""
     source = Path(__file__).parent.parent / "src" / "agents" / "self_review_agent.py"
     code = source.read_text()
-    assert "< 0.7" in code
-    # Should NOT have old threshold
-    assert "< 0.6" not in code.split("# Step 4c")[1].split("iteration_count")[0]
+    loop_back_section = code.split("# Step 4c")[1].split("return updates")[0]
+    assert "coverage < 0.7" in loop_back_section
+    assert "score < 0.65" in loop_back_section
 
 
 # === Test 9: supervisor does NOT clear analyzed_papers to empty on loop-back ===

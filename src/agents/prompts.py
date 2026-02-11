@@ -645,7 +645,7 @@ Output as JSON:
       "description": "What this covers",
       "estimated_papers": 5-20,
       "priority": 0.0-1.0,
-      "custom_queries": ["search query 1", "search query 2"]
+      "custom_queries": ["(\"term A\" OR \"synonym\") AND \"term B\"", "query 2", "query 3"]
     }}
   ],
   "scope_estimate": "Estimated X-Y papers across N sub-topics"
@@ -668,8 +668,15 @@ Ensure sub-topics are:
 - Mutually exclusive (minimal overlap)
 - Collectively exhaustive (cover the full question)
 - Ordered by priority (most important first)
-- Each with 2 specific search queries optimized for academic databases
+- Each with 3-5 specific search queries optimized for academic databases
 - IMPORTANT: All search queries MUST be in English
+- IMPORTANT: Queries MUST use Boolean syntax for precision:
+  * Use AND / OR operators to combine terms
+  * Use "double quotes" for exact multi-word phrases (e.g., "flux balance analysis")
+  * Include synonyms and abbreviations with OR (e.g., "CHO" OR "Chinese hamster ovary")
+  * Mix broad and narrow queries: some highly specific, some broader to catch related work
+  * Example good query: ("sesquiterpene coumarin" OR "prenylated coumarin") AND (biosynthesis OR "biosynthetic pathway") AND (Ferula OR Apiaceae)
+  * Example bad query: sesquiterpene coumarin biosynthesis plants (no operators, too vague)
 
 For domain detection:
 - arxiv_categories: Use official arXiv taxonomy (cs.*, q-bio.*, physics.*, math.*, stat.*, etc.)
@@ -715,7 +722,7 @@ Output the revised plan as JSON:
       "description": "What this covers",
       "estimated_papers": 5-20,
       "priority": 0.0-1.0,
-      "custom_queries": ["search query 1", "search query 2"]
+      "custom_queries": ["(\"term A\" OR \"synonym\") AND \"term B\"", "query 2", "query 3"]
     }}
   ],
   "scope_estimate": "Estimated X-Y papers across N sub-topics"
@@ -729,6 +736,9 @@ Output the revised plan as JSON:
 SELF_REVIEW_PROMPT = """You are an expert academic reviewer assessing the quality of a literature review.
 
 Research Question: {research_question}
+
+## Research Plan Sub-Topics:
+{plan_subtopics}
 
 ## Papers Included ({num_papers} papers):
 {paper_list}
@@ -776,10 +786,43 @@ Output as JSON:
   ],
   "suggestions": ["actionable suggestion 1", "actionable suggestion 2"],
   "needs_additional_search": true/false,
-  "additional_queries": ["suggested query 1"]
+  "additional_queries": ["(\"term A\" OR \"synonym\") AND \"term B\""]
 }}
 
+For "additional_queries": Generate 3-5 Boolean search queries targeting the coverage gaps.
+- Use AND/OR operators and "quoted phrases" for precision
+- Reference the Research Plan Sub-Topics above to ensure queries align with the planned scope
+- Focus on the specific gaps identified, not generic terms
+
 Be strict about relevance — a paper from a completely different field should always be flagged, even if it shares some keywords with the research question."""
+
+
+LOOPBACK_QUERY_REFINEMENT_PROMPT = """You are an expert academic search strategist. A literature review has been completed but has coverage gaps. Generate targeted search queries to fill these gaps.
+
+## Research Question:
+{research_question}
+
+## Original Plan Sub-Topics:
+{plan_subtopics}
+
+## Coverage Gaps Identified by Self-Review:
+{coverage_gaps}
+
+## Initial Additional Queries (from self-review):
+{initial_queries}
+
+Generate 5-8 precise Boolean search queries that specifically target the coverage gaps listed above.
+
+Rules:
+- Use AND / OR operators and "quoted phrases" for precision
+- Include synonyms and abbreviations with OR
+- Each query should target a SPECIFIC gap, not the broad topic
+- Queries MUST be in English
+- Do NOT repeat queries that are already in the initial list above
+- Mix specific and broader queries for better coverage
+
+Output as a JSON array of strings:
+["query 1", "query 2", ...]"""
 
 
 def format_papers_for_self_review(papers: list, max_chars: int = 12000) -> str:

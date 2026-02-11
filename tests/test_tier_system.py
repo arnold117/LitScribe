@@ -167,11 +167,14 @@ def test_synthesis_reads_target_words():
 # === Test 8: supervisor threshold matches self_review ===
 
 def test_supervisor_loopback_threshold():
-    """Supervisor should use 0.7 threshold (matching self_review_agent)."""
+    """Supervisor should use coverage < 0.7 + overall < 0.65 (matching self_review_agent)."""
     source = Path(__file__).parent.parent / "src" / "agents" / "supervisor.py"
     code = source.read_text()
-    assert "< 0.7" in code
-    assert "< 0.6" not in code
+    # Phase 5b section uses tightened dual-condition threshold
+    phase5b = code.split("Phase 5b")[1].split("return")[0]
+    assert "coverage_score" in phase5b
+    assert "< 0.7" in phase5b
+    assert "< 0.65" in phase5b
 
 
 # === Test 9: snowball min_matches relaxed ===

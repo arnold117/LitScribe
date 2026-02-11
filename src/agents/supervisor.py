@@ -9,11 +9,14 @@ import json
 import logging
 from typing import Any, Dict, Literal
 
-from agents.prompts import WORKFLOW_STATUS_PROMPT
+from agents.prompts import LOOPBACK_QUERY_REFINEMENT_PROMPT, WORKFLOW_STATUS_PROMPT
 from agents.state import LitScribeState
-from agents.tools import call_llm
+from agents.tools import call_llm, call_llm_for_json
 
 logger = logging.getLogger(__name__)
+
+# Minimum papers required before synthesis; fewer triggers circuit breaker loop-back
+MIN_PAPERS_FOR_SYNTHESIS = 6
 
 
 def get_workflow_status(state: LitScribeState) -> Dict[str, Any]:
@@ -104,7 +107,25 @@ def determine_next_agent(
         return "graphrag"
 
     # Phase 4: All papers analyzed (and GraphRAG done if enabled), need synthesis
+    # Circuit breaker: if too few papers, try broadened discovery before writing a bad review
     if analyzed_papers and synthesis is None:
+        already_retried = state.get("_circuit_breaker_retried", False)
+        if (
+            len(analyzed_papers) < MIN_PAPERS_FOR_SYNTHESIS
+            and state.get("sources")
+            and iteration < 8
+            and not already_retried
+        ):
+            logger.warning(
+                f"Circuit breaker: only {len(analyzed_papers)} papers for synthesis "
+                f"(minimum {MIN_PAPERS_FOR_SYNTHESIS}), routing back to discovery with relaxed filters"
+            )
+            return "discovery"
+        if len(analyzed_papers) < MIN_PAPERS_FOR_SYNTHESIS:
+            logger.warning(
+                f"Circuit breaker: only {len(analyzed_papers)} papers for synthesis "
+                f"(minimum {MIN_PAPERS_FOR_SYNTHESIS}), but retries exhausted — proceeding with warning"
+            )
         return "synthesis"
 
     # Phase 5: Synthesis done but self-review not done (Phase 9.1)
@@ -112,11 +133,13 @@ def determine_next_agent(
         return "self_review"
 
     # Phase 5b: Self-review requested loop-back to discovery
+    # Trigger when: (LLM requests more search AND coverage is genuinely low) OR overall score is poor
     self_review = state.get("self_review")
     if (
         self_review is not None
-        and self_review.get("needs_additional_search", False)
-        and self_review.get("overall_score", 1.0) < 0.7
+        and ((self_review.get("needs_additional_search", False)
+              and self_review.get("coverage_score", 1.0) < 0.7)
+             or self_review.get("overall_score", 1.0) < 0.65)
         and state.get("sources")  # Has online sources
         and iteration < 8
     ):
@@ -163,6 +186,22 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
         "iteration_count": iteration + 1,
     }
 
+    # Circuit breaker: too few papers for synthesis, route back to discovery with relaxed filters
+    if (
+        next_agent == "discovery"
+        and state.get("synthesis") is None
+        and state.get("self_review") is None
+        and state.get("analyzed_papers")
+    ):
+        logger.info(
+            f"Circuit breaker: {len(state.get('analyzed_papers', []))} papers < {MIN_PAPERS_FOR_SYNTHESIS}, "
+            f"resetting for broader search"
+        )
+        updates["_circuit_breaker_retried"] = True
+        updates["search_results"] = None  # Force full re-search
+        updates["knowledge_graph"] = None
+        updates["disable_domain_filter"] = True  # Broaden search by removing domain restrictions
+
     # When looping back to discovery from self-review, use incremental strategy:
     # keep high-relevance papers, clear downstream, inject additional_queries
     self_review = state.get("self_review")
@@ -191,8 +230,43 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
             k: v for k, v in state.get("parsed_documents", {}).items()
             if k in keep_ids
         }
-        # Inject additional_queries from self-review for discovery to consume
+        # Refine additional_queries: use LLM to combine coverage_gaps + plan context
+        # into precise Boolean queries, falling back to self-review's raw queries on error
         extra_queries = self_review.get("additional_queries", [])
+        coverage_gaps = self_review.get("coverage_gaps", [])
+        research_plan = state.get("research_plan")
+        plan_subtopics = research_plan.get("sub_topics", []) if research_plan else []
+
+        if coverage_gaps and plan_subtopics:
+            try:
+                from utils.token_tracker import get_tracker
+                tracker = get_tracker()
+                subtopics_text = "\n".join(
+                    f"- {t.get('name', '?')}: {t.get('description', '')[:150]}"
+                    for t in plan_subtopics if t.get("selected", True)
+                )
+                gaps_text = "\n".join(f"- {g}" for g in coverage_gaps)
+                initial_text = "\n".join(f"- {q}" for q in extra_queries) if extra_queries else "None"
+
+                prompt = LOOPBACK_QUERY_REFINEMENT_PROMPT.format(
+                    research_question=state.get("research_question", ""),
+                    plan_subtopics=subtopics_text,
+                    coverage_gaps=gaps_text,
+                    initial_queries=initial_text,
+                )
+                refined = await call_llm_for_json(
+                    prompt, temperature=0.3, max_tokens=800,
+                    tracker=tracker, agent_name="discovery",
+                )
+                if isinstance(refined, list) and refined:
+                    logger.info(
+                        f"Loop-back query refinement: {len(refined)} refined queries "
+                        f"(was {len(extra_queries)} from self-review)"
+                    )
+                    extra_queries = refined
+            except Exception as e:
+                logger.warning(f"Loop-back query refinement failed ({e}), using self-review queries")
+
         if extra_queries:
             logger.info(f"Injecting {len(extra_queries)} additional queries for discovery")
             updates["additional_queries"] = extra_queries
