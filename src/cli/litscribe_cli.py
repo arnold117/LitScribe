@@ -376,6 +376,18 @@ async def cmd_review(args) -> int:
     sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar", "pubmed"]
     review_type = args.type
 
+    # Determine review tier from max_papers
+    from agents.state import determine_review_tier, calculate_target_words
+    review_tier = determine_review_tier(max_papers)
+
+    # Warn for comprehensive reviews (high token cost)
+    if review_tier == "comprehensive":
+        out.warning(f"Comprehensive review ({max_papers} papers) will consume significantly more tokens.")
+        confirm = input("  Continue? (Y/n): ").strip()
+        if confirm.lower() == "n":
+            out.info("Review cancelled.")
+            return 0
+
     # GraphRAG settings (Phase 7.5)
     graphrag_enabled = not getattr(args, "disable_graphrag", False)
     batch_size = getattr(args, "batch_size", 20)
@@ -410,6 +422,7 @@ async def cmd_review(args) -> int:
     out.header("LitScribe Literature Review")
     out.stat("Research Question", research_question)
     out.stat("Max Papers", max_papers)
+    out.stat("Review Scale", f"{review_tier} ({max_papers} papers)")
     out.stat("Sources", sources)
     out.stat("Review Type", review_type)
     language = getattr(args, "lang", "en") or "en"
@@ -571,7 +584,7 @@ async def cmd_review(args) -> int:
                 plan_total = sum(t.get("estimated_papers", 5) for t in selected_topics)
                 plan_total = min(plan_total, 500)  # Cap at 500
                 if plan_total != max_papers:
-                    user_explicit = args.papers != 10  # 10 is argparse default
+                    user_explicit = args.papers != 40  # 40 is argparse default
                     if user_explicit and plan_total > max_papers:
                         out.info(f"Planning suggests ~{plan_total} papers, but you set -p {max_papers}.")
                         override = input(f"  Use plan's suggestion ({plan_total} papers)? (Y/n): ").strip()
@@ -1177,8 +1190,8 @@ Examples:
     review_parser.add_argument(
         "--papers", "-p",
         type=int,
-        default=10,
-        help="Maximum number of papers to analyze (default: 10, max: 500)",
+        default=40,
+        help="Maximum number of papers to analyze (default: 40, max: 500). <=25: quick, 26-60: standard, >60: comprehensive",
     )
     review_parser.add_argument(
         "--sources", "-s",

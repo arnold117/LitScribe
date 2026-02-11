@@ -123,9 +123,9 @@ def test_plan_total_default_when_missing():
 # === Test 3: Plan override logic conditions ===
 
 def test_override_when_plan_differs_from_default():
-    """When user didn't set -p (default 10) and plan suggests 25, should override."""
-    user_papers = 10  # argparse default
-    user_explicit = (user_papers != 10)  # False
+    """When user didn't set -p (default 40) and plan suggests 25, should override."""
+    user_papers = 40  # argparse default
+    user_explicit = (user_papers != 40)  # False
     plan_total = 25
 
     # Logic from CLI: if not explicit, always override
@@ -138,7 +138,7 @@ def test_override_when_plan_differs_from_default():
 def test_no_auto_override_when_user_explicit():
     """When user set -p 15 and plan suggests 30, should ask (not auto-override)."""
     user_papers = 15
-    user_explicit = (user_papers != 10)  # True
+    user_explicit = (user_papers != 40)  # True
     plan_total = 30
 
     # Should ask user, not auto-override
@@ -151,7 +151,7 @@ def test_no_auto_override_when_user_explicit():
 def test_override_when_plan_under_user_explicit():
     """When user set -p 50 and plan suggests 25, should auto-override (plan is smaller)."""
     user_papers = 50
-    user_explicit = (user_papers != 10)  # True
+    user_explicit = (user_papers != 40)  # True
     plan_total = 25
 
     # Plan is smaller than user's explicit value — safe to override

@@ -116,7 +116,7 @@ def determine_next_agent(
     if (
         self_review is not None
         and self_review.get("needs_additional_search", False)
-        and self_review.get("overall_score", 1.0) < 0.6
+        and self_review.get("overall_score", 1.0) < 0.7
         and state.get("sources")  # Has online sources
         and iteration < 8
     ):

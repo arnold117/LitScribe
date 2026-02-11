@@ -539,14 +539,14 @@ def test_query_expansion_prompt_asks_for_8():
         "Should request exactly 8 queries"
 
 
-# === Test 13: Search query cap raised to 6 ===
+# === Test 13: Search query cap raised to 12 ===
 
 def test_search_query_cap_raised():
-    """Discovery agent should search at least 6 queries (was 3)."""
+    """Discovery agent should search at least 12 queries (was 6)."""
     source = Path(__file__).parent.parent / "src" / "agents" / "discovery_agent.py"
     code = source.read_text()
-    assert "queries[:6]" in code, \
-        "Should search top 6 queries (was queries[:3])"
+    assert "queries[:12]" in code, \
+        "Should search top 12 queries (was queries[:6])"
 
 
 # === Test 14: Paper keyword extraction function exists ===

@@ -23,7 +23,7 @@ from agents.prompts import (
     QUERY_EXPANSION_PROMPT,
     format_papers_for_prompt,
 )
-from agents.state import LitScribeState, SearchResult
+from agents.state import LitScribeState, SearchResult, TIER_CONFIG
 from agents.tools import (
     call_llm,
     extract_json,
@@ -132,9 +132,9 @@ async def search_all_sources(
     from_cache_count = 0
     from_zotero_count = 0
 
-    # Search with each query in parallel (limit to top 6 queries for broader coverage)
-    queries_to_search = queries[:6]
-    max_per_query = max(max_per_source // len(queries_to_search), 5)
+    # Search with each query in parallel (use all queries — tier system controls volume upstream)
+    queries_to_search = queries[:12]  # Safety cap at 12 to avoid API flooding
+    max_per_query = max(max_per_source // max(len(queries_to_search), 1), 5)
 
     async def search_single_query(query: str):
         """Search a single query across all sources."""
@@ -470,15 +470,15 @@ async def snowball_sampling(
         for p in seed_papers
     }
 
-    # Extract keywords for relevance validation
+    # Extract keywords for relevance validation (relaxed matching for snowball)
     keywords = _extract_keywords(research_question) if research_question else []
-    snowball_min_matches = 3 if len(keywords) >= 4 else 2
+    snowball_min_matches = 2 if len(keywords) >= 4 else 1
 
     current_seeds = sorted(
         seed_papers,
         key=lambda x: x.get("citations", 0) or 0,
         reverse=True,
-    )[:3]
+    )[:5]
 
     for round_num in range(max_rounds):
         round_papers = []
@@ -491,8 +491,8 @@ async def snowball_sampling(
             try:
                 # Get citations (papers citing this one)
                 if direction in ("citations", "both"):
-                    citations_result = await get_paper_citations(paper_id, limit=5)
-                    for cited_paper in (citations_result or {}).get("citations", [])[:3]:
+                    citations_result = await get_paper_citations(paper_id, limit=10)
+                    for cited_paper in (citations_result or {}).get("citations", [])[:7]:
                         cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
                         if cited_id and cited_id not in seen_ids:
                             if keywords and not _paper_matches_keywords(cited_paper, keywords, min_matches=snowball_min_matches):
@@ -502,8 +502,8 @@ async def snowball_sampling(
 
                 # Get references (papers this one cites)
                 if direction in ("references", "both"):
-                    refs_result = await get_paper_references(paper_id, limit=5)
-                    for ref_paper in (refs_result or {}).get("references", [])[:3]:
+                    refs_result = await get_paper_references(paper_id, limit=10)
+                    for ref_paper in (refs_result or {}).get("references", [])[:7]:
                         ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
                         if ref_id and ref_id not in seen_ids:
                             if keywords and not _paper_matches_keywords(ref_paper, keywords, min_matches=snowball_min_matches):
@@ -783,32 +783,131 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
     cached_tools = get_cached_tools(cache_enabled=cache_enabled) if cache_enabled else None
 
     try:
-        # Step 1: Expand queries (use research plan sub-topics if available)
+        # Get tier configuration for search parameters
+        review_tier = state.get("review_tier", "standard")
+        tier_cfg = TIER_CONFIG.get(review_tier, TIER_CONFIG["standard"])
+        use_per_subtopic = tier_cfg.get("per_subtopic_search", False)
+        max_per_src = tier_cfg.get("max_per_source", 15)
+        max_q_per_topic = tier_cfg.get("max_queries_per_topic", 3)
+
+        logger.info(f"Discovery using tier '{review_tier}': per_subtopic={use_per_subtopic}, max_per_source={max_per_src}")
+
+        # Step 1: Build queries — per-sub-topic for standard/comprehensive, flat for quick
+        selected_topics = []
         if research_plan and research_plan.get("sub_topics"):
-            # Use sub-topic queries from planning agent, scaled by priority
+            selected_topics = [t for t in research_plan["sub_topics"] if t.get("selected", True)]
+
+        if use_per_subtopic and selected_topics:
+            # Per-sub-topic search: each topic gets its own search round
+            all_papers = []
+            all_source_counts: Dict[str, int] = {}
+            expanded_queries = []
+            existing_ids: set = set()
+            existing_titles: set = set()
+
+            for topic in selected_topics:
+                topic_queries = topic.get("custom_queries", [])[:max_q_per_topic]
+                if not topic_queries:
+                    topic_queries = [topic["name"]]
+
+                expanded_queries.extend(topic_queries)
+                logger.info(f"Searching sub-topic '{topic['name']}' with {len(topic_queries)} queries")
+
+                topic_results = await search_all_sources(
+                    queries=topic_queries,
+                    sources=sources,
+                    max_per_source=max_per_src,
+                    cached_tools=cached_tools,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
+                    zotero_collection=zotero_collection,
+                )
+
+                if topic_results.get("errors"):
+                    errors.extend(topic_results["errors"])
+
+                # Merge results, dedup across topics
+                for p in topic_results.get("papers", []):
+                    pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+                    ptitle = (p.get("title") or "").lower().strip()
+                    if (not pid or pid not in existing_ids) and (not ptitle or ptitle not in existing_titles):
+                        all_papers.append(p)
+                        if pid:
+                            existing_ids.add(pid)
+                        if ptitle:
+                            existing_titles.add(ptitle)
+
+                # Merge source counts
+                for src, count in topic_results.get("source_counts", {}).items():
+                    all_source_counts[src] = all_source_counts.get(src, 0) + count
+
+            # Also run LLM query expansion for additional coverage
+            llm_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
+            novel_llm = [q for q in llm_queries if q not in expanded_queries]
+            if novel_llm:
+                llm_results = await search_all_sources(
+                    queries=novel_llm[:4],
+                    sources=sources,
+                    max_per_source=max_per_src,
+                    cached_tools=cached_tools,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
+                    zotero_collection=zotero_collection,
+                )
+                for p in llm_results.get("papers", []):
+                    pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+                    ptitle = (p.get("title") or "").lower().strip()
+                    if (not pid or pid not in existing_ids) and (not ptitle or ptitle not in existing_titles):
+                        all_papers.append(p)
+                        if pid:
+                            existing_ids.add(pid)
+                        if ptitle:
+                            existing_titles.add(ptitle)
+                expanded_queries.extend(novel_llm[:4])
+                for src, count in llm_results.get("source_counts", {}).items():
+                    all_source_counts[src] = all_source_counts.get(src, 0) + count
+
+            papers = all_papers
+            search_results = {"papers": papers, "source_counts": all_source_counts, "errors": []}
+            logger.info(f"Per-sub-topic search: {len(papers)} unique papers from {len(selected_topics)} topics")
+
+        else:
+            # Quick tier or no plan: flat search (original behavior)
             plan_queries = []
-            for topic in research_plan["sub_topics"]:
-                if topic.get("selected", True):
-                    queries_for_topic = topic.get("custom_queries", [])
-                    priority = topic.get("priority", 0.5)
-                    if priority >= 0.8:
-                        # High-priority topics: use all queries (up to 3)
-                        plan_queries.extend(queries_for_topic[:3])
-                    elif priority >= 0.5:
-                        # Medium-priority: use top 2
-                        plan_queries.extend(queries_for_topic[:2])
-                    else:
-                        # Low-priority: use top 1
-                        plan_queries.extend(queries_for_topic[:1])
+            for topic in selected_topics:
+                queries_for_topic = topic.get("custom_queries", [])
+                priority = topic.get("priority", 0.5)
+                if priority >= 0.8:
+                    plan_queries.extend(queries_for_topic[:3])
+                elif priority >= 0.5:
+                    plan_queries.extend(queries_for_topic[:2])
+                else:
+                    plan_queries.extend(queries_for_topic[:1])
+
             if plan_queries:
-                # Combine plan queries with LLM-expanded queries
                 llm_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
                 expanded_queries = plan_queries + [q for q in llm_queries if q not in plan_queries]
                 logger.info(f"Using {len(plan_queries)} plan queries + {len(llm_queries)} expanded queries")
             else:
                 expanded_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
-        else:
-            expanded_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
+
+            search_results = await search_all_sources(
+                queries=expanded_queries,
+                sources=sources,
+                max_per_source=max_per_src,
+                cached_tools=cached_tools,
+                arxiv_categories=arxiv_categories,
+                s2_fields=s2_fields,
+                pubmed_mesh=pubmed_mesh,
+                zotero_collection=zotero_collection,
+            )
+
+            if search_results.get("errors"):
+                errors.extend(search_results["errors"])
+
+            papers = search_results.get("papers", [])
 
         # Step 1b: Append additional_queries from self-review loop-back (if any)
         additional_queries = state.get("additional_queries", [])
@@ -817,23 +916,24 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             if new_queries:
                 expanded_queries.extend(new_queries)
                 logger.info(f"Added {len(new_queries)} additional queries from self-review loop-back")
-
-        # Step 2: Search all sources (with caching if enabled, with domain filters)
-        search_results = await search_all_sources(
-            queries=expanded_queries,
-            sources=sources,
-            max_per_source=20,
-            cached_tools=cached_tools,
-            arxiv_categories=arxiv_categories,
-            s2_fields=s2_fields,
-            pubmed_mesh=pubmed_mesh,
-            zotero_collection=zotero_collection,
-        )
-
-        if search_results.get("errors"):
-            errors.extend(search_results["errors"])
-
-        papers = search_results.get("papers", [])
+                # Search additional queries
+                extra_results = await search_all_sources(
+                    queries=new_queries,
+                    sources=sources,
+                    max_per_source=max_per_src,
+                    cached_tools=cached_tools,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
+                    zotero_collection=zotero_collection,
+                )
+                existing_ids_set = {p.get("paper_id") or p.get("arxiv_id") or p.get("doi") for p in papers}
+                for p in extra_results.get("papers", []):
+                    pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+                    if not pid or pid not in existing_ids_set:
+                        papers.append(p)
+                        if pid:
+                            existing_ids_set.add(pid)
 
         if not papers:
             error_msg = "No papers found for the research question"
@@ -850,13 +950,12 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 ),
                 "papers_to_analyze": [],
                 "errors": errors,
-                "current_agent": "complete",  # End if no papers found
+                "current_agent": "complete",
             }
 
         # Step 2b: Second-round search using keywords extracted from initial results
-        keyword_queries = _extract_queries_from_papers(papers, research_question, max_queries=3)
+        keyword_queries = _extract_queries_from_papers(papers, research_question, max_queries=5)
         if keyword_queries:
-            # Only search queries that weren't already used
             novel_queries = [q for q in keyword_queries if q not in expanded_queries]
             if novel_queries:
                 round2_results = await search_all_sources(
@@ -871,7 +970,6 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 )
                 round2_papers = round2_results.get("papers", [])
                 if round2_papers:
-                    # Merge with existing papers (dedup by id/title)
                     existing_ids = {p.get("paper_id") or p.get("arxiv_id") or p.get("doi") for p in papers}
                     existing_titles = {(p.get("title") or "").lower().strip() for p in papers}
                     new_count = 0
@@ -888,7 +986,6 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     logger.info(f"Second-round search: {new_count} new papers from {len(novel_queries)} keyword queries")
                     expanded_queries.extend(novel_queries)
 
-                    # Update source counts
                     for src, count in round2_results.get("source_counts", {}).items():
                         current = search_results.get("source_counts", {}).get(src, 0)
                         search_results.setdefault("source_counts", {})[src] = current + count
@@ -904,12 +1001,15 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             sub_topics=plan_sub_topics,
         )
 
-        # Step 4: Optional snowball sampling if we need more papers
+        # Step 4: Optional snowball sampling if we need more papers (tier-aware)
+        snowball_rounds = tier_cfg.get("snowball_rounds", 2)
+        snowball_seeds = tier_cfg.get("snowball_seeds", 3)
         if len(selected_papers) < max_papers and len(selected_papers) > 0 and not disable_snowball:
             additional = await snowball_sampling(
                 seed_papers=selected_papers,
-                max_additional=max_papers - len(selected_papers),
+                max_additional=max(max_papers - len(selected_papers), 10),
                 research_question=research_question,
+                max_rounds=snowball_rounds,
             )
             # Re-select from combined pool
             all_candidates = selected_papers + additional

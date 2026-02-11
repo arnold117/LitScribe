@@ -67,6 +67,14 @@ async def assess_and_decompose(
     is_interactive = complexity >= 3
     confirmed = not is_interactive  # Simple plans auto-confirmed
 
+    # Ensure review_title is non-empty — generate fallback from sub-topics if LLM omits it
+    review_title = data.get("review_title", "").strip()
+    if not review_title and sub_topics:
+        # Build a title from the first 2-3 sub-topic names
+        topic_names = [t["name"] for t in sub_topics[:3]]
+        review_title = ": ".join(topic_names[:2]) if len(topic_names) >= 2 else topic_names[0]
+        logger.info(f"Generated fallback review_title from sub-topics: {review_title}")
+
     return ResearchPlan(
         complexity_score=complexity,
         sub_topics=sub_topics,
@@ -77,7 +85,7 @@ async def assess_and_decompose(
         arxiv_categories=data.get("arxiv_categories", []),
         s2_fields=data.get("s2_fields", []),
         pubmed_mesh=data.get("pubmed_mesh", []),
-        review_title=data.get("review_title", ""),
+        review_title=review_title,
         needs_clarification=bool(data.get("needs_clarification", False)),
         clarification_questions=data.get("clarification_questions", []),
     )

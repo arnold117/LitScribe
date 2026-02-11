@@ -314,6 +314,10 @@ class LitScribeState(TypedDict):
     domain_hint: Optional[str]  # Detected research domain for filtering
     zotero_collection: Optional[str]  # Zotero collection key to search (None = entire library)
 
+    # === Review Scale (Tier System) ===
+    review_tier: Literal["quick", "standard", "comprehensive"]  # Search strategy tier
+    target_words: int  # Target word count for review (auto-calculated: 1000 + papers * 130)
+
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
 
@@ -331,9 +335,65 @@ class LitScribeState(TypedDict):
     citation_grounding: Optional[Dict[str, Any]]  # Citation grounding report
 
 
+def determine_review_tier(max_papers: int) -> str:
+    """Determine review tier based on max_papers.
+
+    Returns:
+        "quick" (<=25), "standard" (26-60), or "comprehensive" (>60)
+    """
+    if max_papers <= 25:
+        return "quick"
+    elif max_papers <= 60:
+        return "standard"
+    else:
+        return "comprehensive"
+
+
+def calculate_target_words(max_papers: int, language: str = "en") -> int:
+    """Calculate target word count based on paper count.
+
+    Formula: 1000 (intro+conclusion) + papers * 130 (body per paper).
+    For CJK languages, multiply by 1.5 (characters vs words).
+    """
+    base = 1000 + max_papers * 130
+    if language in ("zh", "ja", "ko"):
+        base = int(base * 1.5)
+    return base
+
+
+# Tier-specific search configuration
+TIER_CONFIG = {
+    "quick": {
+        "per_subtopic_search": False,
+        "max_queries": 6,
+        "snowball_rounds": 1,
+        "snowball_seeds": 2,
+        "snowball_cites_per_seed": 3,
+        "max_per_source": 15,
+    },
+    "standard": {
+        "per_subtopic_search": True,
+        "max_queries_per_topic": 3,
+        "snowball_rounds": 2,
+        "snowball_seeds": 3,
+        "snowball_cites_per_seed": 5,
+        "max_per_source": 15,
+    },
+    "comprehensive": {
+        "per_subtopic_search": True,
+        "max_queries_per_topic": 5,
+        "snowball_rounds": 3,
+        "snowball_seeds": 5,
+        "snowball_cites_per_seed": 7,
+        "max_per_source": 25,
+        "co_citation": True,
+    },
+}
+
+
 def create_initial_state(
     research_question: str,
-    max_papers: int = 10,
+    max_papers: int = 40,
     sources: Optional[List[str]] = None,
     review_type: Literal["systematic", "narrative", "scoping"] = "narrative",
     cache_enabled: bool = True,
@@ -352,7 +412,7 @@ def create_initial_state(
 
     Args:
         research_question: The research question to explore
-        max_papers: Maximum number of papers to analyze (default: 10, max: 500)
+        max_papers: Maximum number of papers to analyze (default: 40, max: 500)
         sources: List of sources to search (default: arxiv, semantic_scholar, pubmed)
         review_type: Type of literature review to generate
         cache_enabled: Whether to use local cache (default: True)
@@ -377,6 +437,9 @@ def create_initial_state(
 
     # Cap max_papers at 500
     max_papers = min(max_papers, 500)
+
+    review_tier = determine_review_tier(max_papers)
+    target_words = calculate_target_words(max_papers, language)
 
     return LitScribeState(
         research_question=research_question,
@@ -413,4 +476,6 @@ def create_initial_state(
         disable_snowball=disable_snowball,
         zotero_collection=zotero_collection,
         citation_grounding=None,
+        review_tier=review_tier,
+        target_words=target_words,
     )

@@ -668,6 +668,8 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
         future_directions = gap_analysis["future_directions"]
 
         # Step 3: Generate review (with GraphRAG enhancement if available)
+        # Use target_words from state (tier system), with sensible fallback
+        target_words = state.get("target_words", 1000 + len(analyzed_papers) * 130)
         if use_graphrag and kg_context:
             review_text = await generate_graphrag_review(
                 analyzed_papers=analyzed_papers,
@@ -677,7 +679,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 knowledge_graph_context=kg_context,
                 global_summary=knowledge_graph.get("global_summary", ""),
                 review_type=review_type,
-                target_words=2500,  # Slightly longer for richer synthesis
+                target_words=target_words,
                 model=model,
                 language=language,
                 tracker=tracker,
@@ -689,7 +691,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 gaps=gaps,
                 research_question=research_question,
                 review_type=review_type,
-                target_words=2000,
+                target_words=target_words,
                 model=model,
                 language=language,
                 tracker=tracker,
