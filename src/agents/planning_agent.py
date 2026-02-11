@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from agents.errors import LLMError
 from agents.prompts import COMPLEXITY_ASSESSMENT_PROMPT
 from agents.state import LitScribeState, ResearchPlan, SubTopic
-from agents.tools import call_llm, extract_json
+from agents.tools import call_llm, call_llm_for_json, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,7 @@ async def assess_and_decompose(
         research_question=research_question,
     )
 
-    response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=1500, tracker=tracker, agent_name="planning")
-
-    data = extract_json(response)
+    data = await call_llm_for_json(prompt, model=model, temperature=0.3, max_tokens=1500, tracker=tracker, agent_name="planning")
 
     complexity = int(data.get("complexity_score", 2))
     raw_topics = data.get("sub_topics", [])
@@ -120,12 +118,10 @@ async def revise_plan(
         user_feedback=user_feedback,
     )
 
-    response = await call_llm(
+    data = await call_llm_for_json(
         prompt, model=model, temperature=0.3, max_tokens=1500,
         tracker=tracker, agent_name="planning",
     )
-
-    data = extract_json(response)
 
     complexity = int(data.get("complexity_score", current_plan["complexity_score"]))
     raw_topics = data.get("sub_topics", [])

@@ -37,7 +37,7 @@ from agents.state import (
     SynthesisOutput,
     ThemeCluster,
 )
-from agents.tools import call_llm, extract_json
+from agents.tools import call_llm, call_llm_for_json, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +125,37 @@ def communities_to_themes(
             key_points=key_points,
         ))
 
-    # Deduplicate themes by name (communities at different hierarchy levels
-    # can produce identical theme names from the same entity cluster)
-    seen_names = set()
+    # Deduplicate themes by normalized name (communities at different hierarchy
+    # levels can produce identical or near-identical theme names from the same
+    # entity cluster — e.g. "A / B / C" vs "B / A / C" or "A / B" vs "A / B / D")
+    def _normalize_theme_name(name: str) -> str:
+        parts = sorted(p.strip().lower() for p in name.split("/"))
+        return " / ".join(parts)
+
+    def _themes_overlap(name_a: str, name_b: str) -> bool:
+        """Check if two theme names share >=50% of their entity components."""
+        parts_a = {p.strip().lower() for p in name_a.split("/")}
+        parts_b = {p.strip().lower() for p in name_b.split("/")}
+        if not parts_a or not parts_b:
+            return False
+        overlap = len(parts_a & parts_b)
+        return overlap >= min(len(parts_a), len(parts_b)) * 0.5
+
     unique_themes = []
     for theme in themes:
-        if theme["theme"] not in seen_names:
-            seen_names.add(theme["theme"])
+        is_dup = False
+        for existing in unique_themes:
+            if (_normalize_theme_name(theme["theme"]) == _normalize_theme_name(existing["theme"])
+                    or _themes_overlap(theme["theme"], existing["theme"])):
+                # Merge paper_ids into existing theme
+                existing_ids = set(existing["paper_ids"])
+                for pid in theme["paper_ids"]:
+                    if pid not in existing_ids:
+                        existing["paper_ids"].append(pid)
+                        existing_ids.add(pid)
+                is_dup = True
+                break
+        if not is_dup:
             unique_themes.append(theme)
     themes = unique_themes
 
@@ -242,9 +266,7 @@ async def identify_themes(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=2000, tracker=tracker, agent_name="synthesis")
-
-        themes_data = extract_json(response)
+        themes_data = await call_llm_for_json(prompt, model=model, temperature=0.4, max_tokens=2000, tracker=tracker, agent_name="synthesis")
 
         if not isinstance(themes_data, list):
             raise ValueError("Expected JSON array of themes")
@@ -310,9 +332,11 @@ async def analyze_gaps(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=1000, tracker=tracker, agent_name="synthesis")
+        result = await call_llm_for_json(prompt, model=model, temperature=0.4, max_tokens=1000, tracker=tracker, agent_name="synthesis")
 
-        result = extract_json(response)
+        # Handle both dict and list responses (LLM may return a flat list)
+        if isinstance(result, list):
+            return {"gaps": result[:5], "future_directions": []}
         return {
             "gaps": result.get("gaps", [])[:5],
             "future_directions": result.get("future_directions", [])[:5],
@@ -384,7 +408,7 @@ async def generate_review(
             prompt,
             model=model,
             temperature=0.5,
-            max_tokens=min(4000, target_words * 2),
+            max_tokens=min(8192, target_words * 2),
             tracker=tracker,
             agent_name="synthesis",
             task_type="synthesis",
@@ -473,7 +497,7 @@ async def generate_graphrag_review(
             prompt,
             model=model,
             temperature=0.5,
-            max_tokens=min(5000, target_words * 2),
+            max_tokens=min(8192, target_words * 2),
             tracker=tracker,
             agent_name="synthesis",
             task_type="synthesis",

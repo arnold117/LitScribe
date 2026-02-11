@@ -498,105 +498,119 @@ async def cmd_review(args) -> int:
         # Planning confirmation with feedback loop
         injected_plan = None
         from agents.planning_agent import assess_and_decompose, format_plan_for_user, revise_plan
+
+        # Step 1: Assess complexity (separate try so UI failures don't lose the plan)
+        plan = None
         try:
             out.info("Assessing research complexity...")
             plan = await assess_and_decompose(research_question, max_papers=max_papers)
+        except Exception as e:
+            out.warning(f"Planning assessment failed ({e}), will plan during workflow.")
 
-            # Clarification loop: if query is too vague, ask user for more info
-            if plan.get("needs_clarification") and plan.get("clarification_questions"):
-                out.subheader("Clarification Needed", "?")
-                out.info("Your query needs a bit more detail for a focused review:")
-                answers = []
-                for q in plan["clarification_questions"]:
-                    answer = input(f"  {q} ").strip()
-                    if answer:
-                        answers.append(answer)
-                if answers:
-                    # Augment research question with answers and re-plan
-                    augmented = research_question + "\n\nAdditional context: " + "; ".join(answers)
-                    out.info("Re-planning with your clarifications...")
-                    plan = await assess_and_decompose(augmented, max_papers=max_papers)
-                    # Update research_question for the workflow
-                    research_question = augmented
-
-            complexity = plan.get("complexity_score", 1)
-            if complexity >= 3:
-                out.subheader("Research Plan", "📋")
-                out.info(format_plan_for_user(plan))
-                out.blank()
-
-                MAX_PLAN_REVISIONS = 3
-                revision_count = 0
-                while True:
-                    if revision_count >= MAX_PLAN_REVISIONS:
-                        out.info(f"Maximum revisions ({MAX_PLAN_REVISIONS}) reached.")
-                        confirm = input("Accept current plan? (Y/q to quit): ").strip()
-                        if confirm.lower() == "q":
-                            out.info("Review cancelled.")
-                            return 0
-                        break  # Accept plan
-
-                    confirm = input("Proceed with this plan? (Y/n/q): ").strip()
-                    if confirm.lower() in ("", "y"):
-                        break  # Accept plan
-                    elif confirm.lower() == "q":
-                        out.info("Review cancelled.")
-                        return 0
-                    else:
-                        # User wants to revise
-                        if confirm.lower() == "n":
-                            feedback = input("What would you like to change? ").strip()
-                        else:
-                            feedback = confirm  # User typed feedback directly
-                        if not feedback:
-                            out.info("No feedback provided. Review cancelled.")
-                            return 0
-
-                        out.info("Revising plan based on your feedback...")
-                        try:
-                            plan = await revise_plan(research_question, plan, feedback)
-                            revision_count += 1
-                            out.subheader(f"Revised Research Plan (revision {revision_count})", "📋")
-                            out.info(format_plan_for_user(plan))
-                            out.blank()
-                        except Exception as e:
-                            out.warning(f"Plan revision failed: {e}")
-                            out.info("Keeping previous plan.")
-                            break  # Fall through to accept previous plan
-
+        if plan is not None:
+            # Plan obtained — set immediately so workflow skips re-planning even if UI below fails
             injected_plan = plan
 
-            # Update output path with review_title if available (and user didn't specify --output)
-            review_title = plan.get("review_title", "")
-            if review_title and not args.output:
-                output_dir = Path("output")
-                output_dir.mkdir(exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                safe_title = "".join(c if c.isalnum() or c in " -_" else "" for c in review_title[:60])
-                safe_title = safe_title.strip().replace(" ", "_")
-                if safe_title:
-                    output_path = output_dir / f"review_{safe_title}_{timestamp}"
-                    out.stat("Output (updated)", output_path)
+            # Step 2: Clarification (if query is vague)
+            try:
+                if plan.get("needs_clarification") and plan.get("clarification_questions"):
+                    out.subheader("Clarification Needed", "?")
+                    out.info("Your query needs a bit more detail for a focused review:")
+                    answers = []
+                    for q in plan["clarification_questions"]:
+                        answer = input(f"  {q} ").strip()
+                        if answer:
+                            answers.append(answer)
+                    if answers:
+                        augmented = research_question + "\n\nAdditional context: " + "; ".join(answers)
+                        out.info("Re-planning with your clarifications...")
+                        plan = await assess_and_decompose(augmented, max_papers=max_papers)
+                        injected_plan = plan
+                        research_question = augmented
+            except Exception as e:
+                out.warning(f"Clarification step failed ({e}), using initial plan.")
 
-            # Override max_papers with plan's estimated total
-            selected_topics = [t for t in plan.get("sub_topics", []) if t.get("selected", True)]
-            if selected_topics:
-                plan_total = sum(t.get("estimated_papers", 5) for t in selected_topics)
-                plan_total = min(plan_total, 500)  # Cap at 500
-                if plan_total != max_papers:
-                    user_explicit = args.papers != 40  # 40 is argparse default
-                    if user_explicit and plan_total > max_papers:
-                        out.info(f"Planning suggests ~{plan_total} papers, but you set -p {max_papers}.")
-                        override = input(f"  Use plan's suggestion ({plan_total} papers)? (Y/n): ").strip()
-                        if override.lower() != "n":
+            # Step 3: Interactive confirmation (complexity >= 3)
+            try:
+                complexity = plan.get("complexity_score", 1)
+                if complexity >= 3:
+                    out.subheader("Research Plan")
+                    out.info(format_plan_for_user(plan))
+                    out.blank()
+
+                    MAX_PLAN_REVISIONS = 3
+                    revision_count = 0
+                    while True:
+                        if revision_count >= MAX_PLAN_REVISIONS:
+                            out.info(f"Maximum revisions ({MAX_PLAN_REVISIONS}) reached.")
+                            confirm = input("Accept current plan? (Y/q to quit): ").strip()
+                            if confirm.lower() == "q":
+                                out.info("Review cancelled.")
+                                return 0
+                            break
+
+                        confirm = input("Proceed with this plan? (Y/n/q): ").strip()
+                        if confirm.lower() in ("", "y"):
+                            break
+                        elif confirm.lower() == "q":
+                            out.info("Review cancelled.")
+                            return 0
+                        else:
+                            if confirm.lower() == "n":
+                                feedback = input("What would you like to change? ").strip()
+                            else:
+                                feedback = confirm
+                            if not feedback:
+                                out.info("No feedback provided. Review cancelled.")
+                                return 0
+
+                            out.info("Revising plan based on your feedback...")
+                            try:
+                                plan = await revise_plan(research_question, plan, feedback)
+                                injected_plan = plan
+                                revision_count += 1
+                                out.subheader(f"Revised Research Plan (revision {revision_count})")
+                                out.info(format_plan_for_user(plan))
+                                out.blank()
+                            except Exception as e:
+                                out.warning(f"Plan revision failed: {e}")
+                                out.info("Keeping previous plan.")
+                                break
+            except EOFError:
+                out.warning("Non-interactive terminal detected, auto-accepting plan.")
+            except Exception as e:
+                out.warning(f"Plan confirmation failed ({e}), proceeding with generated plan.")
+
+            # Step 4: Post-confirmation adjustments (output path, max_papers)
+            try:
+                review_title = plan.get("review_title", "")
+                if review_title and not args.output:
+                    output_dir = Path("output")
+                    output_dir.mkdir(exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    safe_title = "".join(c if c.isalnum() or c in " -_" else "" for c in review_title[:60])
+                    safe_title = safe_title.strip().replace(" ", "_")
+                    if safe_title:
+                        output_path = output_dir / f"review_{safe_title}_{timestamp}"
+                        out.stat("Output (updated)", output_path)
+
+                selected_topics = [t for t in plan.get("sub_topics", []) if t.get("selected", True)]
+                if selected_topics:
+                    plan_total = sum(t.get("estimated_papers", 5) for t in selected_topics)
+                    plan_total = min(plan_total, 500)
+                    if plan_total != max_papers:
+                        user_explicit = args.papers != 40
+                        if user_explicit and plan_total > max_papers:
+                            out.info(f"Planning suggests ~{plan_total} papers, but you set -p {max_papers}.")
+                            override = input(f"  Use plan's suggestion ({plan_total} papers)? (Y/n): ").strip()
+                            if override.lower() != "n":
+                                max_papers = plan_total
+                                out.info(f"Max papers updated to {max_papers} (from plan).")
+                        else:
                             max_papers = plan_total
-                            out.info(f"Max papers updated to {max_papers} (from plan).")
-                    else:
-                        max_papers = plan_total
-                        out.info(f"Max papers set to {max_papers} (from plan: {len(selected_topics)} sub-topics).")
-
-        except Exception as e:
-            out.warning(f"Planning pre-check failed ({e}), will plan during workflow.")
+                            out.info(f"Max papers set to {max_papers} (from plan: {len(selected_topics)} sub-topics).")
+            except Exception as e:
+                out.warning(f"Plan adjustment failed ({e}), using defaults.")
 
         # Run the multi-agent workflow
         final_state = await run_literature_review(
@@ -748,6 +762,7 @@ async def cmd_review(args) -> int:
                 # Convert to JSON-serializable format
                 output_data = {
                     "research_question": research_question,
+                    "research_plan": dict(plan_data) if plan_data else None,
                     "search_results": search_results,
                     "analyzed_papers": [dict(p) for p in analyzed],
                     "knowledge_graph": knowledge_graph,  # Phase 7.5

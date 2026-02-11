@@ -6,10 +6,13 @@ rate limiting appropriately.
 """
 
 import json
+import logging
 import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -463,6 +466,67 @@ async def call_llm(
         )
 
 
+async def call_llm_for_json(
+    prompt: str,
+    model: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: int = 2000,
+    tracker: Optional[Any] = None,
+    agent_name: str = "unknown",
+    task_type: Optional[str] = None,
+    max_retries: int = 2,
+) -> Union[Dict, List]:
+    """Call LLM and parse JSON response, with automatic retry on parse failure.
+
+    On JSON parse failure, retries with progressively lower temperature
+    and an explicit JSON reminder appended to the prompt.
+
+    Args:
+        prompt: The prompt to send to the LLM
+        model: Model to use
+        temperature: Initial sampling temperature
+        max_tokens: Maximum tokens to generate
+        tracker: Optional TokenTracker
+        agent_name: Name of the calling agent
+        task_type: Task type for model routing
+        max_retries: Maximum retry attempts on JSON parse failure
+
+    Returns:
+        Parsed JSON object (dict or list)
+
+    Raises:
+        json.JSONDecodeError: If all attempts fail to produce valid JSON
+    """
+    import asyncio as _asyncio
+
+    last_error = None
+    for attempt in range(1 + max_retries):
+        retry_temp = max(0.1, temperature - attempt * 0.15)
+        retry_prompt = prompt
+        if attempt > 0:
+            retry_prompt = prompt + "\n\nIMPORTANT: You MUST respond with valid JSON only. No markdown, no explanation, just the JSON object/array."
+            logger.info(f"JSON retry attempt {attempt + 1} (temperature={retry_temp:.2f})")
+
+        try:
+            response = await call_llm(
+                retry_prompt,
+                model=model,
+                temperature=retry_temp,
+                max_tokens=max_tokens,
+                tracker=tracker,
+                agent_name=agent_name,
+                task_type=task_type,
+            )
+            return extract_json(response)
+        except json.JSONDecodeError as e:
+            last_error = e
+            if attempt < max_retries:
+                await _asyncio.sleep(1.0 * (attempt + 1))
+            continue
+
+    raise last_error
+
+
 async def call_llm_with_system(
     system_prompt: str,
     user_prompt: str,
@@ -711,6 +775,7 @@ CRITICAL_READING_TOOLS = [
 
 SYNTHESIS_TOOLS = [
     call_llm,
+    call_llm_for_json,
     call_llm_with_system,
 ]
 

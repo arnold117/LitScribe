@@ -26,6 +26,7 @@ from agents.prompts import (
 from agents.state import LitScribeState, SearchResult, TIER_CONFIG
 from agents.tools import (
     call_llm,
+    call_llm_for_json,
     extract_json,
     get_paper_citations,
     get_paper_references,
@@ -62,9 +63,7 @@ async def expand_queries(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.4, max_tokens=500, tracker=tracker, agent_name="discovery")
-
-        queries = extract_json(response)
+        queries = await call_llm_for_json(prompt, model=model, temperature=0.4, max_tokens=500, tracker=tracker, agent_name="discovery")
 
         if not isinstance(queries, list):
             raise ValueError("Expected JSON array")
@@ -292,9 +291,7 @@ async def select_papers(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.3, max_tokens=500, tracker=tracker, agent_name="discovery")
-
-        selected_ids = extract_json(response)
+        selected_ids = await call_llm_for_json(prompt, model=model, temperature=0.3, max_tokens=500, tracker=tracker, agent_name="discovery")
 
         if not isinstance(selected_ids, list):
             raise ValueError("Expected JSON array of paper IDs")
