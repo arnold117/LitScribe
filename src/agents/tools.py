@@ -326,6 +326,9 @@ def extract_json(text: str) -> Union[Dict, List]:
     """
     text = text.strip()
 
+    # Strip <think>...</think> blocks (Qwen3 / reasoning models)
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
     # Try 1: Direct parse
     try:
         return json.loads(text)
@@ -436,6 +439,11 @@ async def call_llm(
         if not _is_reasoning_model(resolved_model):
             kwargs["temperature"] = temperature
 
+        # Disable thinking mode for Qwen3 models (saves tokens, avoids <think> blocks)
+        # Only applies to Qwen3 series; Qwen2.5 (qwen-max/plus/turbo) has no thinking mode
+        if "qwen3" in resolved_model.lower() and not _is_reasoning_model(resolved_model):
+            kwargs["extra_body"] = {"enable_thinking": False}
+
         response = await acompletion(
             messages=[{"role": "user", "content": prompt}],
             **kwargs,
@@ -447,6 +455,9 @@ async def call_llm(
                 "LLM returned empty content",
                 context={"model": resolved_model, "prompt_length": len(prompt)}
             )
+
+        # Strip <think>...</think> blocks from reasoning/thinking models (Qwen3 etc.)
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
 
         if tracker and hasattr(response, "usage") and response.usage:
             tracker.record(agent_name, resolved_model, {

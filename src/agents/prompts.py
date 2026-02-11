@@ -372,9 +372,10 @@ Write a comprehensive {review_type} literature review that:
 {citation_checklist}
 
 Requirements:
-- CITATION FORMAT: Use [LastName, Year] or [LastName et al., Year] with the real author surnames from the Papers section above. Every citation MUST include the year. NEVER omit the year. NEVER use generic placeholders.
+- CITATION FORMAT: Use [LastName, Year] or [LastName et al., Year] with the real author surnames from the Papers section above. Copy the author names precisely — do not alter spelling. Every citation MUST include the year. NEVER omit the year. NEVER use generic placeholders.
 - CITATION COVERAGE: You MUST cite ALL {num_papers} papers listed above. Every paper in the checklist MUST appear as a [LastName, Year] citation at least once. Do NOT skip any paper. If a paper seems less central, still cite it in a supporting role (e.g., "consistent with [Author, Year]" or "see also [Author, Year]").
 - CITATION DENSITY: Every factual claim, finding, or method description MUST be backed by at least one citation from the provided papers. Do NOT write any factual statement based on your own knowledge without citing a source paper.
+- STRUCTURE: Do NOT number the sections (no "1.", "2.", etc.). Use markdown headings (## and ###) without numbering.
 - Write in formal academic prose
 - Target approximately {word_count} words
 - Maintain objectivity while being analytical
@@ -456,16 +457,128 @@ Write a comprehensive {review_type} literature review that:
 {citation_checklist}
 
 Requirements:
-- CITATION FORMAT: ONLY cite individual papers using [LastName, Year] or [LastName et al., Year] with the real author surnames from the Papers section above (e.g., [Smith, 2020], [Zhang et al., 2019]). Every citation MUST include the year. NEVER omit the year. NEVER use generic placeholders like [Author, Year].
+- CITATION FORMAT: ONLY cite individual papers using [LastName, Year] or [LastName et al., Year] with the real author surnames from the Papers section above (e.g., [Smith, 2020], [Zhang et al., 2019]). Copy the author names precisely — do not alter spelling. Every citation MUST include the year. NEVER omit the year. NEVER use generic placeholders like [Author, Year].
 - DO NOT cite research clusters, themes, knowledge graph summaries, or any non-paper source. "[研究集群]", "[Cluster]", "[知识图谱]" etc. are FORBIDDEN — only [AuthorName, Year] citations are allowed.
 - CITATION COVERAGE: You MUST cite ALL {num_papers} papers listed above. Every paper in the checklist MUST appear as a [LastName, Year] citation at least once. Do NOT skip any paper. If a paper seems less central, still cite it in a supporting role (e.g., "consistent with [Author, Year]" or "see also [Author, Year]").
 - CITATION DENSITY: Every factual claim, finding, or method description MUST be backed by at least one citation from the provided papers. Do NOT write any factual statement based on your own knowledge without citing a source paper.
+- STRUCTURE: Do NOT number the sections (no "1.", "2.", etc.). Use markdown headings (## and ###) without numbering.
 - Write in formal academic prose
 - Target approximately {word_count} words
 - Leverage the knowledge graph context to make explicit connections between papers
 - Maintain objectivity while being analytical
 
 Write the review now:"""
+
+
+# =============================================================================
+# Sectioned Review Generation Prompts (for long reviews exceeding 8K token limit)
+# =============================================================================
+
+REVIEW_INTRO_PROMPT = """You are an expert academic writer creating the INTRODUCTION section of a literature review.
+
+Review Type: {review_type}
+Research Question: {research_question}
+Number of Papers: {num_papers}
+{knowledge_graph_section}
+The review will cover the following themes:
+{theme_names}
+
+Write a concise introduction (2-3 paragraphs) that:
+1. Introduces the research question and its significance
+2. Briefly previews the scope — {num_papers} papers analyzed
+3. Lists the themes that will be discussed (one sentence each)
+
+STRICT FORMATTING RULES:
+- Start with a level-1 heading: # [Your Review Title]
+- Then write 2-3 paragraphs of introduction
+- Do NOT include any citations — citations appear in theme sections only
+- Do NOT include any sub-headings, section numbers, or bullet lists
+- Do NOT write a conclusion or summary within this section
+- End with a transitional sentence leading into the first theme
+- Target approximately {word_count} words — do NOT exceed this limit
+- Write in formal academic prose
+
+Write the introduction now:"""
+
+
+REVIEW_THEME_SECTION_PROMPT = """You are an expert academic writer continuing a literature review. Write the section for ONE specific theme.
+
+This is section {theme_number} of {total_themes} in the review.
+
+Research Question: {research_question}
+{knowledge_graph_section}
+Theme: {theme_name}
+Theme Description: {theme_description}
+
+Key Points:
+{key_points}
+
+## Papers for this theme ({num_theme_papers} papers):
+{theme_papers}
+
+## Citation Checklist — EVERY paper below MUST be cited at least once in this section:
+{theme_citation_checklist}
+
+## Context from previous section (for smooth transition):
+...{previous_ending}
+
+Write the analysis for this theme:
+1. Begin with a natural transition from the previous section
+2. Synthesize findings across papers — do NOT just summarize each paper individually
+3. Compare and contrast different approaches, methods, and findings
+4. Highlight areas of agreement and disagreement
+
+STRICT FORMATTING RULES:
+- Start with EXACTLY this heading: ## {theme_number}. {theme_name}
+- Use ### for sub-sections within this theme if needed
+- Do NOT write a conclusion, summary, or "小结" for this section — the overall conclusion comes later
+- Do NOT re-number this section — it is section {theme_number}
+- CITATION FORMAT: Use [LastName, Year] or [LastName et al., Year] with the EXACT author surnames from the papers listed above. Copy the author names precisely — do not alter spelling.
+- CITATION COVERAGE: You MUST cite ALL {num_theme_papers} papers listed in the checklist. Do NOT skip any paper.
+- CITATION DENSITY: Every factual claim MUST be backed by at least one citation.
+- Target approximately {word_count} words — do NOT exceed this limit
+- Write in formal academic prose
+
+Write this theme section now:"""
+
+
+REVIEW_CONCLUSION_PROMPT = """You are an expert academic writer writing the final sections of a literature review.
+
+Research Question: {research_question}
+Number of Papers Reviewed: {num_papers}
+{knowledge_graph_section}
+Themes Covered:
+{theme_names}
+
+Research Gaps:
+{gaps}
+
+## Context from previous section (for smooth transition):
+...{previous_ending}
+
+{uncited_section}
+
+Write three sections:
+
+## Critical Discussion
+(1-2 paragraphs) Discuss patterns and trends across the themes. Address methodological considerations and limitations. Note areas of agreement and disagreement.
+
+## Research Gaps and Future Directions
+(1 paragraph) Summarize key research gaps. Suggest concrete future research directions.
+
+## Conclusion
+(1 paragraph) Summarize the main insights. Restate the significance for the field.
+
+STRICT FORMATTING RULES:
+- Use EXACTLY the three ## headings shown above (Critical Discussion, Research Gaps and Future Directions, Conclusion)
+- Begin with a natural transition from the previous theme section
+- If uncited papers are listed above, incorporate them (e.g., "see also [Author, Year]")
+- CITATION FORMAT: Use [LastName, Year] with EXACT author surnames. Copy names precisely from the papers.
+- Target approximately {word_count} words — do NOT exceed this limit
+- Write in formal academic prose
+- This is the ONLY conclusion in the entire review — do not repeat themes in detail
+
+Write the conclusion sections now:"""
 
 
 # =============================================================================

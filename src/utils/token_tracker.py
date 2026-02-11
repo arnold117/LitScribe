@@ -37,6 +37,11 @@ MODEL_PRICING = {
     # DeepSeek
     "deepseek/deepseek-reasoner": {"input": 0.55, "output": 2.19},
     "deepseek/deepseek-chat": {"input": 0.27, "output": 1.10},
+    # Qwen (DashScope) — prices in USD (converted from RMB at ~7.2)
+    "dashscope/qwen3-max": {"input": 0.35, "output": 1.39},
+    "dashscope/qwen-max": {"input": 2.40, "output": 9.60},
+    "dashscope/qwen-plus": {"input": 0.80, "output": 2.00},
+    "dashscope/qwen-turbo": {"input": 0.30, "output": 0.60},
     # Fallback
     "_default": {"input": 3.0, "output": 15.0},
 }

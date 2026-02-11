@@ -23,6 +23,9 @@ from agents.prompts import (
     GAP_ANALYSIS_PROMPT,
     GRAPHRAG_LITERATURE_REVIEW_PROMPT,
     LITERATURE_REVIEW_PROMPT,
+    REVIEW_CONCLUSION_PROMPT,
+    REVIEW_INTRO_PROMPT,
+    REVIEW_THEME_SECTION_PROMPT,
     THEME_IDENTIFICATION_PROMPT,
     build_citation_checklist,
     format_summaries_for_prompt,
@@ -408,11 +411,14 @@ async def generate_review(
             prompt,
             model=model,
             temperature=0.5,
-            max_tokens=min(8192, target_words * 2),
+            max_tokens=min(65536, target_words * 2),
             tracker=tracker,
             agent_name="synthesis",
             task_type="synthesis",
         )
+        # Post-processing: normalize misspelled citations
+        name_map = _build_citation_name_map(analyzed_papers)
+        response = _normalize_citations(response, name_map)
         logger.info(f"Generated review with {count_words(response)} words")
         return response.strip()
 
@@ -497,11 +503,14 @@ async def generate_graphrag_review(
             prompt,
             model=model,
             temperature=0.5,
-            max_tokens=min(8192, target_words * 2),
+            max_tokens=min(65536, target_words * 2),
             tracker=tracker,
             agent_name="synthesis",
             task_type="synthesis",
         )
+        # Post-processing: normalize misspelled citations
+        name_map = _build_citation_name_map(analyzed_papers)
+        response = _normalize_citations(response, name_map)
         logger.info(f"Generated GraphRAG-enhanced review with {count_words(response)} words")
         return response.strip()
 
@@ -519,6 +528,293 @@ async def generate_graphrag_review(
             language=language,
             tracker=tracker,
         )
+
+
+def _build_citation_name_map(analyzed_papers: List[PaperSummary]) -> Dict[str, str]:
+    """Build a mapping of known author last names for citation normalization.
+
+    Returns dict mapping lowercase last name -> canonical form (original casing).
+    """
+    from analysis.citation_grounding import _extract_last_names
+    name_map = {}
+    for p in analyzed_papers:
+        authors = p.get("authors", [])
+        if isinstance(authors, str):
+            authors = [authors]
+        for ln in _extract_last_names(authors):
+            name_map[ln.lower()] = ln
+    return name_map
+
+
+def _normalize_citations(text: str, name_map: Dict[str, str]) -> str:
+    """Fix misspelled author names in [Author, Year] citations.
+
+    Uses edit distance to match misspelled names to known authors.
+    Only corrects names that are within edit distance 2 of a known author.
+    """
+    import re as _re
+
+    def _edit_distance(a: str, b: str) -> int:
+        """Simple Levenshtein distance."""
+        if len(a) < len(b):
+            return _edit_distance(b, a)
+        if len(b) == 0:
+            return len(a)
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a):
+            curr = [i + 1]
+            for j, cb in enumerate(b):
+                cost = 0 if ca == cb else 1
+                curr.append(min(curr[j] + 1, prev[j + 1] + 1, prev[j] + cost))
+            prev = curr
+        return prev[len(b)]
+
+    known_names_lower = set(name_map.keys())
+
+    def _fix_citation(match):
+        full = match.group(0)
+        name_part = match.group(1).strip()
+        rest = match.group(2)  # ", Year]" or " et al., Year]"
+
+        # Check if name is already known
+        if name_part.lower() in known_names_lower:
+            return full  # Already correct
+
+        # Try fuzzy match (edit distance <= 2)
+        best_match = None
+        best_dist = 3  # threshold
+        for known_lower, canonical in name_map.items():
+            dist = _edit_distance(name_part.lower(), known_lower)
+            if dist < best_dist:
+                best_dist = dist
+                best_match = canonical
+        if best_match:
+            logger.info(f"Citation normalization: '{name_part}' → '{best_match}' (dist={best_dist})")
+            return f"[{best_match}{rest}"
+        return full
+
+    # Match [Name, Year] and [Name et al., Year] patterns
+    normalized = _re.sub(
+        r'\[([A-Za-zÀ-ÿ\u4e00-\u9fff]+)((?:\s+et\s+al\.)?,\s*\d{4}\])',
+        _fix_citation,
+        text,
+    )
+    return normalized
+
+
+async def generate_review_sectioned(
+    analyzed_papers: List[PaperSummary],
+    themes: List[ThemeCluster],
+    gaps: List[str],
+    research_question: str,
+    review_type: str = "narrative",
+    target_words: int = 5000,
+    model: Optional[str] = None,
+    language: str = "en",
+    tracker=None,
+    knowledge_graph_context: Optional[str] = None,
+    global_summary: Optional[str] = None,
+) -> str:
+    """Generate a literature review in sections to overcome LLM output token limits.
+
+    Splits the review into introduction, per-theme body sections, and conclusion,
+    each generated as a separate LLM call (< 8K tokens each).
+
+    Triggered when target_words > 4096 (roughly > 8K output tokens).
+
+    Args:
+        analyzed_papers: List of analyzed paper summaries
+        themes: Identified themes
+        gaps: Research gaps
+        research_question: The original research question
+        review_type: Type of review (narrative, systematic, scoping)
+        target_words: Target word count for the full review
+        model: LLM model to use
+        language: Output language code ("en", "zh", etc.)
+        tracker: Token tracker
+        knowledge_graph_context: Optional GraphRAG context string
+        global_summary: Optional GraphRAG global summary
+
+    Returns:
+        Full review text assembled from sections
+    """
+    from analysis.citation_grounding import extract_all_cited_authors
+
+    lang_instruction = get_language_instruction(language)
+    num_themes = max(len(themes), 1)
+
+    # Word budget allocation
+    intro_words = int(target_words * 0.10)
+    body_total = int(target_words * 0.70)
+    body_per_theme = body_total // num_themes
+    conclusion_words = int(target_words * 0.20)
+
+    # Knowledge graph section (shared across prompts)
+    kg_section = ""
+    if knowledge_graph_context:
+        kg_section = f"## Knowledge Graph Context (background only — NOT citable):\n{knowledge_graph_context}\n"
+        if global_summary:
+            kg_section += f"\n## Global Research Landscape:\n{global_summary}\n"
+
+    # Theme names for intro/conclusion
+    theme_names_text = "\n".join(
+        f"{i+1}. {t['theme']}: {t['description'][:100]}"
+        for i, t in enumerate(themes)
+    )
+
+    sections = []
+
+    # --- Stage 1: Introduction ---
+    logger.info(f"Sectioned generation: intro (~{intro_words} words)")
+    intro_prompt = REVIEW_INTRO_PROMPT.format(
+        review_type=review_type,
+        research_question=research_question,
+        num_papers=len(analyzed_papers),
+        knowledge_graph_section=kg_section,
+        theme_names=theme_names_text,
+        word_count=intro_words,
+    ) + lang_instruction
+
+    try:
+        intro_text = await call_llm(
+            intro_prompt,
+            model=model,
+            temperature=0.5,
+            max_tokens=min(8192, intro_words * 3),
+            tracker=tracker,
+            agent_name="synthesis",
+            task_type="synthesis",
+        )
+        sections.append(intro_text.strip())
+    except LLMError as e:
+        logger.warning(f"Sectioned intro failed: {e}")
+        sections.append(f"# Literature Review: {research_question}\n\n"
+                        f"This review synthesizes findings from {len(analyzed_papers)} papers.")
+
+    # Track cited authors across all sections
+    all_cited_authors = set()
+    previous_ending = sections[-1][-200:] if sections else ""
+
+    # --- Stage 2: Theme sections ---
+    for i, theme in enumerate(themes):
+        # Get papers for this theme — only from analyzed papers
+        theme_paper_ids = set(theme.get("paper_ids", []))
+        theme_papers = [p for p in analyzed_papers if p["paper_id"] in theme_paper_ids]
+
+        # Fallback: if theme has no matched papers, assign proportionally
+        if not theme_papers:
+            start = (i * len(analyzed_papers)) // num_themes
+            end = ((i + 1) * len(analyzed_papers)) // num_themes
+            theme_papers = analyzed_papers[start:end] if start < end else analyzed_papers[:3]
+
+        theme_summaries = format_summaries_for_prompt(theme_papers)
+        theme_checklist = build_citation_checklist(theme_papers)
+        key_points_text = "\n".join(f"- {p}" for p in theme.get("key_points", [])[:5])
+
+        logger.info(
+            f"Sectioned generation: theme {i+1}/{num_themes} "
+            f"'{theme['theme']}' ({len(theme_papers)} papers, ~{body_per_theme} words)"
+        )
+
+        theme_prompt = REVIEW_THEME_SECTION_PROMPT.format(
+            research_question=research_question,
+            knowledge_graph_section=kg_section,
+            theme_number=i + 1,
+            total_themes=num_themes,
+            theme_name=theme["theme"],
+            theme_description=theme.get("description", ""),
+            key_points=key_points_text or "N/A",
+            num_theme_papers=len(theme_papers),
+            theme_papers=theme_summaries,
+            theme_citation_checklist=theme_checklist,
+            previous_ending=previous_ending,
+            word_count=body_per_theme,
+        ) + lang_instruction
+
+        try:
+            theme_text = await call_llm(
+                theme_prompt,
+                model=model,
+                temperature=0.5,
+                max_tokens=min(8192, body_per_theme * 3),
+                tracker=tracker,
+                agent_name="synthesis",
+                task_type="synthesis",
+            )
+            sections.append(theme_text.strip())
+            previous_ending = theme_text.strip()[-200:]
+
+            # Track cited authors
+            section_cited = extract_all_cited_authors(theme_text)
+            all_cited_authors.update(section_cited)
+        except LLMError as e:
+            logger.warning(f"Sectioned theme '{theme['theme']}' failed: {e}")
+            sections.append(f"## {i+1}. {theme['theme']}\n\n{theme.get('description', '')}")
+            previous_ending = sections[-1][-200:]
+
+    # --- Stage 3: Conclusion ---
+    # Find uncited papers
+    uncited_section = ""
+    if all_cited_authors:
+        from analysis.citation_grounding import _extract_last_names
+        uncited = []
+        for p in analyzed_papers:
+            authors = p.get("authors", [])
+            if isinstance(authors, str):
+                authors = [authors]
+            last_names = _extract_last_names(authors)
+            if not any(ln.lower() in all_cited_authors for ln in last_names):
+                year = p.get("year", "N/A")
+                cite_name = last_names[0] if last_names else "Unknown"
+                uncited.append(f"- [{cite_name} et al., {year}] — {p.get('title', '')[:60]}")
+        if uncited:
+            uncited_section = (
+                "## Uncited Papers — please incorporate these in the conclusion:\n"
+                + "\n".join(uncited)
+            )
+            logger.info(f"Sectioned generation: {len(uncited)} uncited papers flagged for conclusion")
+
+    gaps_text = "\n".join(f"- {g}" for g in gaps)
+
+    logger.info(f"Sectioned generation: conclusion (~{conclusion_words} words)")
+    conclusion_prompt = REVIEW_CONCLUSION_PROMPT.format(
+        research_question=research_question,
+        num_papers=len(analyzed_papers),
+        knowledge_graph_section=kg_section,
+        theme_names=theme_names_text,
+        gaps=gaps_text,
+        previous_ending=previous_ending,
+        uncited_section=uncited_section,
+        word_count=conclusion_words,
+    ) + lang_instruction
+
+    try:
+        conclusion_text = await call_llm(
+            conclusion_prompt,
+            model=model,
+            temperature=0.5,
+            max_tokens=min(8192, conclusion_words * 3),
+            tracker=tracker,
+            agent_name="synthesis",
+            task_type="synthesis",
+        )
+        sections.append(conclusion_text.strip())
+    except LLMError as e:
+        logger.warning(f"Sectioned conclusion failed: {e}")
+        sections.append("## Conclusion\n\nFurther research is needed in this area.")
+
+    # Assemble full review
+    full_review = "\n\n".join(sections)
+
+    # Post-processing: normalize misspelled citations
+    name_map = _build_citation_name_map(analyzed_papers)
+    full_review = _normalize_citations(full_review, name_map)
+
+    logger.info(
+        f"Sectioned generation complete: {count_words(full_review)} words "
+        f"across {len(sections)} sections"
+    )
+    return full_review
 
 
 async def format_citations(
@@ -571,7 +867,8 @@ async def format_citations(
     )
 
     try:
-        response = await call_llm(prompt, model=model, temperature=0.1, max_tokens=2000, tracker=tracker, agent_name="synthesis")
+        citation_tokens = max(2000, len(papers_info) * 120)
+        response = await call_llm(prompt, model=model, temperature=0.1, max_tokens=citation_tokens, tracker=tracker, agent_name="synthesis")
         citations = [line.strip() for line in response.strip().split("\n") if line.strip()]
         return citations
 
@@ -721,37 +1018,28 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
                 tracker=tracker,
             )
 
-        # Step 4: Filter to cited papers and format citations
-        # Extract all cited authors (handles both [Author, Year] and [Author et al.] formats)
+        # Step 4: Format citations for ALL analyzed papers
+        # Always include all analyzed papers in references — the review should
+        # cite them all, and even if the LLM missed some or misspelled names,
+        # the reference list must be complete.
         from analysis.citation_grounding import (
             extract_inline_citations, extract_all_cited_authors,
             _parse_citation, _extract_last_names,
         )
         cited_authors = extract_all_cited_authors(review_text)
-        # Also extract years from year-bearing citations for stricter matching
-        cited_years = set()
-        for cit in extract_inline_citations(review_text):
-            parsed = _parse_citation(cit)
-            if parsed:
-                cited_years.add(parsed[1])
-
         if cited_authors:
-            cited_papers = []
+            cited_count = 0
             for p in analyzed_papers:
                 authors = p.get("authors", [])
                 if isinstance(authors, str):
                     authors = [authors]
                 last_names = _extract_last_names(authors)
                 if any(ln.lower() in cited_authors for ln in last_names):
-                    cited_papers.append(p)
-            if cited_papers:
-                logger.info(f"Filtered references: {len(cited_papers)} cited out of {len(analyzed_papers)} analyzed")
-            else:
-                cited_papers = analyzed_papers  # Fallback: keep all
-        else:
-            cited_papers = analyzed_papers
+                    cited_count += 1
+            logger.info(f"Citation check: {cited_count}/{len(analyzed_papers)} papers cited in review text")
 
-        citations = await format_citations(cited_papers, style="APA", model=model, tracker=tracker)
+        # Always format ALL analyzed papers as references
+        citations = await format_citations(analyzed_papers, style="APA", model=model, tracker=tracker)
 
         # Build synthesis output
         synthesis = SynthesisOutput(
@@ -761,7 +1049,7 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
             review_text=review_text,
             citations_formatted=citations,
             word_count=count_words(review_text),
-            papers_cited=len(cited_papers),
+            papers_cited=len(analyzed_papers),
         )
 
         # Step 5: Citation grounding check (Phase 9.5)
@@ -822,6 +1110,7 @@ __all__ = [
     "identify_themes",
     "analyze_gaps",
     "generate_review",
+    "generate_review_sectioned",
     "generate_graphrag_review",
     "format_citations",
     # GraphRAG integration helpers
