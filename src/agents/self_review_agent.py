@@ -232,9 +232,9 @@ async def self_review_agent(state: LitScribeState) -> Dict[str, Any]:
                     if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in cleaned_ids
                 ]
 
-        # Step 4c: Loop-back if quality is low and online search is available
+        # Step 4c: Loop-back if quality is below threshold and online search is available
         if (
-            assessment.get("overall_score", 1.0) < 0.6
+            assessment.get("overall_score", 1.0) < 0.7
             and assessment.get("needs_additional_search", False)
             and iteration_count < 8
         ):

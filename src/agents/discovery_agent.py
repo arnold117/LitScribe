@@ -810,6 +810,14 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
         else:
             expanded_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
 
+        # Step 1b: Append additional_queries from self-review loop-back (if any)
+        additional_queries = state.get("additional_queries", [])
+        if additional_queries:
+            new_queries = [q for q in additional_queries if q not in expanded_queries]
+            if new_queries:
+                expanded_queries.extend(new_queries)
+                logger.info(f"Added {len(new_queries)} additional queries from self-review loop-back")
+
         # Step 2: Search all sources (with caching if enabled, with domain filters)
         search_results = await search_all_sources(
             queries=expanded_queries,

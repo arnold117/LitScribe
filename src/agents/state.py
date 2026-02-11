@@ -312,6 +312,9 @@ class LitScribeState(TypedDict):
     # === LLM Configuration ===
     llm_config: Dict[str, Any]  # LLM settings passed to agents
 
+    # === Loop-back Support ===
+    additional_queries: List[str]  # Extra queries from self-review for next discovery round
+
     # === Ablation Flags (Phase 9.5) ===
     disable_self_review: bool  # Skip self-review agent
     disable_domain_filter: bool  # Skip domain filtering in discovery
@@ -399,6 +402,7 @@ def create_initial_state(
         language=language,
         domain_hint=research_plan.get("domain_hint") if research_plan else None,
         llm_config=llm_config,
+        additional_queries=[],
         disable_self_review=disable_self_review,
         disable_domain_filter=disable_domain_filter,
         disable_snowball=disable_snowball,

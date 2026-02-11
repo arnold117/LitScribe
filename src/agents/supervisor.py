@@ -163,21 +163,39 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
         "iteration_count": iteration + 1,
     }
 
-    # When looping back to discovery from self-review, clear downstream state
-    # so synthesis/graphrag/self-review re-run with the updated paper set
+    # When looping back to discovery from self-review, use incremental strategy:
+    # keep high-relevance papers, clear downstream, inject additional_queries
     self_review = state.get("self_review")
     if (
         next_agent == "discovery"
         and self_review is not None
         and state.get("synthesis") is not None
     ):
-        logger.info("Loop-back to discovery: clearing downstream state for fresh analysis")
+        analyzed = state.get("analyzed_papers", [])
+        keep = [p for p in analyzed if p.get("relevance_score", 0) >= 0.5]
+        keep_ids = {p.get("paper_id") for p in keep if p.get("paper_id")}
+
+        logger.info(
+            f"Incremental loop-back: keeping {len(keep)}/{len(analyzed)} "
+            f"high-relevance papers, clearing downstream state"
+        )
         updates["synthesis"] = None
         updates["self_review"] = None
         updates["knowledge_graph"] = None
-        updates["analyzed_papers"] = []
-        updates["papers_to_analyze"] = []
-        updates["parsed_documents"] = {}
+        updates["analyzed_papers"] = keep
+        updates["papers_to_analyze"] = [
+            p for p in state.get("papers_to_analyze", [])
+            if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in keep_ids
+        ]
+        updates["parsed_documents"] = {
+            k: v for k, v in state.get("parsed_documents", {}).items()
+            if k in keep_ids
+        }
+        # Inject additional_queries from self-review for discovery to consume
+        extra_queries = self_review.get("additional_queries", [])
+        if extra_queries:
+            logger.info(f"Injecting {len(extra_queries)} additional queries for discovery")
+            updates["additional_queries"] = extra_queries
 
     return updates
 
