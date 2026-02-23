@@ -532,11 +532,21 @@ def test_unified_search_uses_word_boundary():
 
 # === Test 12: Query expansion generates 8 queries ===
 
-def test_query_expansion_prompt_asks_for_8():
-    """QUERY_EXPANSION_PROMPT should request 8 queries (was 5)."""
+def test_query_expansion_prompt_structured():
+    """QUERY_EXPANSION_PROMPT should request structured 8 queries across dimensions."""
     from agents.prompts import QUERY_EXPANSION_PROMPT
-    assert "exactly 8 search queries" in QUERY_EXPANSION_PROMPT, \
+    assert "EXACTLY 8 search queries" in QUERY_EXPANSION_PROMPT, \
         "Should request exactly 8 queries"
+    assert "core_methodology" in QUERY_EXPANSION_PROMPT, \
+        "Should have core_methodology dimension"
+    assert "application_domain" in QUERY_EXPANSION_PROMPT, \
+        "Should have application_domain dimension"
+    assert "review_meta" in QUERY_EXPANSION_PROMPT, \
+        "Should have review_meta dimension"
+    assert "recent_advances" in QUERY_EXPANSION_PROMPT, \
+        "Should have recent_advances dimension"
+    assert "cross_disciplinary" in QUERY_EXPANSION_PROMPT, \
+        "Should have cross_disciplinary dimension"
 
 
 # === Test 13: Search query cap raised to 12 ===

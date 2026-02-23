@@ -41,6 +41,7 @@ async def search_pubmed(
     sort: str = "relevance",
     min_date: Optional[str] = None,
     max_date: Optional[str] = None,
+    article_types: Optional[List[str]] = None,
 ) -> dict:
     """
     Search PubMed for articles matching the query.
@@ -51,12 +52,18 @@ async def search_pubmed(
         sort: Sort order - "relevance" or "date" (default: relevance)
         min_date: Minimum publication date (YYYY/MM/DD or YYYY)
         max_date: Maximum publication date (YYYY/MM/DD or YYYY)
+        article_types: PubMed publication types to filter (e.g. ["Review", "Meta-Analysis"])
 
     Returns:
         Dictionary with total count and list of articles
     """
     max_results = min(max_results, 100)
     sort_order = "relevance" if sort == "relevance" else "pub_date"
+
+    # Append article type filter to query
+    if article_types:
+        type_filter = " OR ".join(f"{at}[pt]" for at in article_types)
+        query = f"({query}) AND ({type_filter})"
 
     # Build search parameters
     search_params = {

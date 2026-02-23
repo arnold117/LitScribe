@@ -371,6 +371,7 @@ TIER_CONFIG = {
         "snowball_seeds": 2,
         "snowball_cites_per_seed": 3,
         "max_per_source": 15,
+        "year_lookback": 5,
     },
     "standard": {
         "per_subtopic_search": True,
@@ -379,6 +380,7 @@ TIER_CONFIG = {
         "snowball_seeds": 3,
         "snowball_cites_per_seed": 5,
         "max_per_source": 15,
+        "year_lookback": 10,
     },
     "comprehensive": {
         "per_subtopic_search": True,
@@ -388,6 +390,7 @@ TIER_CONFIG = {
         "snowball_cites_per_seed": 7,
         "max_per_source": 25,
         "co_citation": True,
+        "year_lookback": None,
     },
 }
 

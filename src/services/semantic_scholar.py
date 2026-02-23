@@ -42,6 +42,7 @@ async def search_papers(
     year: Optional[str] = None,
     fields_of_study: Optional[List[str]] = None,
     open_access_only: bool = False,
+    min_citations: Optional[int] = None,
 ) -> dict:
     """
     Search for papers on Semantic Scholar.
@@ -52,16 +53,18 @@ async def search_papers(
         year: Filter by year or year range (e.g., "2020", "2020-2024")
         fields_of_study: Filter by fields (e.g., ["Computer Science", "Medicine"])
         open_access_only: Only return papers with open access PDFs
+        min_citations: Post-filter: only return papers with >= this many citations
 
     Returns:
         Dictionary with search results including papers and metadata
     """
-    limit = min(limit, 100)
+    # Fetch extra results when post-filtering by citations to compensate for removed papers
+    fetch_limit = min(limit * 2, 100) if min_citations else min(limit, 100)
 
     # Build query parameters
     params = {
         "query": query,
-        "limit": limit,
+        "limit": fetch_limit,
         "fields": "paperId,title,authors,year,citationCount,abstract,url,openAccessPdf,externalIds,venue,fieldsOfStudy,tldr",
     }
 
@@ -81,7 +84,13 @@ async def search_papers(
 
     papers = []
     for paper in result.get("data", []):
-        papers.append(_format_paper(paper))
+        formatted = _format_paper(paper)
+        # Post-filter by citation count
+        if min_citations and (formatted.get("citation_count") or 0) < min_citations:
+            continue
+        papers.append(formatted)
+        if len(papers) >= limit:
+            break
 
     return {
         "query": query,

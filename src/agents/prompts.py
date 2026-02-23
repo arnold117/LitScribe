@@ -8,31 +8,34 @@ Templates use Python format strings for variable substitution.
 # Discovery Agent Prompts
 # =============================================================================
 
-QUERY_EXPANSION_PROMPT = """You are an expert academic researcher. Given a research question, generate diverse search queries to find relevant academic literature.
+QUERY_EXPANSION_PROMPT = """You are an expert academic researcher. Given a research question, generate diverse search queries across DISTINCT dimensions to maximize literature coverage.
 
 Research Question: {research_question}
 Research Domain: {domain_hint}
 
-Generate exactly 8 search queries that:
-1. Rephrase the original question with precise academic terminology
-2. Focus on specific methodologies or techniques mentioned or implied
-3. Target application domains or use cases
-4. Use synonyms and related concepts from the field
-5. Include combinations of key concepts
-6. Explore cross-disciplinary angles within {domain_hint}
-7. Use alternative nomenclature or classification terms
-8. Target review/survey papers on the topic
-9. STAY WITHIN the research domain "{domain_hint}". Do NOT generate queries that would match papers from unrelated fields.
+Generate EXACTLY 8 search queries distributed across these 5 dimensions:
+
+1. Core Methodology (2 queries): Target specific methods, techniques, mechanisms, or algorithms central to the topic. Use precise technical terms.
+2. Application Domain (2 queries): Target real-world applications, use cases, or practical implementations. Include domain-specific terminology.
+3. Review & Meta-Analysis (1 query): Target existing reviews, surveys, systematic reviews, or meta-analyses on this topic.
+4. Recent Advances (1 query): Target cutting-edge, emerging, or state-of-the-art research from the last 2-3 years. Use terms like "novel", "recent", or specific new technique names.
+5. Cross-disciplinary (2 queries): Target related sub-fields, alternative nomenclature, or interdisciplinary angles within {domain_hint}.
 
 Requirements:
-- Each query should be 3-8 words, optimized for academic search engines
+- Each query: 3-8 words, optimized for academic search engines
 - Avoid overly generic terms that could match unrelated fields
-- Include field-specific terminology from {domain_hint}
-- Maximize diversity: each query should find DIFFERENT papers, not repeat the same results
-- IMPORTANT: All queries MUST be in English, even if the research question is in another language. Academic databases (arXiv, PubMed, Semantic Scholar) are English-based.
+- STAY WITHIN the research domain "{domain_hint}"
+- Maximize diversity: each query should find DIFFERENT papers
+- All queries MUST be in English, even if the research question is in another language
 
-Output as a JSON array of strings:
-["query1", "query2", "query3", "query4", "query5", "query6", "query7", "query8"]"""
+Output as a JSON object:
+{{
+  "core_methodology": ["query1", "query2"],
+  "application_domain": ["query3", "query4"],
+  "review_meta": ["query5"],
+  "recent_advances": ["query6"],
+  "cross_disciplinary": ["query7", "query8"]
+}}"""
 
 
 PAPER_SELECTION_PROMPT = """You are an expert at evaluating academic papers for literature reviews.

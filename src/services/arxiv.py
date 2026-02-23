@@ -64,6 +64,8 @@ async def search_papers(
     sort_by: str = "relevance",
     sort_order: str = "descending",
     category: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
 ) -> dict:
     """
     Search arXiv for papers matching the query.
@@ -74,6 +76,8 @@ async def search_papers(
         sort_by: Sort criterion - "relevance", "lastUpdatedDate", or "submittedDate"
         sort_order: Sort order - "ascending" or "descending"
         category: Filter by arXiv category (e.g., "cs.AI", "cs.CL", "stat.ML")
+        year_from: Filter papers submitted from this year (inclusive)
+        year_to: Filter papers submitted until this year (inclusive)
 
     Returns:
         Dictionary with search results
@@ -97,6 +101,12 @@ async def search_papers(
     # Build query with category filter
     if category:
         query = f"cat:{category} AND ({query})"
+
+    # Add date range filter via arXiv query syntax
+    if year_from or year_to:
+        date_from = f"{year_from}0101" if year_from else "190001"
+        date_to = f"{year_to}1231" if year_to else "20991231"
+        query = f"({query}) AND submittedDate:[{date_from} TO {date_to}]"
 
     loop = asyncio.get_event_loop()
 

@@ -46,16 +46,18 @@ async def expand_queries(
 ) -> List[str]:
     """Expand a research question into multiple search queries.
 
-    Uses LLM to generate diverse queries that cover different aspects
-    of the research topic, constrained to the detected domain.
+    Uses LLM to generate diverse queries across 5 structured dimensions
+    (methodology, application, review, recent, cross-disciplinary),
+    then deduplicates by cosine similarity.
 
     Args:
         research_question: The original research question
         model: LLM model to use (optional)
         domain_hint: Detected research domain for constraining queries
+        tracker: Optional TokenTracker
 
     Returns:
-        List of expanded search queries
+        List of expanded search queries (deduplicated)
     """
     prompt = QUERY_EXPANSION_PROMPT.format(
         research_question=research_question,
@@ -63,10 +65,26 @@ async def expand_queries(
     )
 
     try:
-        queries = await call_llm_for_json(prompt, model=model, temperature=0.4, max_tokens=500, tracker=tracker, agent_name="discovery")
+        result = await call_llm_for_json(prompt, model=model, temperature=0.4, max_tokens=500, tracker=tracker, agent_name="discovery")
 
-        if not isinstance(queries, list):
-            raise ValueError("Expected JSON array")
+        # Parse structured dict format (new) or flat list (legacy fallback)
+        if isinstance(result, dict):
+            queries = []
+            dimension_counts = {}
+            for dim_key in ["core_methodology", "application_domain", "review_meta", "recent_advances", "cross_disciplinary"]:
+                dim_queries = result.get(dim_key, [])
+                if isinstance(dim_queries, list):
+                    queries.extend(dim_queries)
+                    dimension_counts[dim_key] = len(dim_queries)
+                elif isinstance(dim_queries, str):
+                    queries.append(dim_queries)
+                    dimension_counts[dim_key] = 1
+            logger.info(f"Structured query expansion: {dimension_counts}")
+        elif isinstance(result, list):
+            queries = result
+            logger.info(f"Legacy flat query expansion: {len(queries)} queries")
+        else:
+            raise ValueError(f"Unexpected response type: {type(result)}")
 
         # Include original question as first query only if it's in English
         # (non-English queries perform poorly on English academic databases)
@@ -75,14 +93,19 @@ async def expand_queries(
             all_queries = [research_question] + queries
         else:
             all_queries = queries if queries else [research_question]
-        logger.info(f"Expanded '{research_question}' into {len(all_queries)} queries")
 
+        # Deduplicate near-identical queries by semantic similarity
+        try:
+            from embeddings.semantic_scorer import deduplicate_queries_by_similarity
+            all_queries = deduplicate_queries_by_similarity(all_queries, threshold=0.85)
+        except Exception as dedup_err:
+            logger.debug(f"Query dedup skipped: {dedup_err}")
+
+        logger.info(f"Expanded '{research_question}' into {len(all_queries)} queries (after dedup)")
         return all_queries
 
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse query expansion response: {e}")
-        # Fall back to original question and simple variations
-        # If non-English, use generic English terms from the question
         return [
             research_question,
             f"{research_question} review",
@@ -102,6 +125,11 @@ async def search_all_sources(
     s2_fields: Optional[List[str]] = None,
     pubmed_mesh: Optional[List[str]] = None,
     zotero_collection: Optional[str] = None,
+    research_question: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+    article_types: Optional[List[str]] = None,
+    min_citations: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Search multiple sources with multiple queries.
 
@@ -119,6 +147,11 @@ async def search_all_sources(
         s2_fields: Semantic Scholar field filters (e.g. ["Biology"])
         pubmed_mesh: PubMed MeSH term filters (e.g. ["Alkaloids"])
         zotero_collection: Zotero collection key to search (None = entire library)
+        research_question: Original research question for semantic scoring
+        year_from: Filter papers from this year (inclusive)
+        year_to: Filter papers until this year (inclusive)
+        article_types: PubMed publication type filter
+        min_citations: S2 min citation count filter
 
     Returns:
         Combined search results with deduplication
@@ -147,6 +180,11 @@ async def search_all_sources(
                     arxiv_categories=arxiv_categories,
                     s2_fields=s2_fields,
                     pubmed_mesh=pubmed_mesh,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
+                    article_types=article_types,
+                    min_citations=min_citations,
                 )
             else:
                 result = await unified_search(
@@ -154,6 +192,11 @@ async def search_all_sources(
                     sources=sources,
                     max_per_source=max_per_query,
                     deduplicate=True,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
+                    article_types=article_types,
+                    min_citations=min_citations,
                 )
             return {"success": True, "result": result, "query": query}
         except AgentError as e:
@@ -330,8 +373,22 @@ async def select_papers(
         return sorted_papers[:max_papers]
 
 
+def _has_cjk(text: str) -> bool:
+    """Check if text contains CJK characters."""
+    return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]', text))
+
+
+def _match_kw(keyword: str, text: str) -> bool:
+    """Match keyword in text, CJK-aware (substring for CJK, word-boundary for Latin)."""
+    if _has_cjk(keyword):
+        return keyword in text
+    return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text))
+
+
 def _paper_matches_keywords(paper: Dict[str, Any], keywords: List[str], min_matches: int = 2) -> bool:
     """Check if a paper's title/abstract contains enough keywords from the research question.
+
+    Supports both English (word-boundary) and CJK (substring) matching.
 
     Args:
         paper: Paper dict with title and abstract
@@ -342,24 +399,30 @@ def _paper_matches_keywords(paper: Dict[str, Any], keywords: List[str], min_matc
         True if paper matches enough keywords
     """
     text = ((paper.get("title") or "") + " " + (paper.get("abstract") or "")).lower()
-    matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw.lower()) + r'\b', text))
+    matches = sum(1 for kw in keywords if _match_kw(kw.lower(), text))
     return matches >= min_matches
 
 
 def _extract_keywords(research_question: str) -> List[str]:
-    """Extract meaningful keywords from research question (skip stopwords)."""
-    stopwords = {
-        "the", "a", "an", "in", "on", "of", "for", "and", "or", "to", "is",
-        "are", "was", "were", "what", "how", "which", "that", "this", "with",
-        "from", "by", "at", "its", "their", "have", "has", "been", "be",
-        "do", "does", "did", "will", "can", "could", "would", "should",
-        "about", "into", "through", "during", "before", "after", "between",
-        "latest", "recent", "advances", "methods", "approaches", "review",
-        "survey", "applications", "based",
-    }
+    """Extract meaningful keywords from research question (skip stopwords).
+
+    Supports CJK: extracts character n-grams for Chinese/Japanese/Korean text.
+    """
+    if _has_cjk(research_question):
+        # CJK path: use jieba segmentation from unified_search
+        from aggregators.unified_search import _extract_cjk_keywords
+        keywords = _extract_cjk_keywords(research_question)
+        # Also extract any English words mixed in
+        from aggregators.unified_search import ACADEMIC_STOPWORDS_EN
+        en_words = re.findall(r'[a-zA-Z]{3,}', research_question.lower())
+        keywords.extend(w for w in en_words if w not in ACADEMIC_STOPWORDS_EN)
+        return keywords
+
+    # English path
+    from aggregators.unified_search import ACADEMIC_STOPWORDS_EN
     words = research_question.lower().split()
     # Keep words >= 3 chars that aren't stopwords
-    return [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in stopwords]
+    return [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in ACADEMIC_STOPWORDS_EN]
 
 
 def _extract_queries_from_papers(
@@ -386,17 +449,8 @@ def _extract_queries_from_papers(
     # Existing keywords from the question (to avoid duplicating)
     question_keywords = set(_extract_keywords(research_question))
 
-    stopwords = {
-        "the", "a", "an", "in", "on", "of", "for", "and", "or", "to", "is",
-        "are", "was", "were", "what", "how", "which", "that", "this", "with",
-        "from", "by", "at", "its", "their", "have", "has", "been", "be",
-        "do", "does", "did", "will", "can", "could", "would", "should",
-        "about", "into", "through", "during", "before", "after", "between",
-        "using", "based", "novel", "new", "study", "analysis", "paper",
-        "research", "results", "method", "approach", "review", "effect",
-        "effects", "role", "via", "two", "one", "high", "low", "different",
-        "specific", "related", "associated", "potential", "used", "use",
-    }
+    from aggregators.unified_search import ACADEMIC_STOPWORDS_EN
+    stopwords = ACADEMIC_STOPWORDS_EN
 
     # Count terms from titles and keywords of top papers
     term_counter = Counter()
@@ -428,15 +482,85 @@ def _extract_queries_from_papers(
 
     # Build queries by combining question keywords with novel terms
     queries = []
-    q_kw_list = list(question_keywords)[:3]  # Top question keywords
-    q_base = " ".join(q_kw_list) if q_kw_list else research_question[:50]
+    # For CJK research questions, use English terms from paper titles as base
+    # (CJK tokens would pollute English-only search APIs)
+    if _has_cjk(research_question):
+        en_q_terms = [t for t in question_keywords if not _has_cjk(t)]
+        if not en_q_terms:
+            # Fall back to top frequent English terms from papers
+            en_q_terms = [t for t in frequent_terms[:3] if not _has_cjk(t)]
+        q_base = " ".join(en_q_terms[:3]) if en_q_terms else ""
+    else:
+        q_kw_list = list(question_keywords)[:3]
+        q_base = " ".join(q_kw_list) if q_kw_list else research_question[:50]
 
     for term in frequent_terms[:max_queries]:
-        query = f"{q_base} {term}"
-        queries.append(query)
+        if _has_cjk(term):
+            continue  # Skip CJK terms for English search APIs
+        query = f"{q_base} {term}".strip()
+        if query:
+            queries.append(query)
 
     logger.info(f"Paper keyword extraction: {len(queries)} additional queries from {len(frequent_terms)} novel terms")
     return queries
+
+
+def _composite_seed_score(paper: Dict[str, Any], current_year: int = 2026) -> float:
+    """Compute a composite score for seed selection in snowball sampling.
+
+    Blends relevance, recency, and citation impact instead of
+    relying solely on citation count.
+
+    Score = 0.5 * relevance + 0.3 * recency + 0.2 * citation_normalized
+    """
+    import math
+    relevance = paper.get("relevance_score", 0.5)
+    year = paper.get("year") or 0
+    age = max(0, current_year - year) if year else 10
+    recency = max(0.0, 1.0 - age * 0.1)
+    citations = paper.get("citations", 0) or paper.get("citationCount", 0) or paper.get("citation_count", 0) or 0
+    citation_norm = min(1.0, math.log1p(citations) / math.log1p(500))
+    return 0.5 * relevance + 0.3 * recency + 0.2 * citation_norm
+
+
+def _snowball_paper_is_relevant(
+    paper: Dict[str, Any],
+    research_question: str,
+    keywords: List[str],
+    min_matches: int,
+    semantic_threshold: float = 0.35,
+) -> bool:
+    """Check if a snowball-discovered paper is relevant.
+
+    Uses semantic similarity when abstract is available,
+    falls back to keyword matching otherwise.
+    """
+    title = (paper.get("title") or "").strip()
+    abstract = (paper.get("abstract") or "").strip()
+
+    # Try semantic scoring if abstract is meaningful
+    if abstract and len(abstract) > 30:
+        try:
+            from embeddings.semantic_scorer import (
+                compute_query_embedding,
+                compute_paper_embeddings_batch,
+            )
+            import numpy as np
+
+            query_emb = compute_query_embedding(research_question)
+            text = f"{title}. {abstract[:500]}"
+            paper_emb = compute_paper_embeddings_batch([text])
+            if paper_emb.size > 0:
+                sim = float(np.dot(paper_emb[0], query_emb))
+                return sim >= semantic_threshold
+        except Exception:
+            pass
+
+    # Fallback: keyword matching
+    if keywords:
+        return _paper_matches_keywords(paper, keywords, min_matches=min_matches)
+
+    return True  # No filter available, accept
 
 
 async def snowball_sampling(
@@ -475,7 +599,7 @@ async def snowball_sampling(
 
     current_seeds = sorted(
         seed_papers,
-        key=lambda x: x.get("citations", 0) or 0,
+        key=lambda x: _composite_seed_score(x),
         reverse=True,
     )[:5]
 
@@ -494,7 +618,9 @@ async def snowball_sampling(
                     for cited_paper in (citations_result or {}).get("citations", [])[:7]:
                         cited_id = cited_paper.get("paper_id") or cited_paper.get("paperId")
                         if cited_id and cited_id not in seen_ids:
-                            if keywords and not _paper_matches_keywords(cited_paper, keywords, min_matches=snowball_min_matches):
+                            if not _snowball_paper_is_relevant(
+                                cited_paper, research_question, keywords, snowball_min_matches,
+                            ):
                                 continue
                             seen_ids.add(cited_id)
                             round_papers.append(cited_paper)
@@ -505,7 +631,9 @@ async def snowball_sampling(
                     for ref_paper in (refs_result or {}).get("references", [])[:7]:
                         ref_id = ref_paper.get("paper_id") or ref_paper.get("paperId")
                         if ref_id and ref_id not in seen_ids:
-                            if keywords and not _paper_matches_keywords(ref_paper, keywords, min_matches=snowball_min_matches):
+                            if not _snowball_paper_is_relevant(
+                                ref_paper, research_question, keywords, snowball_min_matches,
+                            ):
                                 continue
                             seen_ids.add(ref_id)
                             round_papers.append(ref_paper)
@@ -532,11 +660,11 @@ async def snowball_sampling(
         if len(additional_papers) >= max_additional:
             break
 
-        # Prepare seeds for next round: best papers from this round
+        # Prepare seeds for next round: best papers from this round (composite score)
         if round_papers:
             current_seeds = sorted(
                 round_papers,
-                key=lambda x: x.get("citations", 0) or x.get("citationCount", 0) or 0,
+                key=lambda x: _composite_seed_score(x),
                 reverse=True,
             )[:3]
         else:
@@ -696,6 +824,16 @@ async def screen_papers_by_abstract(
     else:
         logger.info(f"Abstract screening: all {len(papers)} papers passed")
 
+    # Circuit breaker: if screening removed ALL papers, keep top-N by relevance_score
+    if len(relevant_papers) == 0 and len(papers) > 0:
+        min_keep = min(6, len(papers))
+        fallback = sorted(papers, key=lambda p: p.get("relevance_score", 0) or 0, reverse=True)[:min_keep]
+        logger.warning(
+            f"Abstract screening circuit breaker: keeping top {len(fallback)} papers by relevance "
+            f"(screening removed all {len(papers)})"
+        )
+        return fallback
+
     return relevant_papers
 
 
@@ -789,7 +927,13 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
         max_per_src = tier_cfg.get("max_per_source", 15)
         max_q_per_topic = tier_cfg.get("max_queries_per_topic", 3)
 
-        logger.info(f"Discovery using tier '{review_tier}': per_subtopic={use_per_subtopic}, max_per_source={max_per_src}")
+        # Compute year range from tier config
+        from datetime import datetime as _dt
+        year_lookback = tier_cfg.get("year_lookback")
+        year_from = (_dt.now().year - year_lookback) if year_lookback else None
+        year_to = _dt.now().year if year_lookback else None
+
+        logger.info(f"Discovery using tier '{review_tier}': per_subtopic={use_per_subtopic}, max_per_source={max_per_src}, year_range={year_from}-{year_to}")
 
         # Detect loop-back round: additional_queries present AND we already have papers
         additional_queries = state.get("additional_queries", [])
@@ -840,6 +984,9 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     s2_fields=s2_fields,
                     pubmed_mesh=pubmed_mesh,
                     zotero_collection=zotero_collection,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
                 )
 
                 if topic_results.get("errors"):
@@ -873,6 +1020,9 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     s2_fields=s2_fields,
                     pubmed_mesh=pubmed_mesh,
                     zotero_collection=zotero_collection,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
                 )
                 for p in llm_results.get("papers", []):
                     pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
@@ -920,6 +1070,9 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 s2_fields=s2_fields,
                 pubmed_mesh=pubmed_mesh,
                 zotero_collection=zotero_collection,
+                research_question=research_question,
+                year_from=year_from,
+                year_to=year_to,
             )
 
             if search_results.get("errors"):
@@ -944,6 +1097,9 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     s2_fields=s2_fields,
                     pubmed_mesh=pubmed_mesh,
                     zotero_collection=zotero_collection,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
                 )
                 existing_ids_set = {p.get("paper_id") or p.get("arxiv_id") or p.get("doi") for p in papers}
                 for p in extra_results.get("papers", []):
@@ -985,6 +1141,9 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     s2_fields=s2_fields,
                     pubmed_mesh=pubmed_mesh,
                     zotero_collection=zotero_collection,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
                 )
                 round2_papers = round2_results.get("papers", [])
                 if round2_papers:

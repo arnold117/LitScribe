@@ -43,6 +43,11 @@ async def unified_search(
     arxiv_categories: Optional[List[str]] = None,
     s2_fields: Optional[List[str]] = None,
     pubmed_mesh: Optional[List[str]] = None,
+    research_question: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+    article_types: Optional[List[str]] = None,
+    min_citations: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Search multiple academic sources and return deduplicated results.
 
@@ -55,6 +60,11 @@ async def unified_search(
         arxiv_categories: arXiv category filters
         s2_fields: Semantic Scholar field filters
         pubmed_mesh: PubMed MeSH term filters
+        research_question: Original research question for semantic scoring
+        year_from: Filter papers from this year (inclusive)
+        year_to: Filter papers until this year (inclusive)
+        article_types: PubMed publication type filter
+        min_citations: S2 min citation count filter
 
     Returns:
         Dictionary with papers, source_counts, and metadata
@@ -73,6 +83,11 @@ async def unified_search(
             arxiv_categories=arxiv_categories,
             s2_fields=s2_fields,
             pubmed_mesh=pubmed_mesh,
+            research_question=research_question,
+            year_from=year_from,
+            year_to=year_to,
+            article_types=article_types,
+            min_citations=min_citations,
         )
     except Exception as e:
         if "rate limit" in str(e).lower():

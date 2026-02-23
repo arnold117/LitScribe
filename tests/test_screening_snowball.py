@@ -141,6 +141,26 @@ def test_snowball_multi_round_logic():
     assert "current_seeds = sorted" in code
 
 
+# === Test 12: snowball uses composite seed score ===
+
+def test_snowball_uses_composite_seed_score():
+    """snowball_sampling should use _composite_seed_score for seed selection."""
+    source = Path(__file__).parent.parent / "src" / "agents" / "discovery_agent.py"
+    code = source.read_text()
+    assert "_composite_seed_score" in code, \
+        "Should use composite seed score instead of pure citation count"
+
+
+# === Test 13: snowball uses semantic filtering ===
+
+def test_snowball_uses_semantic_filtering():
+    """snowball_sampling should use _snowball_paper_is_relevant for filtering."""
+    source = Path(__file__).parent.parent / "src" / "agents" / "discovery_agent.py"
+    code = source.read_text()
+    assert "_snowball_paper_is_relevant" in code, \
+        "Should use semantic-aware relevance filtering"
+
+
 # === Entrypoint ===
 
 async def main():

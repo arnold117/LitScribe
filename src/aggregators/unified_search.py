@@ -11,8 +11,20 @@ from typing import Any, Dict, List, Optional
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+
 from aggregators.deduplicator import deduplicate_papers, rank_papers
 from models.unified_paper import UnifiedPaper
+
+# Shared English stopwords: sklearn's 318 words + academic domain terms
+ACADEMIC_STOPWORDS_EN: set = ENGLISH_STOP_WORDS | {
+    "latest", "recent", "advances", "methods", "approaches", "review",
+    "survey", "applications", "based", "using", "novel", "new", "study",
+    "analysis", "paper", "research", "results", "method", "approach",
+    "effect", "effects", "role", "via", "two", "one", "high", "low",
+    "different", "specific", "related", "associated", "potential", "used",
+    "use",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -135,28 +147,77 @@ def _semantic_scholar_to_unified(paper_dict: dict) -> UnifiedPaper:
     )
 
 
+def _has_cjk(text: str) -> bool:
+    """Check if text contains CJK (Chinese/Japanese/Korean) characters."""
+    return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]', text))
+
+
+def _extract_cjk_keywords(text: str) -> List[str]:
+    """Extract CJK keyword tokens from text using jieba segmentation.
+
+    Uses jieba for proper Chinese word segmentation, filters stopwords
+    and single-character tokens.
+    """
+    cjk_stopwords = {
+        "的", "了", "在", "是", "和", "与", "或", "及", "对", "从",
+        "到", "为", "被", "把", "上", "下", "中", "等", "其", "这",
+        "那", "有", "无", "不", "也", "都", "很", "更", "最", "可",
+        "能", "会", "将", "所", "以", "之", "而", "但", "如", "若",
+        "则", "已", "因", "于", "用", "并", "个", "各", "些", "种",
+        "类", "进行", "研究", "分析", "方法", "基于", "通过", "关于",
+        "综述", "探讨", "概述", "最新", "相关",
+    }
+    import jieba
+    # Cut in search mode for finer granularity (e.g. "生物合成" → "生物", "合成", "生物合成")
+    tokens = jieba.lcut_for_search(text)
+
+    # Filter: keep tokens ≥2 chars, skip stopwords
+    keywords = [t for t in tokens if len(t) >= 2 and t not in cjk_stopwords]
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique = []
+    for kw in keywords:
+        if kw not in seen:
+            seen.add(kw)
+            unique.append(kw)
+    return unique
+
+
+def _match_keyword(keyword: str, text: str) -> bool:
+    """Match a keyword against text, CJK-aware.
+
+    CJK keywords use substring matching (no word boundaries in CJK).
+    Latin keywords use word-boundary regex matching.
+    """
+    if _has_cjk(keyword):
+        return keyword in text
+    return bool(re.search(r'\b' + re.escape(keyword) + r'\b', text))
+
+
 def _compute_keyword_relevance(papers: List["UnifiedPaper"], research_question: str) -> None:
     """Compute keyword-based relevance scores for papers.
 
     Replaces positional scoring with semantic keyword matching.
     Score breakdown: title match=0.4, abstract match=0.4, keyword match=0.2.
+    Supports both English (word-boundary) and CJK (substring) matching.
 
     Args:
         papers: List of UnifiedPaper objects (modified in place)
         research_question: The original research question
     """
-    # Extract meaningful keywords from research question
-    stopwords = {
-        "the", "a", "an", "in", "on", "of", "for", "and", "or", "to", "is",
-        "are", "was", "were", "what", "how", "which", "that", "this", "with",
-        "from", "by", "at", "its", "their", "have", "has", "been", "be",
-        "do", "does", "did", "will", "can", "could", "would", "should",
-        "about", "into", "through", "during", "before", "after", "between",
-        "latest", "recent", "advances", "methods", "approaches", "review",
-        "survey", "applications", "based",
-    }
-    words = research_question.lower().split()
-    keywords = [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in stopwords]
+    is_cjk = _has_cjk(research_question)
+
+    if is_cjk:
+        # CJK path: character n-gram extraction
+        keywords = _extract_cjk_keywords(research_question)
+        # Also extract any English keywords mixed in
+        en_words = re.findall(r'[a-zA-Z]{3,}', research_question.lower())
+        keywords.extend(w for w in en_words if w not in ACADEMIC_STOPWORDS_EN)
+    else:
+        # English path: word-level extraction
+        words = research_question.lower().split()
+        keywords = [w.strip("?.,!\"'()") for w in words if len(w) >= 3 and w.lower() not in ACADEMIC_STOPWORDS_EN]
 
     if not keywords:
         # Fallback: give all papers a neutral score
@@ -169,10 +230,10 @@ def _compute_keyword_relevance(papers: List["UnifiedPaper"], research_question: 
         abstract = (paper.abstract or "").lower()
         paper_keywords = " ".join(getattr(paper, "keywords", None) or []).lower()
 
-        # Calculate match ratios (word-boundary matching to avoid substring false positives)
-        title_matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', title))
-        abstract_matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', abstract))
-        keyword_matches = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', paper_keywords))
+        # Calculate match ratios (CJK-aware matching)
+        title_matches = sum(1 for kw in keywords if _match_keyword(kw, title))
+        abstract_matches = sum(1 for kw in keywords if _match_keyword(kw, abstract))
+        keyword_matches = sum(1 for kw in keywords if _match_keyword(kw, paper_keywords))
 
         n = len(keywords)
         title_score = min(title_matches / n, 1.0) * 0.4
@@ -234,6 +295,8 @@ class UnifiedSearchAggregator:
         query: str,
         max_results: int = 20,
         category: Optional[str] = None,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
     ) -> List[UnifiedPaper]:
         """Search arXiv and return unified papers.
 
@@ -241,6 +304,8 @@ class UnifiedSearchAggregator:
             query: Search query
             max_results: Max results
             category: arXiv category filter (e.g. "q-bio.BM")
+            year_from: Filter papers from this year (inclusive)
+            year_to: Filter papers until this year (inclusive)
         """
         await self._lazy_init()
 
@@ -252,6 +317,7 @@ class UnifiedSearchAggregator:
             async with _arxiv_semaphore:
                 result = await self._arxiv_search(
                     query=query, max_results=max_results, category=category,
+                    year_from=year_from, year_to=year_to,
                 )
             papers = result.get("papers", [])
             return [_arxiv_to_unified(p) for p in papers]
@@ -264,6 +330,9 @@ class UnifiedSearchAggregator:
         query: str,
         max_results: int = 20,
         mesh_terms: Optional[List[str]] = None,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        article_types: Optional[List[str]] = None,
     ) -> List[UnifiedPaper]:
         """Search PubMed and return unified papers.
 
@@ -271,6 +340,9 @@ class UnifiedSearchAggregator:
             query: Search query
             max_results: Max results
             mesh_terms: MeSH terms to append to query for domain filtering
+            year_from: Filter papers from this year (inclusive)
+            year_to: Filter papers until this year (inclusive)
+            article_types: PubMed publication type filter (e.g. ["Review"])
         """
         await self._lazy_init()
 
@@ -290,7 +362,15 @@ class UnifiedSearchAggregator:
                     mesh_filter = " OR ".join(f"{m}[MeSH]" for m in mesh_terms[:3])
                 filtered_query = f"({query}) AND ({mesh_filter})"
 
-            result = await self._pubmed_search(query=filtered_query, max_results=max_results)
+            # Build date params
+            min_date = str(year_from) if year_from else None
+            max_date = str(year_to) if year_to else None
+
+            result = await self._pubmed_search(
+                query=filtered_query, max_results=max_results,
+                min_date=min_date, max_date=max_date,
+                article_types=article_types,
+            )
             articles = result.get("articles", [])
             return [_pubmed_to_unified(a) for a in articles]
         except Exception as e:
@@ -321,6 +401,9 @@ class UnifiedSearchAggregator:
         query: str,
         max_results: int = 20,
         fields_of_study: Optional[List[str]] = None,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        min_citations: Optional[int] = None,
     ) -> List[UnifiedPaper]:
         """Search Semantic Scholar and return unified papers.
 
@@ -328,6 +411,9 @@ class UnifiedSearchAggregator:
             query: Search query
             max_results: Max results
             fields_of_study: Field of study filter (e.g. ["Biology"])
+            year_from: Filter papers from this year (inclusive)
+            year_to: Filter papers until this year (inclusive)
+            min_citations: Only return papers with >= this many citations
         """
         await self._lazy_init()
 
@@ -335,8 +421,18 @@ class UnifiedSearchAggregator:
             return []
 
         try:
+            # Build year range string for S2 API (e.g. "2020-2026")
+            year_str = None
+            if year_from and year_to:
+                year_str = f"{year_from}-{year_to}"
+            elif year_from:
+                year_str = f"{year_from}-"
+            elif year_to:
+                year_str = f"-{year_to}"
+
             result = await self._semantic_scholar_search(
                 query=query, limit=max_results, fields_of_study=fields_of_study,
+                year=year_str, min_citations=min_citations,
             )
             papers = result.get("papers", [])
             return [_semantic_scholar_to_unified(p) for p in papers]
@@ -354,6 +450,11 @@ class UnifiedSearchAggregator:
         arxiv_categories: Optional[List[str]] = None,
         s2_fields: Optional[List[str]] = None,
         pubmed_mesh: Optional[List[str]] = None,
+        research_question: Optional[str] = None,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        article_types: Optional[List[str]] = None,
+        min_citations: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Search all specified sources and return unified, deduplicated results.
@@ -368,6 +469,11 @@ class UnifiedSearchAggregator:
             arxiv_categories: arXiv category filters (e.g. ["q-bio.BM"])
             s2_fields: Semantic Scholar field filters (e.g. ["Biology"])
             pubmed_mesh: PubMed MeSH term filters (e.g. ["Alkaloids"])
+            research_question: Original research question for semantic scoring
+            year_from: Filter papers from this year (inclusive)
+            year_to: Filter papers until this year (inclusive)
+            article_types: PubMed publication type filter (e.g. ["Review"])
+            min_citations: S2 min citation count filter
 
         Returns:
             Dictionary with search results and metadata
@@ -384,11 +490,18 @@ class UnifiedSearchAggregator:
         if "arxiv" in sources:
             # Use first arXiv category as filter (API supports single category)
             category = arxiv_categories[0] if arxiv_categories else None
-            tasks.append(self.search_arxiv(query, max_per_source, category=category))
+            tasks.append(self.search_arxiv(
+                query, max_per_source, category=category,
+                year_from=year_from, year_to=year_to,
+            ))
             source_names.append("arxiv")
 
         if "pubmed" in sources:
-            tasks.append(self.search_pubmed(query, max_per_source, mesh_terms=pubmed_mesh))
+            tasks.append(self.search_pubmed(
+                query, max_per_source, mesh_terms=pubmed_mesh,
+                year_from=year_from, year_to=year_to,
+                article_types=article_types,
+            ))
             source_names.append("pubmed")
 
         if "zotero" in sources:
@@ -398,6 +511,8 @@ class UnifiedSearchAggregator:
         if "semantic_scholar" in sources:
             tasks.append(self.search_semantic_scholar(
                 query, max_per_source, fields_of_study=s2_fields,
+                year_from=year_from, year_to=year_to,
+                min_citations=min_citations,
             ))
             source_names.append("semantic_scholar")
 
@@ -431,8 +546,15 @@ class UnifiedSearchAggregator:
                 all_papers.extend(result)
                 logger.info(f"{source_name}: {len(result)} papers found")
 
-        # Compute keyword-based relevance scores instead of positional
-        _compute_keyword_relevance(all_papers, query)
+        # Compute relevance scores: semantic (embedding) with keyword fallback
+        _score_text = research_question or query
+        try:
+            from embeddings.semantic_scorer import compute_semantic_relevance
+
+            compute_semantic_relevance(all_papers, _score_text)
+        except Exception as _sem_err:
+            logger.debug(f"Semantic scoring unavailable, using keyword: {_sem_err}")
+            _compute_keyword_relevance(all_papers, _score_text)
         for paper in all_papers:
             paper.calculate_completeness_score()
 
@@ -463,6 +585,11 @@ async def search_all_sources(
     arxiv_categories: Optional[List[str]] = None,
     s2_fields: Optional[List[str]] = None,
     pubmed_mesh: Optional[List[str]] = None,
+    research_question: Optional[str] = None,
+    year_from: Optional[int] = None,
+    year_to: Optional[int] = None,
+    article_types: Optional[List[str]] = None,
+    min_citations: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Convenience function to search all sources.
@@ -476,6 +603,11 @@ async def search_all_sources(
         arxiv_categories: arXiv category filters
         s2_fields: Semantic Scholar field filters
         pubmed_mesh: PubMed MeSH term filters
+        research_question: Original research question for semantic relevance scoring
+        year_from: Filter papers from this year (inclusive)
+        year_to: Filter papers until this year (inclusive)
+        article_types: PubMed publication type filter
+        min_citations: S2 min citation count filter
 
     Returns:
         Dictionary with search results
@@ -490,6 +622,11 @@ async def search_all_sources(
         arxiv_categories=arxiv_categories,
         s2_fields=s2_fields,
         pubmed_mesh=pubmed_mesh,
+        research_question=research_question,
+        year_from=year_from,
+        year_to=year_to,
+        article_types=article_types,
+        min_citations=min_citations,
     )
 
 
