@@ -169,7 +169,7 @@ async def cmd_search(args) -> int:
     from aggregators.unified_search import search_all_sources
 
     out = get_output("litscribe.search")
-    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar", "pubmed"]
+    sources = args.sources.split(",")
 
     out.header(f"Searching: '{args.query}'")
     out.stat("Sources", sources)
@@ -373,7 +373,7 @@ async def cmd_review(args) -> int:
 
     research_question = args.question
     max_papers = min(args.papers, 500)  # Cap at 500
-    sources = args.sources.split(",") if args.sources else ["arxiv", "semantic_scholar", "pubmed"]
+    sources = args.sources.split(",")
     review_type = args.type
 
     # Determine review tier from max_papers
@@ -991,7 +991,7 @@ async def cmd_demo(args) -> int:
     try:
         result = await search_all_sources(
             query=query,
-            sources=["arxiv", "semantic_scholar", "pubmed"],
+            sources=["arxiv", "semantic_scholar", "pubmed", "openalex"],
             max_per_source=5,
             deduplicate=True,
             sort_by="citations",
@@ -1114,8 +1114,8 @@ Examples:
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument(
         "--sources", "-s",
-        default="arxiv,semantic_scholar,pubmed",
-        help="Comma-separated sources: arxiv,pubmed,semantic_scholar,zotero (default: arxiv,semantic_scholar,pubmed)",
+        default="arxiv,semantic_scholar,pubmed,openalex",
+        help="Comma-separated sources: arxiv,pubmed,semantic_scholar,openalex,zotero (default: all)",
     )
     search_parser.add_argument(
         "--limit", "-l",
@@ -1210,8 +1210,8 @@ Examples:
     )
     review_parser.add_argument(
         "--sources", "-s",
-        default="arxiv,semantic_scholar,pubmed",
-        help="Comma-separated sources: arxiv,pubmed,semantic_scholar (default: arxiv,semantic_scholar,pubmed). Zotero is always searched automatically if configured.",
+        default="arxiv,semantic_scholar,pubmed,openalex",
+        help="Comma-separated sources: arxiv,pubmed,semantic_scholar,openalex (default: all). Zotero is always searched automatically if configured.",
     )
     review_parser.add_argument(
         "--type", "-t",

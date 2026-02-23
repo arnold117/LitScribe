@@ -70,7 +70,7 @@ async def unified_search(
         Dictionary with papers, source_counts, and metadata
     """
     if sources is None:
-        sources = ["arxiv", "semantic_scholar", "pubmed"]
+        sources = ["arxiv", "semantic_scholar", "pubmed", "openalex"]
 
     try:
         from aggregators.unified_search import search_all_sources

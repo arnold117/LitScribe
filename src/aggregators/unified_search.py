@@ -147,6 +147,24 @@ def _semantic_scholar_to_unified(paper_dict: dict) -> UnifiedPaper:
     )
 
 
+def _openalex_to_unified(paper_dict: dict) -> UnifiedPaper:
+    """Convert OpenAlex paper dict to UnifiedPaper."""
+    return UnifiedPaper(
+        title=paper_dict.get("title") or "",
+        authors=paper_dict.get("authors") or [],
+        abstract=paper_dict.get("abstract") or "",
+        year=paper_dict.get("year") or 0,
+        sources={"openalex": paper_dict.get("paper_id") or ""},
+        venue=paper_dict.get("venue") or "",
+        citations=paper_dict.get("citation_count") or 0,
+        pdf_urls=[paper_dict["pdf_url"]] if paper_dict.get("pdf_url") else [],
+        doi=paper_dict.get("doi"),
+        pmid=paper_dict.get("pmid"),
+        keywords=paper_dict.get("fields_of_study") or [],
+        url=paper_dict.get("url"),
+    )
+
+
 def _has_cjk(text: str) -> bool:
     """Check if text contains CJK (Chinese/Japanese/Korean) characters."""
     return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]', text))
@@ -256,6 +274,7 @@ class UnifiedSearchAggregator:
         self._pubmed_search = None
         self._zotero_search = None
         self._semantic_scholar_search = None
+        self._openalex_search = None
         self._initialized = False
 
     async def _lazy_init(self):
@@ -287,6 +306,12 @@ class UnifiedSearchAggregator:
             self._semantic_scholar_search = semantic_scholar_search
         except ImportError:
             logger.warning("Semantic Scholar service not available")
+
+        try:
+            from services.openalex import search_papers as openalex_search
+            self._openalex_search = openalex_search
+        except ImportError:
+            logger.warning("OpenAlex service not available")
 
         self._initialized = True
 
@@ -440,6 +465,32 @@ class UnifiedSearchAggregator:
             logger.error(f"Semantic Scholar search error: {e}")
             return []
 
+    async def search_openalex(
+        self,
+        query: str,
+        max_results: int = 20,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        min_citations: Optional[int] = None,
+    ) -> List[UnifiedPaper]:
+        """Search OpenAlex and return unified papers."""
+        await self._lazy_init()
+
+        if not self._openalex_search:
+            return []
+
+        try:
+            result = await self._openalex_search(
+                query=query, max_results=max_results,
+                year_from=year_from, year_to=year_to,
+                min_citations=min_citations,
+            )
+            papers = result.get("papers", [])
+            return [_openalex_to_unified(p) for p in papers]
+        except Exception as e:
+            logger.error(f"OpenAlex search error: {e}")
+            return []
+
     async def search_all(
         self,
         query: str,
@@ -479,7 +530,7 @@ class UnifiedSearchAggregator:
             Dictionary with search results and metadata
         """
         if sources is None:
-            sources = ["arxiv", "semantic_scholar", "pubmed"]
+            sources = ["arxiv", "semantic_scholar", "pubmed", "openalex"]
 
         await self._lazy_init()
 
@@ -516,6 +567,14 @@ class UnifiedSearchAggregator:
             ))
             source_names.append("semantic_scholar")
 
+        if "openalex" in sources:
+            tasks.append(self.search_openalex(
+                query, max_per_source,
+                year_from=year_from, year_to=year_to,
+                min_citations=min_citations,
+            ))
+            source_names.append("openalex")
+
         # Execute searches in parallel with per-source timeout
         # Prevents one slow source (e.g. arXiv retrying) from blocking all results
         async def _with_timeout(coro, source_name, timeout=45):
@@ -545,6 +604,49 @@ class UnifiedSearchAggregator:
                 source_counts[source_name] = len(result)
                 all_papers.extend(result)
                 logger.info(f"{source_name}: {len(result)} papers found")
+
+        # Filter relaxation: retry without domain filters when a source returns 0
+        retry_tasks = []
+        retry_names = []
+        arxiv_had_filter = arxiv_categories and "arxiv" in sources
+        s2_had_filter = s2_fields and "semantic_scholar" in sources
+        pubmed_had_filter = pubmed_mesh and "pubmed" in sources
+
+        if arxiv_had_filter and source_counts.get("arxiv", 0) == 0:
+            logger.info("arxiv: 0 results with category filter, retrying without filter")
+            retry_tasks.append(self.search_arxiv(
+                query, max_per_source, category=None,
+                year_from=year_from, year_to=year_to,
+            ))
+            retry_names.append("arxiv")
+
+        if s2_had_filter and source_counts.get("semantic_scholar", 0) == 0:
+            logger.info("semantic_scholar: 0 results with field filter, retrying without filter")
+            retry_tasks.append(self.search_semantic_scholar(
+                query, max_per_source, fields_of_study=None,
+                year_from=year_from, year_to=year_to,
+                min_citations=min_citations,
+            ))
+            retry_names.append("semantic_scholar")
+
+        if pubmed_had_filter and source_counts.get("pubmed", 0) == 0:
+            logger.info("pubmed: 0 results with MeSH filter, retrying without filter")
+            retry_tasks.append(self.search_pubmed(
+                query, max_per_source, mesh_terms=None,
+                year_from=year_from, year_to=year_to,
+                article_types=article_types,
+            ))
+            retry_names.append("pubmed")
+
+        if retry_tasks:
+            retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
+            for rname, rresult in zip(retry_names, retry_results):
+                if isinstance(rresult, Exception) or rresult is None:
+                    continue
+                if len(rresult) > 0:
+                    source_counts[rname] = len(rresult)
+                    all_papers.extend(rresult)
+                    logger.info(f"{rname} (retry no filter): {len(rresult)} papers found")
 
         # Compute relevance scores: semantic (embedding) with keyword fallback
         _score_text = research_question or query

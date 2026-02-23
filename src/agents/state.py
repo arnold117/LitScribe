@@ -305,7 +305,7 @@ class LitScribeState(TypedDict):
 
     # === Configuration ===
     max_papers: int  # Maximum papers to analyze (supports up to 500)
-    sources: List[str]  # Sources to search ["arxiv", "semantic_scholar", "pubmed"]
+    sources: List[str]  # Sources to search ["arxiv", "semantic_scholar", "pubmed", "openalex"]
     review_type: Literal["systematic", "narrative", "scoping"]  # Type of review
     cache_enabled: bool  # Whether to use local cache for search/PDF/parse
     batch_size: int  # Batch size for processing papers (default: 20)
@@ -431,7 +431,7 @@ def create_initial_state(
         Initialized LitScribeState ready for the workflow
     """
     if sources is None:
-        sources = ["arxiv", "semantic_scholar", "pubmed"]
+        sources = ["arxiv", "semantic_scholar", "pubmed", "openalex"]
 
     if llm_config is None:
         llm_config = {}

@@ -192,6 +192,9 @@ async def search_all_sources(
                     sources=sources,
                     max_per_source=max_per_query,
                     deduplicate=True,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
                     research_question=research_question,
                     year_from=year_from,
                     year_to=year_to,
@@ -852,7 +855,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
         State updates with search results and selected papers
     """
     research_question = state["research_question"]
-    sources = state.get("sources", ["arxiv", "semantic_scholar", "pubmed"])
+    sources = state.get("sources", ["arxiv", "semantic_scholar", "pubmed", "openalex"])
     max_papers = state.get("max_papers", 10)
     cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))
