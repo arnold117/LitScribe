@@ -927,28 +927,33 @@ async def critical_reading_agent(state: LitScribeState) -> Dict[str, Any]:
     analyzed_papers = filtered_papers
 
     # Merge with previously analyzed papers from earlier rounds (circuit breaker / loop-back)
+    # Use 3-field ID lookup consistently to avoid losing papers with missing paper_id.
+    def _get_pid(p):
+        return p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+
     if existing_analyzed:
-        new_ids = {p["paper_id"] for p in analyzed_papers}
-        carried_over = [p for p in existing_analyzed if p.get("paper_id") not in new_ids]
+        new_ids = {_get_pid(p) for p in analyzed_papers}
+        carried_over = [p for p in existing_analyzed if _get_pid(p) not in new_ids]
         if carried_over:
             logger.info(f"Merging {len(carried_over)} papers from previous round with {len(analyzed_papers)} new")
             analyzed_papers = list(analyzed_papers) + carried_over
 
     # Update parsed_documents to match filtered set
-    filtered_ids = {p["paper_id"] for p in analyzed_papers}
+    filtered_ids = {_get_pid(p) for p in analyzed_papers}
+    filtered_ids.discard(None)
     parsed_documents = {k: v for k, v in parsed_documents.items() if k in filtered_ids}
 
     logger.info(f"Critical Reading: {len(analyzed_papers)} papers after relevance filter")
 
     # Sync papers_to_analyze with analyzed set so supervisor doesn't loop back
-    current_pta_ids = {(p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) for p in papers_to_analyze}
+    current_pta_ids = {_get_pid(p) for p in papers_to_analyze}
     filtered_papers_to_analyze = [
         p for p in papers_to_analyze
-        if (p.get("paper_id") or p.get("arxiv_id") or p.get("doi")) in filtered_ids
+        if _get_pid(p) in filtered_ids
     ]
     # Add carried-over papers not already in papers_to_analyze
     for p in analyzed_papers:
-        pid = p.get("paper_id")
+        pid = _get_pid(p)
         if pid and pid not in current_pta_ids and pid in filtered_ids:
             filtered_papers_to_analyze.append(p)
 

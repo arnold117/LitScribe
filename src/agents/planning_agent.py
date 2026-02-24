@@ -19,6 +19,39 @@ from agents.prompts import COMPLEXITY_ASSESSMENT_PROMPT
 from agents.state import LitScribeState, ResearchPlan, SubTopic
 from agents.tools import call_llm, call_llm_for_json, extract_json
 
+
+def _safe_int(val, default: int = 0) -> int:
+    """Safely convert LLM output to int."""
+    if isinstance(val, (int, float)):
+        return int(val)
+    if isinstance(val, str):
+        # Handle "5-10" range strings — take first number
+        import re
+        m = re.search(r'\d+', val)
+        return int(m.group()) if m else default
+    return default
+
+
+def _safe_float(val, default: float = 0.5) -> float:
+    """Safely convert LLM output to float."""
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        try:
+            return float(val)
+        except ValueError:
+            return default
+    return default
+
+
+def _ensure_list(val) -> list:
+    """Ensure LLM output is a list, not a string or None."""
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str) and val:
+        return [val]
+    return []
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,22 +79,24 @@ async def assess_and_decompose(
 
     data = await call_llm_for_json(prompt, model=model, temperature=0.3, max_tokens=1500, tracker=tracker, agent_name="planning")
 
-    complexity = int(data.get("complexity_score", 2))
-    raw_topics = data.get("sub_topics", [])
+    complexity = _safe_int(data.get("complexity_score", 2), default=2)
+    raw_topics = data.get("sub_topics") or []
 
     # Build SubTopic list
     sub_topics = []
     for t in raw_topics[:6]:  # Cap at 6 sub-topics
+        if not isinstance(t, dict):
+            continue
         sub_topics.append(SubTopic(
             name=t.get("name", "Unknown"),
             description=t.get("description", ""),
-            estimated_papers=int(t.get("estimated_papers", 5)),
-            priority=float(t.get("priority", 0.5)),
-            custom_queries=t.get("custom_queries", [])[:5],
+            estimated_papers=_safe_int(t.get("estimated_papers", 5), default=5),
+            priority=_safe_float(t.get("priority", 0.5), default=0.5),
+            custom_queries=_ensure_list(t.get("custom_queries"))[:5],
             selected=True,  # All selected by default
-            arxiv_categories=t.get("arxiv_categories", []),
-            s2_fields=t.get("s2_fields", []),
-            pubmed_mesh=t.get("pubmed_mesh", []),
+            arxiv_categories=_ensure_list(t.get("arxiv_categories")),
+            s2_fields=_ensure_list(t.get("s2_fields")),
+            pubmed_mesh=_ensure_list(t.get("pubmed_mesh")),
         ))
 
     # Simple questions: auto-confirm
@@ -126,21 +161,23 @@ async def revise_plan(
         tracker=tracker, agent_name="planning",
     )
 
-    complexity = int(data.get("complexity_score", current_plan["complexity_score"]))
-    raw_topics = data.get("sub_topics", [])
+    complexity = _safe_int(data.get("complexity_score", current_plan.get("complexity_score", 2)), default=2)
+    raw_topics = data.get("sub_topics") or []
 
     sub_topics = []
     for t in raw_topics[:6]:
+        if not isinstance(t, dict):
+            continue
         sub_topics.append(SubTopic(
             name=t.get("name", "Unknown"),
             description=t.get("description", ""),
-            estimated_papers=int(t.get("estimated_papers", 5)),
-            priority=float(t.get("priority", 0.5)),
-            custom_queries=t.get("custom_queries", [])[:5],
+            estimated_papers=_safe_int(t.get("estimated_papers", 5), default=5),
+            priority=_safe_float(t.get("priority", 0.5), default=0.5),
+            custom_queries=_ensure_list(t.get("custom_queries"))[:5],
             selected=True,
-            arxiv_categories=t.get("arxiv_categories", []),
-            s2_fields=t.get("s2_fields", []),
-            pubmed_mesh=t.get("pubmed_mesh", []),
+            arxiv_categories=_ensure_list(t.get("arxiv_categories")),
+            s2_fields=_ensure_list(t.get("s2_fields")),
+            pubmed_mesh=_ensure_list(t.get("pubmed_mesh")),
         ))
 
     # If LLM returns no topics, fall back to current plan's topics

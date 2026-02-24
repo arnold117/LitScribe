@@ -251,10 +251,22 @@ async def run_literature_review(
         db_path = get_checkpoint_db_path()
         async with AsyncSqliteSaver.from_conn_string(db_path) as checkpointer:
             graph = compile_graph(checkpointer=checkpointer)
-            final_state = await graph.ainvoke(initial_state, config)
+            try:
+                final_state = await graph.ainvoke(initial_state, config)
+            except Exception as e:
+                logger.error(f"Workflow failed: {e}", exc_info=True)
+                final_state = dict(initial_state)
+                final_state["errors"] = final_state.get("errors", []) + [f"Workflow error: {e}"]
+                final_state["current_agent"] = "complete"
     else:
         graph = compile_graph()
-        final_state = await graph.ainvoke(initial_state)
+        try:
+            final_state = await graph.ainvoke(initial_state)
+        except Exception as e:
+            logger.error(f"Workflow failed: {e}", exc_info=True)
+            final_state = dict(initial_state)
+            final_state["errors"] = final_state.get("errors", []) + [f"Workflow error: {e}"]
+            final_state["current_agent"] = "complete"
 
     logger.info("Literature review complete")
 

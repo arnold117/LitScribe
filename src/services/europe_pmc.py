@@ -24,11 +24,12 @@ def _format_paper(hit: Dict[str, Any]) -> Dict[str, Any]:
     # Parse authors from authorString (semicolon or comma separated)
     author_str = hit.get("authorString") or ""
     if author_str:
-        # Europe PMC uses ", " between authors
-        authors = [a.strip() for a in author_str.split(",") if a.strip()]
-        # Merge "LastName FirstInit" pairs if split by comma
-        # authorString is typically "Smith J, Jones A, Brown B"
-        # which is already individual authors
+        # Europe PMC typically uses "Smith J, Jones A, Brown B" (comma-separated)
+        # but some records use semicolons: "Smith J; Jones A; Brown B"
+        if ";" in author_str:
+            authors = [a.strip().rstrip(".") for a in author_str.split(";") if a.strip()]
+        else:
+            authors = [a.strip() for a in author_str.split(",") if a.strip()]
     else:
         authors = []
 

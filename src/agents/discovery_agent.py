@@ -594,7 +594,9 @@ def _composite_seed_score(paper: Dict[str, Any], current_year: int = 2026) -> fl
     import math
     relevance = paper.get("relevance_score", 0.5)
     year = paper.get("year") or 0
-    age = max(0, current_year - year) if year else 10
+    # Papers without year metadata: assume 5 years old (neutral recency)
+    # instead of 10 (which gives recency=0, heavily penalizing them).
+    age = max(0, current_year - year) if year else 5
     recency = max(0.0, 1.0 - age * 0.1)
     citations = paper.get("citations", 0) or paper.get("citationCount", 0) or paper.get("citation_count", 0) or 0
     citation_norm = min(1.0, math.log1p(citations) / math.log1p(500))
@@ -624,13 +626,21 @@ def _snowball_paper_is_relevant(
                 compute_paper_embeddings_batch,
             )
             import numpy as np
+            import re as _re
 
             query_emb = compute_query_embedding(research_question)
             text = f"{title}. {abstract[:500]}"
             paper_emb = compute_paper_embeddings_batch([text])
             if paper_emb.size > 0:
                 sim = float(np.dot(paper_emb[0], query_emb))
-                return sim >= semantic_threshold
+                # CJK cross-language: all-MiniLM-L6-v2 is English-only, so
+                # CJK query vs English abstract gives near-zero similarity.
+                # Fall through to keyword matching instead of rejecting.
+                _is_cjk = bool(_re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', research_question))
+                if _is_cjk and sim < semantic_threshold:
+                    pass  # Fall through to keyword matching below
+                else:
+                    return sim >= semantic_threshold
         except Exception:
             pass
 
@@ -647,6 +657,7 @@ async def snowball_sampling(
     direction: str = "both",
     research_question: str = "",
     max_rounds: int = 2,
+    max_seeds: int = 5,
 ) -> List[Dict[str, Any]]:
     """Find additional papers through multi-round citation network expansion.
 
@@ -679,7 +690,7 @@ async def snowball_sampling(
         seed_papers,
         key=lambda x: _composite_seed_score(x),
         reverse=True,
-    )[:5]
+    )[:max_seeds]
 
     for round_num in range(max_rounds):
         round_papers = []
@@ -840,8 +851,8 @@ async def screen_papers_by_abstract(
 
         # Format batch for prompt
         batch_lines = []
-        for paper in batch:
-            pid = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi") or f"paper_{i}"
+        for j, paper in enumerate(batch):
+            pid = paper.get("paper_id") or paper.get("arxiv_id") or paper.get("doi") or f"paper_{i + j}"
             paper_id_map[pid] = paper
             title = paper.get("title", "Unknown")
             abstract = (paper.get("abstract") or "")[:500]
@@ -1046,12 +1057,13 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
             existing_titles: set = set()
 
             for topic in selected_topics:
+                topic_name = topic.get("name", "Unnamed")
                 topic_queries = topic.get("custom_queries", [])[:max_q_per_topic]
                 if not topic_queries:
-                    topic_queries = [topic["name"]]
+                    topic_queries = [topic_name]
 
                 expanded_queries.extend(topic_queries)
-                logger.info(f"Searching sub-topic '{topic['name']}' with {len(topic_queries)} queries")
+                logger.info(f"Searching sub-topic '{topic_name}' with {len(topic_queries)} queries")
 
                 # Per-subtopic filters override plan-level defaults if provided
                 topic_arxiv = topic.get("arxiv_categories") or arxiv_categories
@@ -1300,7 +1312,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                     for p in round2_papers:
                         pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
                         ptitle = (p.get("title") or "").lower().strip()
-                        if (pid and pid not in existing_ids) and (ptitle and ptitle not in existing_titles):
+                        if (not pid or pid not in existing_ids) and (not ptitle or ptitle not in existing_titles):
                             papers.append(p)
                             if pid:
                                 existing_ids.add(pid)
@@ -1334,6 +1346,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 max_additional=max(max_papers - len(selected_papers), 10),
                 research_question=research_question,
                 max_rounds=snowball_rounds,
+                max_seeds=snowball_seeds,
             )
             # Re-select from combined pool
             all_candidates = selected_papers + additional

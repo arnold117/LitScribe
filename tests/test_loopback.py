@@ -43,12 +43,12 @@ def test_initial_state_additional_queries_empty():
 # === Test 3: supervisor keeps high-relevance papers on loop-back ===
 
 def test_supervisor_incremental_loopback():
-    """Supervisor should keep analyzed_papers with relevance_score >= 0.5 on loop-back."""
+    """Supervisor should keep analyzed_papers with relevance_score >= 0.3 on loop-back."""
     source = Path(__file__).parent.parent / "src" / "agents" / "supervisor.py"
     code = source.read_text()
-    # Should filter by relevance_score
+    # Should filter by relevance_score (0.3 threshold for CJK cross-language compatibility)
     assert "relevance_score" in code
-    assert ">= 0.5" in code or ">=0.5" in code
+    assert ">= 0.3" in code or ">=0.3" in code
 
 
 # === Test 4: supervisor injects additional_queries ===

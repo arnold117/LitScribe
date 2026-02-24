@@ -211,7 +211,9 @@ async def supervisor_agent(state: LitScribeState) -> Dict[str, Any]:
         and state.get("synthesis") is not None
     ):
         analyzed = state.get("analyzed_papers", [])
-        keep = [p for p in analyzed if p.get("relevance_score", 0) >= 0.5]
+        # Use 0.3 threshold (not 0.5) — CJK cross-language scoring gives lower
+        # scores to valid papers; default to 0.5 for papers without a score.
+        keep = [p for p in analyzed if p.get("relevance_score", 0.5) >= 0.3]
         keep_ids = {p.get("paper_id") for p in keep if p.get("paper_id")}
 
         logger.info(

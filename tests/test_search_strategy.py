@@ -79,10 +79,10 @@ class TestCustomQueriesCap:
         """planning_agent.py uses [:5] not [:3]."""
         src_path = Path(__file__).parent.parent / "src" / "agents" / "planning_agent.py"
         content = src_path.read_text()
-        # Should have [:5] for custom_queries
-        assert '("custom_queries", [])[:5]' in content
+        # Should have [:5] for custom_queries (using _ensure_list wrapper)
+        assert '"custom_queries"))[:5]' in content
         # Should NOT have [:3] for custom_queries
-        assert '("custom_queries", [])[:3]' not in content
+        assert '"custom_queries"))[:3]' not in content
 
 
 class TestRelevanceBonus:

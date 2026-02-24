@@ -104,7 +104,7 @@ async def search_papers(
 
     # Add date range filter via arXiv query syntax
     if year_from or year_to:
-        date_from = f"{year_from}0101" if year_from else "190001"
+        date_from = f"{year_from}0101" if year_from else "19000101"
         date_to = f"{year_to}1231" if year_to else "20991231"
         query = f"({query}) AND submittedDate:[{date_from} TO {date_to}]"
 

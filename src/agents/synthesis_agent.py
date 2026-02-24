@@ -911,16 +911,23 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
     from utils.token_tracker import get_tracker
     tracker = get_tracker()
 
-    # Deduplicate analyzed papers by paper_id
+    # Deduplicate analyzed papers by 3-field ID (paper_id, arxiv_id, doi)
     seen_ids = set()
+    seen_titles = set()
     analyzed_papers = []
     for p in analyzed_papers_raw:
-        pid = p.get("paper_id", "")
+        pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi") or ""
+        ptitle = (p.get("title") or "").lower().strip()
         if pid and pid in seen_ids:
             logger.debug(f"Skipping duplicate paper: {pid}")
             continue
+        if ptitle and ptitle in seen_titles:
+            logger.debug(f"Skipping duplicate paper by title: {ptitle[:60]}")
+            continue
         if pid:
             seen_ids.add(pid)
+        if ptitle:
+            seen_titles.add(ptitle)
         analyzed_papers.append(p)
     if len(analyzed_papers) < len(analyzed_papers_raw):
         logger.info(

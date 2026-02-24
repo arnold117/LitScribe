@@ -496,13 +496,14 @@ class UnifiedSearchAggregator:
 
         try:
             # Build year range string for S2 API (e.g. "2020-2026")
+            # S2 API requires "YYYY-YYYY" format, not trailing/leading dash.
             year_str = None
             if year_from and year_to:
                 year_str = f"{year_from}-{year_to}"
             elif year_from:
-                year_str = f"{year_from}-"
+                year_str = f"{year_from}-2099"
             elif year_to:
-                year_str = f"-{year_to}"
+                year_str = f"1900-{year_to}"
 
             result = await self._semantic_scholar_search(
                 query=query, limit=max_results, fields_of_study=fields_of_study,
