@@ -5,6 +5,7 @@ consistency and to avoid loading duplicate models.
 """
 
 import logging
+import re
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -113,15 +114,23 @@ def compute_semantic_relevance(
         # Step 4: Cosine similarity (already normalized)
         similarities = paper_embeddings @ query_embedding
 
+        # Detect pure CJK query — all-MiniLM-L6-v2 is English-only, so
+        # cross-language similarity will be near 0 and must not kill papers.
+        _cjk_query = bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf]', research_question))
+
         # Step 5: Blend scores
         for i, paper in enumerate(papers):
             kw_score = keyword_scores[id(paper)]
 
             if has_text[i] and i < len(similarities):
                 sem_score = float(max(0.0, min(1.0, similarities[i])))
-                paper.relevance_score = (
-                    semantic_weight * sem_score + keyword_weight * kw_score
-                )
+                blended = semantic_weight * sem_score + keyword_weight * kw_score
+                # CJK cross-language floor: English-only embedding model gives
+                # near-zero similarity for CJK queries vs English papers.
+                # Preserve a neutral floor so LLM selection decides relevance.
+                if _cjk_query and blended < 0.35:
+                    blended = max(blended, 0.35)
+                paper.relevance_score = blended
             else:
                 # No text to embed — keep keyword score only
                 paper.relevance_score = kw_score

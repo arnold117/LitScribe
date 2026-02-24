@@ -1114,7 +1114,7 @@ Examples:
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument(
         "--sources", "-s",
-        default="arxiv,semantic_scholar,pubmed,openalex",
+        default="arxiv,semantic_scholar,pubmed,openalex,europe_pmc",
         help="Comma-separated sources: arxiv,pubmed,semantic_scholar,openalex,zotero (default: all)",
     )
     search_parser.add_argument(
@@ -1210,7 +1210,7 @@ Examples:
     )
     review_parser.add_argument(
         "--sources", "-s",
-        default="arxiv,semantic_scholar,pubmed,openalex",
+        default="arxiv,semantic_scholar,pubmed,openalex,europe_pmc",
         help="Comma-separated sources: arxiv,pubmed,semantic_scholar,openalex (default: all). Zotero is always searched automatically if configured.",
     )
     review_parser.add_argument(

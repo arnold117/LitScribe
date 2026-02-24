@@ -530,13 +530,13 @@ def test_unified_search_uses_word_boundary():
         "Should use \\b word boundary pattern"
 
 
-# === Test 12: Query expansion generates 8 queries ===
+# === Test 12: Query expansion generates 12 queries across 6 dimensions ===
 
 def test_query_expansion_prompt_structured():
-    """QUERY_EXPANSION_PROMPT should request structured 8 queries across dimensions."""
+    """QUERY_EXPANSION_PROMPT should request structured 12 queries across 6 dimensions."""
     from agents.prompts import QUERY_EXPANSION_PROMPT
-    assert "EXACTLY 8 search queries" in QUERY_EXPANSION_PROMPT, \
-        "Should request exactly 8 queries"
+    assert "EXACTLY 12 search queries" in QUERY_EXPANSION_PROMPT, \
+        "Should request exactly 12 queries"
     assert "core_methodology" in QUERY_EXPANSION_PROMPT, \
         "Should have core_methodology dimension"
     assert "application_domain" in QUERY_EXPANSION_PROMPT, \

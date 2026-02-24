@@ -87,6 +87,9 @@ class SubTopic(TypedDict):
     priority: float  # Weight 0-1
     custom_queries: List[str]  # Suggested search queries
     selected: bool  # Whether user selected this sub-topic
+    arxiv_categories: List[str]  # Per-subtopic arXiv categories (empty = inherit plan-level)
+    s2_fields: List[str]  # Per-subtopic S2 fields (empty = inherit plan-level)
+    pubmed_mesh: List[str]  # Per-subtopic MeSH terms (empty = inherit plan-level)
 
 
 class ResearchPlan(TypedDict):
@@ -305,7 +308,7 @@ class LitScribeState(TypedDict):
 
     # === Configuration ===
     max_papers: int  # Maximum papers to analyze (supports up to 500)
-    sources: List[str]  # Sources to search ["arxiv", "semantic_scholar", "pubmed", "openalex"]
+    sources: List[str]  # Sources to search ["arxiv", "semantic_scholar", "pubmed", "openalex", "europe_pmc"]
     review_type: Literal["systematic", "narrative", "scoping"]  # Type of review
     cache_enabled: bool  # Whether to use local cache for search/PDF/parse
     batch_size: int  # Batch size for processing papers (default: 20)
@@ -379,7 +382,7 @@ TIER_CONFIG = {
         "snowball_rounds": 2,
         "snowball_seeds": 3,
         "snowball_cites_per_seed": 5,
-        "max_per_source": 15,
+        "max_per_source": 35,
         "year_lookback": 10,
     },
     "comprehensive": {
@@ -431,7 +434,7 @@ def create_initial_state(
         Initialized LitScribeState ready for the workflow
     """
     if sources is None:
-        sources = ["arxiv", "semantic_scholar", "pubmed", "openalex"]
+        sources = ["arxiv", "semantic_scholar", "pubmed", "openalex", "europe_pmc"]
 
     if llm_config is None:
         llm_config = {}

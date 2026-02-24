@@ -57,8 +57,11 @@ async def assess_and_decompose(
             description=t.get("description", ""),
             estimated_papers=int(t.get("estimated_papers", 5)),
             priority=float(t.get("priority", 0.5)),
-            custom_queries=t.get("custom_queries", [])[:3],
+            custom_queries=t.get("custom_queries", [])[:5],
             selected=True,  # All selected by default
+            arxiv_categories=t.get("arxiv_categories", []),
+            s2_fields=t.get("s2_fields", []),
+            pubmed_mesh=t.get("pubmed_mesh", []),
         ))
 
     # Simple questions: auto-confirm
@@ -133,8 +136,11 @@ async def revise_plan(
             description=t.get("description", ""),
             estimated_papers=int(t.get("estimated_papers", 5)),
             priority=float(t.get("priority", 0.5)),
-            custom_queries=t.get("custom_queries", [])[:3],
+            custom_queries=t.get("custom_queries", [])[:5],
             selected=True,
+            arxiv_categories=t.get("arxiv_categories", []),
+            s2_fields=t.get("s2_fields", []),
+            pubmed_mesh=t.get("pubmed_mesh", []),
         ))
 
     # If LLM returns no topics, fall back to current plan's topics
@@ -180,6 +186,9 @@ def _build_fallback_plan(research_question: str, max_papers: int) -> ResearchPla
                 priority=1.0,
                 custom_queries=[],
                 selected=True,
+                arxiv_categories=[],
+                s2_fields=[],
+                pubmed_mesh=[],
             )
         ],
         scope_estimate=f"Estimated {max_papers} papers",

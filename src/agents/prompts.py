@@ -13,18 +13,19 @@ QUERY_EXPANSION_PROMPT = """You are an expert academic researcher. Given a resea
 Research Question: {research_question}
 Research Domain: {domain_hint}
 
-Generate EXACTLY 8 search queries distributed across these 5 dimensions:
+Generate EXACTLY 12 search queries distributed across these 6 dimensions:
 
 1. Core Methodology (2 queries): Target specific methods, techniques, mechanisms, or algorithms central to the topic. Use precise technical terms.
 2. Application Domain (2 queries): Target real-world applications, use cases, or practical implementations. Include domain-specific terminology.
-3. Review & Meta-Analysis (1 query): Target existing reviews, surveys, systematic reviews, or meta-analyses on this topic.
-4. Recent Advances (1 query): Target cutting-edge, emerging, or state-of-the-art research from the last 2-3 years. Use terms like "novel", "recent", or specific new technique names.
-5. Cross-disciplinary (2 queries): Target related sub-fields, alternative nomenclature, or interdisciplinary angles within {domain_hint}.
+3. Review & Meta-Analysis (2 queries): Target existing reviews, surveys, systematic reviews, or meta-analyses on this topic. Include both broad and focused review queries.
+4. Recent Advances (2 queries): Target cutting-edge, emerging, or state-of-the-art research from the last 2-3 years. Use terms like "novel", "recent", or specific new technique names.
+5. Cross-disciplinary (2 queries): Target related sub-fields or interdisciplinary angles within or adjacent to {domain_hint}.
+6. Synonyms & Alternative Nomenclature (2 queries): Target alternative names, abbreviations, historical terms, or nomenclature variants for key concepts in the research question.
 
 Requirements:
 - Each query: 3-8 words, optimized for academic search engines
 - Avoid overly generic terms that could match unrelated fields
-- STAY WITHIN the research domain "{domain_hint}"
+- PREFER queries within the research domain "{domain_hint}", but allow 1-2 queries reaching into adjacent fields if they could yield relevant foundational or interdisciplinary literature
 - Maximize diversity: each query should find DIFFERENT papers
 - All queries MUST be in English, even if the research question is in another language
 
@@ -32,9 +33,10 @@ Output as a JSON object:
 {{
   "core_methodology": ["query1", "query2"],
   "application_domain": ["query3", "query4"],
-  "review_meta": ["query5"],
-  "recent_advances": ["query6"],
-  "cross_disciplinary": ["query7", "query8"]
+  "review_meta": ["query5", "query6"],
+  "recent_advances": ["query7", "query8"],
+  "cross_disciplinary": ["query9", "query10"],
+  "synonyms_nomenclature": ["query11", "query12"]
 }}"""
 
 
@@ -77,14 +79,16 @@ Research Domain: {domain_hint}
 
 For each paper below, decide if it is RELEVANT (should be analyzed in depth) or IRRELEVANT (should be excluded).
 
-A paper is IRRELEVANT if:
-- It is from a completely different field/domain
+A paper is IRRELEVANT if ANY of these apply:
+- It is from a completely different field/domain (e.g., clinical trials when the question is about basic science, immunology when the question is about plant biochemistry)
 - It only mentions the topic in passing (not its main focus)
-- The keyword match is coincidental (different context)
-- It is about a different application/organism/system
+- The keyword match is coincidental (same term used in a completely different context)
+- It is about a fundamentally different application/organism/system with no transferable insights
+- It is a clinical trial, epidemiology study, or medical intervention study when the research question is about biochemistry, molecular biology, or basic science (and vice versa)
 
 A paper is RELEVANT if:
 - It directly studies the research question or a closely related aspect
+- It provides background knowledge, methodology, or foundational theory useful for the review
 - Its findings would be cited in a focused review on this topic
 
 Papers:
@@ -349,6 +353,7 @@ Write a comprehensive {review_type} literature review that:
 
 1. INTRODUCTION (1 paragraph)
    - Introduce the research question and its significance
+   - Cite key foundational or review papers when making background claims (e.g., [Smith et al., 2020])
    - Preview the scope and structure of the review
 
 2. THEMATIC ANALYSIS (main body)
@@ -425,6 +430,7 @@ Write a comprehensive {review_type} literature review that:
 
 1. INTRODUCTION (1-2 paragraphs)
    - Introduce the research question and its significance
+   - Cite key foundational or review papers when making background claims (e.g., [Smith et al., 2020])
    - Preview the key themes you will discuss
    - Briefly mention the knowledge landscape (key methods, datasets, concepts)
 
@@ -486,6 +492,9 @@ Number of Papers: {num_papers}
 The review will cover the following themes:
 {theme_names}
 
+## Paper Summaries (use these to support factual claims):
+{paper_summaries}
+
 Write a concise introduction (2-3 paragraphs) that:
 1. Introduces the research question and its significance
 2. Briefly previews the scope — {num_papers} papers analyzed
@@ -494,7 +503,7 @@ Write a concise introduction (2-3 paragraphs) that:
 STRICT FORMATTING RULES:
 - Start with a level-1 heading: # [Your Review Title]
 - Then write 2-3 paragraphs of introduction
-- Do NOT include any citations — citations appear in theme sections only
+- Cite key papers when making factual claims using [Author, Year] format (use the paper summaries above)
 - Do NOT include any sub-headings, section numbers, or bullet lists
 - Do NOT write a conclusion or summary within this section
 - End with a transitional sentence leading into the first theme
@@ -648,7 +657,10 @@ Output as JSON:
       "description": "What this covers",
       "estimated_papers": 5-20,
       "priority": 0.0-1.0,
-      "custom_queries": ["(\"term A\" OR \"synonym\") AND \"term B\"", "query 2", "query 3"]
+      "custom_queries": ["(\"term A\" OR \"synonym\") AND \"term B\"", "query 2", "query 3", "query 4", "query 5"],
+      "arxiv_categories": ["topic-specific arXiv categories, or empty [] to inherit plan-level"],
+      "s2_fields": ["topic-specific S2 fields, or empty [] to inherit plan-level"],
+      "pubmed_mesh": ["topic-specific MeSH terms, or empty [] to inherit plan-level"]
     }}
   ],
   "scope_estimate": "Estimated X-Y papers across N sub-topics"
@@ -671,7 +683,7 @@ Ensure sub-topics are:
 - Mutually exclusive (minimal overlap)
 - Collectively exhaustive (cover the full question)
 - Ordered by priority (most important first)
-- Each with 3-5 specific search queries optimized for academic databases
+- Each with 3-5 specific search queries optimized for academic databases (up to 5 for comprehensive coverage)
 - IMPORTANT: All search queries MUST be in English
 - IMPORTANT: Queries MUST use Boolean syntax for precision:
   * Use AND / OR operators to combine terms
@@ -681,10 +693,15 @@ Ensure sub-topics are:
   * Example good query: ("sesquiterpene coumarin" OR "prenylated coumarin") AND (biosynthesis OR "biosynthetic pathway") AND (Ferula OR Apiaceae)
   * Example bad query: sesquiterpene coumarin biosynthesis plants (no operators, too vague)
 
-For domain detection:
+For domain detection (plan-level):
 - arxiv_categories: Use official arXiv taxonomy (cs.*, q-bio.*, physics.*, math.*, stat.*, etc.)
 - s2_fields: Use Semantic Scholar fields (Biology, Chemistry, Computer Science, Medicine, Physics, etc.)
-- pubmed_mesh: Use 2-4 top-level MeSH terms that define the research scope"""
+- pubmed_mesh: Use 2-4 top-level MeSH terms that define the research scope
+
+For per-subtopic filters:
+- If a sub-topic spans a different field from the overall domain, provide topic-specific arxiv_categories/s2_fields/pubmed_mesh
+- Otherwise leave them as empty arrays [] to inherit the plan-level defaults
+- Example: a bioinformatics sub-topic under a Biology plan might use ["cs.CE", "q-bio.QM"] for arxiv_categories"""
 
 
 PLAN_REVISION_PROMPT = """You are an expert academic researcher. A user has rejected a proposed research plan and provided feedback. Revise the plan accordingly.
@@ -725,7 +742,10 @@ Output the revised plan as JSON:
       "description": "What this covers",
       "estimated_papers": 5-20,
       "priority": 0.0-1.0,
-      "custom_queries": ["(\"term A\" OR \"synonym\") AND \"term B\"", "query 2", "query 3"]
+      "custom_queries": ["(\"term A\" OR \"synonym\") AND \"term B\"", "query 2", "query 3", "query 4", "query 5"],
+      "arxiv_categories": ["topic-specific arXiv categories, or empty [] to inherit plan-level"],
+      "s2_fields": ["topic-specific S2 fields, or empty [] to inherit plan-level"],
+      "pubmed_mesh": ["topic-specific MeSH terms, or empty [] to inherit plan-level"]
     }}
   ],
   "scope_estimate": "Estimated X-Y papers across N sub-topics"

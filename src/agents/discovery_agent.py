@@ -38,6 +38,77 @@ from cache.cached_tools import CachedTools, get_cached_tools
 logger = logging.getLogger(__name__)
 
 
+def _expand_cjk_queries(research_question: str, max_queries: int = 5) -> List[str]:
+    """Expand a CJK research question into multiple CJK search query variants.
+
+    Uses jieba precise-mode segmentation to extract key terms, then generates
+    2-term and 3-term combinations via itertools.combinations for systematic
+    coverage on APIs that index CJK text (PubMed, Europe PMC).
+
+    Args:
+        research_question: The original CJK research question
+        max_queries: Maximum CJK queries to generate (including original)
+
+    Returns:
+        List of CJK query strings (original first, then combinations)
+    """
+    from itertools import combinations
+
+    try:
+        import jieba
+    except ImportError:
+        return [research_question]
+
+    # Use precise mode (lcut) — NOT lcut_for_search which generates sub-words
+    # like "豆素" from "香豆素" that are meaningless as standalone queries.
+    tokens = jieba.lcut(research_question)
+
+    # Filter: keep ≥2 chars, skip CJK stopwords and generic academic terms
+    cjk_stopwords = {
+        "的", "了", "在", "是", "我", "和", "与", "对", "从", "及",
+        "到", "为", "被", "把", "上", "下", "中", "等", "其", "这",
+        "那", "有", "无", "不", "也", "都", "很", "更", "最", "可",
+        "能", "会", "将", "所", "以", "之", "而", "但", "如", "若",
+        "则", "已", "因", "于", "用", "并", "个", "各", "些", "种",
+        "类", "进行", "研究", "分析", "方法", "基于", "通过", "关于",
+        "综述", "探讨", "概述", "最新", "相关", "解析", "探究",
+    }
+    terms = [t for t in tokens if len(t) >= 2 and t not in cjk_stopwords]
+
+    if not terms:
+        return [research_question]
+
+    queries = [research_question]  # Always include original
+
+    # Generate 2-term and 3-term combinations, interleaved for diversity.
+    # A 2-term combo is broader (higher recall), a 3-term combo is more
+    # specific (higher precision). Interleaving ensures we get both.
+    combos_2 = [" ".join(c) for c in combinations(terms, 2)]
+    combos_3 = [" ".join(c) for c in combinations(terms, 3)] if len(terms) >= 3 else []
+
+    # Interleave: 2-term, 3-term, 2-term, 3-term, ...
+    i2, i3 = 0, 0
+    while i2 < len(combos_2) or i3 < len(combos_3):
+        if i2 < len(combos_2):
+            queries.append(combos_2[i2])
+            i2 += 1
+        if i3 < len(combos_3):
+            queries.append(combos_3[i3])
+            i3 += 1
+
+    # Deduplicate and cap
+    seen = set()
+    unique = []
+    for q in queries:
+        if q not in seen:
+            seen.add(q)
+            unique.append(q)
+
+    result = unique[:max_queries]
+    logger.info(f"CJK query expansion: {terms} → {len(result)} queries")
+    return result
+
+
 async def expand_queries(
     research_question: str,
     model: Optional[str] = None,
@@ -71,7 +142,7 @@ async def expand_queries(
         if isinstance(result, dict):
             queries = []
             dimension_counts = {}
-            for dim_key in ["core_methodology", "application_domain", "review_meta", "recent_advances", "cross_disciplinary"]:
+            for dim_key in ["core_methodology", "application_domain", "review_meta", "recent_advances", "cross_disciplinary", "synonyms_nomenclature"]:
                 dim_queries = result.get(dim_key, [])
                 if isinstance(dim_queries, list):
                     queries.extend(dim_queries)
@@ -86,13 +157,15 @@ async def expand_queries(
         else:
             raise ValueError(f"Unexpected response type: {type(result)}")
 
-        # Include original question as first query only if it's in English
-        # (non-English queries perform poorly on English academic databases)
+        # Include original question as first query if English.
+        # For non-English, also generate CJK query variants via jieba segmentation
+        # since PubMed/Europe PMC can match CJK terms in titles/abstracts.
         is_english = all(ord(c) < 128 for c in research_question if c.isalpha())
         if is_english:
             all_queries = [research_question] + queries
         else:
-            all_queries = queries if queries else [research_question]
+            cjk_queries = _expand_cjk_queries(research_question)
+            all_queries = queries + cjk_queries if queries else [research_question]
 
         # Deduplicate near-identical queries by semantic similarity
         try:
@@ -166,7 +239,9 @@ async def search_all_sources(
 
     # Search with each query in parallel (use all queries — tier system controls volume upstream)
     queries_to_search = queries[:12]  # Safety cap at 12 to avoid API flooding
-    max_per_query = max(max_per_source // max(len(queries_to_search), 1), 5)
+    # Minimum 10 per source per query — niche topics need headroom since most
+    # queries return 0-2 results; a low cap (5) starves the pipeline.
+    max_per_query = max(max_per_source // max(len(queries_to_search), 1), 10)
 
     async def search_single_query(query: str):
         """Search a single query across all sources."""
@@ -309,7 +384,7 @@ async def select_papers(
     # Filter out very low relevance papers regardless of count
     # Papers without a relevance_score (e.g. from snowball/citation APIs) get a
     # neutral default so they aren't silently killed by the threshold.
-    MIN_RELEVANCE = 0.35
+    MIN_RELEVANCE = 0.25
     pre_filter_count = len(papers)
     papers = [p for p in papers if (p.get("relevance_score") or 0.5) >= MIN_RELEVANCE]
     if len(papers) < pre_filter_count:
@@ -829,7 +904,7 @@ async def screen_papers_by_abstract(
 
     # Circuit breaker: if screening removed ALL papers, keep top-N by relevance_score
     if len(relevant_papers) == 0 and len(papers) > 0:
-        min_keep = min(6, len(papers))
+        min_keep = min(4, len(papers))
         fallback = sorted(papers, key=lambda p: p.get("relevance_score", 0) or 0, reverse=True)[:min_keep]
         logger.warning(
             f"Abstract screening circuit breaker: keeping top {len(fallback)} papers by relevance "
@@ -855,7 +930,7 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
         State updates with search results and selected papers
     """
     research_question = state["research_question"]
-    sources = state.get("sources", ["arxiv", "semantic_scholar", "pubmed", "openalex"])
+    sources = state.get("sources", ["arxiv", "semantic_scholar", "pubmed", "openalex", "europe_pmc"])
     max_papers = state.get("max_papers", 10)
     cache_enabled = state.get("cache_enabled", True)
     errors = list(state.get("errors", []))
@@ -978,14 +1053,19 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 expanded_queries.extend(topic_queries)
                 logger.info(f"Searching sub-topic '{topic['name']}' with {len(topic_queries)} queries")
 
+                # Per-subtopic filters override plan-level defaults if provided
+                topic_arxiv = topic.get("arxiv_categories") or arxiv_categories
+                topic_s2 = topic.get("s2_fields") or s2_fields
+                topic_mesh = topic.get("pubmed_mesh") or pubmed_mesh
+
                 topic_results = await search_all_sources(
                     queries=topic_queries,
                     sources=sources,
                     max_per_source=max_per_src,
                     cached_tools=cached_tools,
-                    arxiv_categories=arxiv_categories,
-                    s2_fields=s2_fields,
-                    pubmed_mesh=pubmed_mesh,
+                    arxiv_categories=topic_arxiv,
+                    s2_fields=topic_s2,
+                    pubmed_mesh=topic_mesh,
                     zotero_collection=zotero_collection,
                     research_question=research_question,
                     year_from=year_from,
@@ -1010,12 +1090,42 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 for src, count in topic_results.get("source_counts", {}).items():
                     all_source_counts[src] = all_source_counts.get(src, 0) + count
 
-            # Also run LLM query expansion for additional coverage
+            # Also search the original research question directly (not just subtopic queries)
+            # This catches papers that match the broad question but no specific subtopic.
+            if research_question not in expanded_queries:
+                rq_results = await search_all_sources(
+                    queries=[research_question],
+                    sources=sources,
+                    max_per_source=max_per_src,
+                    cached_tools=cached_tools,
+                    arxiv_categories=arxiv_categories,
+                    s2_fields=s2_fields,
+                    pubmed_mesh=pubmed_mesh,
+                    zotero_collection=zotero_collection,
+                    research_question=research_question,
+                    year_from=year_from,
+                    year_to=year_to,
+                )
+                for p in rq_results.get("papers", []):
+                    pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+                    ptitle = (p.get("title") or "").lower().strip()
+                    if (not pid or pid not in existing_ids) and (not ptitle or ptitle not in existing_titles):
+                        all_papers.append(p)
+                        if pid:
+                            existing_ids.add(pid)
+                        if ptitle:
+                            existing_titles.add(ptitle)
+                expanded_queries.append(research_question)
+                for src, count in rq_results.get("source_counts", {}).items():
+                    all_source_counts[src] = all_source_counts.get(src, 0) + count
+
+            # LLM query expansion for additional coverage
             llm_queries = await expand_queries(research_question, domain_hint=domain_hint, tracker=tracker)
             novel_llm = [q for q in llm_queries if q not in expanded_queries]
+
             if novel_llm:
                 llm_results = await search_all_sources(
-                    queries=novel_llm[:4],
+                    queries=novel_llm[:10],
                     sources=sources,
                     max_per_source=max_per_src,
                     cached_tools=cached_tools,
@@ -1036,9 +1146,43 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                             existing_ids.add(pid)
                         if ptitle:
                             existing_titles.add(ptitle)
-                expanded_queries.extend(novel_llm[:4])
+                expanded_queries.extend(novel_llm[:10])
                 for src, count in llm_results.get("source_counts", {}).items():
                     all_source_counts[src] = all_source_counts.get(src, 0) + count
+
+            # For CJK questions, search CJK query variants as a SEPARATE batch
+            # so they don't compete with English LLM queries for slots
+            is_english = all(ord(c) < 128 for c in research_question if c.isalpha())
+            if not is_english:
+                cjk_queries = _expand_cjk_queries(research_question)
+                cjk_novel = [q for q in cjk_queries if q not in expanded_queries and q != research_question]
+                if cjk_novel:
+                    logger.info(f"Searching {len(cjk_novel)} CJK query variants separately")
+                    cjk_results = await search_all_sources(
+                        queries=cjk_novel,
+                        sources=sources,
+                        max_per_source=max_per_src,
+                        cached_tools=cached_tools,
+                        arxiv_categories=arxiv_categories,
+                        s2_fields=s2_fields,
+                        pubmed_mesh=pubmed_mesh,
+                        zotero_collection=zotero_collection,
+                        research_question=research_question,
+                        year_from=year_from,
+                        year_to=year_to,
+                    )
+                    for p in cjk_results.get("papers", []):
+                        pid = p.get("paper_id") or p.get("arxiv_id") or p.get("doi")
+                        ptitle = (p.get("title") or "").lower().strip()
+                        if (not pid or pid not in existing_ids) and (not ptitle or ptitle not in existing_titles):
+                            all_papers.append(p)
+                            if pid:
+                                existing_ids.add(pid)
+                            if ptitle:
+                                existing_titles.add(ptitle)
+                    expanded_queries.extend(cjk_novel)
+                    for src, count in cjk_results.get("source_counts", {}).items():
+                        all_source_counts[src] = all_source_counts.get(src, 0) + count
 
             papers = all_papers
             search_results = {"papers": papers, "source_counts": all_source_counts, "errors": []}
@@ -1216,7 +1360,9 @@ async def discovery_agent(state: LitScribeState) -> Dict[str, Any]:
                 logger.info(f"Deduped {deduped} papers already analyzed in previous round")
 
         # Step 5: Abstract screening — lightweight LLM check before critical_reading
-        if len(selected_papers) > 3:
+        # Only screen when we have enough papers; for niche topics with <15 papers,
+        # screening can remove 50%+ and leave too few for a meaningful review.
+        if len(selected_papers) > 15:
             pre_screen_count = len(selected_papers)
             selected_papers = await screen_papers_by_abstract(
                 papers=selected_papers,

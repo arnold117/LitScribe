@@ -18,7 +18,7 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 # Default user preferences
 DEFAULT_USER_CONFIG = {
-    "sources": ["arxiv", "semantic_scholar", "pubmed", "openalex"],
+    "sources": ["arxiv", "semantic_scholar", "pubmed", "openalex", "europe_pmc"],
     "max_papers": 10,
     "review_type": "narrative",
     "citation_style": "APA",

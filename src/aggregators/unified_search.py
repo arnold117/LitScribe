@@ -165,6 +165,25 @@ def _openalex_to_unified(paper_dict: dict) -> UnifiedPaper:
     )
 
 
+def _europe_pmc_to_unified(paper_dict: dict) -> UnifiedPaper:
+    """Convert Europe PMC paper dict to UnifiedPaper."""
+    return UnifiedPaper(
+        title=paper_dict.get("title") or "",
+        authors=paper_dict.get("authors") or [],
+        abstract=paper_dict.get("abstract") or "",
+        year=paper_dict.get("year") or 0,
+        sources={"europe_pmc": paper_dict.get("paper_id") or ""},
+        venue=paper_dict.get("venue") or "",
+        citations=paper_dict.get("citation_count") or 0,
+        pdf_urls=[paper_dict["pdf_url"]] if paper_dict.get("pdf_url") else [],
+        doi=paper_dict.get("doi"),
+        pmid=paper_dict.get("pmid"),
+        pmc_id=paper_dict.get("pmc_id"),
+        keywords=[],
+        url=paper_dict.get("url"),
+    )
+
+
 def _has_cjk(text: str) -> bool:
     """Check if text contains CJK (Chinese/Japanese/Korean) characters."""
     return bool(re.search(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]', text))
@@ -243,6 +262,12 @@ def _compute_keyword_relevance(papers: List["UnifiedPaper"], research_question: 
             paper.relevance_score = 0.5
         return
 
+    # Check if keywords are exclusively CJK (no English terms mixed in).
+    # Pure CJK keywords can't match English paper text, so we'll need a floor.
+    cjk_only = is_cjk and not any(
+        all(ord(c) < 128 for c in kw) for kw in keywords
+    )
+
     for paper in papers:
         title = (paper.title or "").lower()
         abstract = (paper.abstract or "").lower()
@@ -258,7 +283,24 @@ def _compute_keyword_relevance(papers: List["UnifiedPaper"], research_question: 
         abstract_score = min(abstract_matches / n, 1.0) * 0.4
         kw_score = min(keyword_matches / n, 1.0) * 0.2
 
-        paper.relevance_score = title_score + abstract_score + kw_score
+        score = title_score + abstract_score + kw_score
+
+        # CJK cross-language floor: when the query is purely CJK and papers are
+        # in English, keyword matching returns ~0 for every paper, which causes
+        # the MIN_RELEVANCE filter to kill all results.  Set a neutral floor so
+        # the LLM paper-selection step decides relevance instead.
+        if cjk_only and score < 0.35:
+            score = max(score, 0.35)
+
+        # Review/survey papers get relevance bonus — foundational for introductions
+        if any(w in title for w in ("review", "survey", "meta-analysis", "overview", "综述")):
+            score = min(score + 0.12, 1.0)
+
+        # Highly cited papers get relevance bonus — likely foundational literature
+        if getattr(paper, "citations", 0) >= 100:
+            score = min(score + 0.08, 1.0)
+
+        paper.relevance_score = score
 
 
 class UnifiedSearchAggregator:
@@ -275,6 +317,7 @@ class UnifiedSearchAggregator:
         self._zotero_search = None
         self._semantic_scholar_search = None
         self._openalex_search = None
+        self._europe_pmc_search = None
         self._initialized = False
 
     async def _lazy_init(self):
@@ -312,6 +355,12 @@ class UnifiedSearchAggregator:
             self._openalex_search = openalex_search
         except ImportError:
             logger.warning("OpenAlex service not available")
+
+        try:
+            from services.europe_pmc import search_papers as europe_pmc_search
+            self._europe_pmc_search = europe_pmc_search
+        except ImportError:
+            logger.warning("Europe PMC service not available")
 
         self._initialized = True
 
@@ -491,6 +540,32 @@ class UnifiedSearchAggregator:
             logger.error(f"OpenAlex search error: {e}")
             return []
 
+    async def search_europe_pmc(
+        self,
+        query: str,
+        max_results: int = 20,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        min_citations: Optional[int] = None,
+    ) -> List[UnifiedPaper]:
+        """Search Europe PMC and return unified papers."""
+        await self._lazy_init()
+
+        if not self._europe_pmc_search:
+            return []
+
+        try:
+            result = await self._europe_pmc_search(
+                query=query, max_results=max_results,
+                year_from=year_from, year_to=year_to,
+                min_citations=min_citations,
+            )
+            papers = result.get("papers", [])
+            return [_europe_pmc_to_unified(p) for p in papers]
+        except Exception as e:
+            logger.error(f"Europe PMC search error: {e}")
+            return []
+
     async def search_all(
         self,
         query: str,
@@ -530,7 +605,7 @@ class UnifiedSearchAggregator:
             Dictionary with search results and metadata
         """
         if sources is None:
-            sources = ["arxiv", "semantic_scholar", "pubmed", "openalex"]
+            sources = ["arxiv", "semantic_scholar", "pubmed", "openalex", "europe_pmc"]
 
         await self._lazy_init()
 
@@ -574,6 +649,14 @@ class UnifiedSearchAggregator:
                 min_citations=min_citations,
             ))
             source_names.append("openalex")
+
+        if "europe_pmc" in sources:
+            tasks.append(self.search_europe_pmc(
+                query, max_per_source,
+                year_from=year_from, year_to=year_to,
+                min_citations=min_citations,
+            ))
+            source_names.append("europe_pmc")
 
         # Execute searches in parallel with per-source timeout
         # Prevents one slow source (e.g. arXiv retrying) from blocking all results

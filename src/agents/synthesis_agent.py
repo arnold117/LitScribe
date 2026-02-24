@@ -666,12 +666,15 @@ async def generate_review_sectioned(
 
     # --- Stage 1: Introduction ---
     logger.info(f"Sectioned generation: intro (~{intro_words} words)")
+    # Pass paper summaries so the intro can cite key papers
+    intro_summaries = format_summaries_for_prompt(analyzed_papers, max_chars=8000)
     intro_prompt = REVIEW_INTRO_PROMPT.format(
         review_type=review_type,
         research_question=research_question,
         num_papers=len(analyzed_papers),
         knowledge_graph_section=kg_section,
         theme_names=theme_names_text,
+        paper_summaries=intro_summaries,
         word_count=intro_words,
     ) + lang_instruction
 
@@ -991,14 +994,35 @@ async def synthesis_agent(state: LitScribeState) -> Dict[str, Any]:
         # Step 3: Generate review (with GraphRAG enhancement if available)
         # Use target_words from state (tier system), with sensible fallback
         target_words = state.get("target_words", 1000 + len(analyzed_papers) * 130)
-        if use_graphrag and kg_context:
+
+        # Use sectioned generation for long reviews (> 4096 words ≈ > 8K tokens)
+        # to avoid LLM output truncation and give each section proper attention.
+        use_sectioned = target_words > 4096
+        kg_global = knowledge_graph.get("global_summary", "") if knowledge_graph else ""
+
+        if use_sectioned:
+            logger.info(f"Using sectioned generation (target_words={target_words} > 4096)")
+            review_text = await generate_review_sectioned(
+                analyzed_papers=analyzed_papers,
+                themes=themes,
+                gaps=gaps,
+                research_question=research_question,
+                review_type=review_type,
+                target_words=target_words,
+                model=model,
+                language=language,
+                tracker=tracker,
+                knowledge_graph_context=kg_context if use_graphrag else None,
+                global_summary=kg_global if use_graphrag else None,
+            )
+        elif use_graphrag and kg_context:
             review_text = await generate_graphrag_review(
                 analyzed_papers=analyzed_papers,
                 themes=themes,
                 gaps=gaps,
                 research_question=research_question,
                 knowledge_graph_context=kg_context,
-                global_summary=knowledge_graph.get("global_summary", ""),
+                global_summary=kg_global,
                 review_type=review_type,
                 target_words=target_words,
                 model=model,
