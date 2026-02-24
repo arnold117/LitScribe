@@ -81,8 +81,8 @@ def detect_communities_leiden(
 
 def build_community_hierarchy(
     G: nx.Graph,
-    resolutions: List[float] = [0.5, 1.0, 2.0],
-    min_community_size: int = 2,
+    resolutions: List[float] = [1.0],
+    min_community_size: int = 3,
 ) -> List[Community]:
     """Build hierarchical community structure at multiple resolutions.
 

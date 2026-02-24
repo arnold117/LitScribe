@@ -92,9 +92,9 @@ async def run_graphrag_pipeline(
     llm_config: Optional[Dict[str, Any]] = None,
     entity_batch_size: int = 10,
     max_concurrent: int = 5,
-    similarity_threshold: float = 0.85,
-    community_resolutions: List[float] = [0.5, 1.0, 2.0],
-    min_community_size: int = 2,
+    similarity_threshold: float = 0.75,
+    community_resolutions: List[float] = [1.0],
+    min_community_size: int = 3,
     cache_enabled: bool = True,
     tracker=None,
 ) -> KnowledgeGraphData:

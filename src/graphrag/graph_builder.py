@@ -140,14 +140,6 @@ def build_knowledge_graph(
                 weight=weight,
                 paper_ids=list(paper_ids),
             )
-            # Add reverse edge for undirected co-occurrence
-            G.add_edge(
-                eid2,
-                eid1,
-                edge_type="co_occurs",
-                weight=weight,
-                paper_ids=list(paper_ids),
-            )
 
     # Add citation edges if requested
     if include_citation_edges:

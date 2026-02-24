@@ -97,7 +97,7 @@ def compute_similarity_matrix(
 def cluster_similar_entities(
     similarity_matrix: np.ndarray,
     entity_ids: List[str],
-    threshold: float = 0.85,
+    threshold: float = 0.75,
 ) -> List[Set[str]]:
     """Cluster entities with similar embeddings.
 
@@ -166,7 +166,7 @@ def select_canonical_entity(
 
 async def link_entities(
     entities: List[ExtractedEntity],
-    similarity_threshold: float = 0.85,
+    similarity_threshold: float = 0.75,
 ) -> Tuple[Dict[str, str], List[ExtractedEntity]]:
     """Link equivalent entities across papers.
 

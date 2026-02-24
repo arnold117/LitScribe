@@ -37,11 +37,13 @@ Only extract entities that are relevant to this research context. Ignore entitie
    - Examples: "Attention Mechanism", "Transfer Learning", "Overfitting", "Emergent Behavior"
 
 **Instructions:**
-- Extract 5-15 entities per paper
+- Extract 3-8 entities per paper (focus on the MOST important ones)
+- Prefer entities directly relevant to the research question
 - Use canonical names (e.g., "BERT" not "bert model")
 - Include common aliases/abbreviations
 - Write brief descriptions (1-2 sentences)
 - Only extract entities actually mentioned in the paper
+- Do NOT extract generic/broad concepts (e.g., "machine learning", "experiment") — focus on specific, named entities
 
 **Output Format (JSON):**
 {{

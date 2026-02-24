@@ -496,6 +496,193 @@ def test_threshold_clustering():
         return False
 
 
+def test_no_bidirectional_cooccur():
+    """Test that co-occur edges are not duplicated bidirectionally."""
+    print("\n" + "=" * 60)
+    print("Test 11: No bidirectional co-occur edges")
+    print("=" * 60)
+
+    try:
+        from graphrag.graph_builder import build_knowledge_graph
+
+        entities = [
+            {"entity_id": "e1", "name": "A", "entity_type": "method",
+             "aliases": [], "description": "", "paper_ids": ["p1"], "frequency": 1},
+            {"entity_id": "e2", "name": "B", "entity_type": "method",
+             "aliases": [], "description": "", "paper_ids": ["p1"], "frequency": 1},
+            {"entity_id": "e3", "name": "C", "entity_type": "concept",
+             "aliases": [], "description": "", "paper_ids": ["p1"], "frequency": 1},
+        ]
+        mentions = [
+            {"entity_id": "e1", "paper_id": "p1", "context": "", "section": "", "confidence": 0.9},
+            {"entity_id": "e2", "paper_id": "p1", "context": "", "section": "", "confidence": 0.9},
+            {"entity_id": "e3", "paper_id": "p1", "context": "", "section": "", "confidence": 0.9},
+        ]
+        papers = [
+            {"paper_id": "p1", "title": "P1", "authors": [], "year": 2024,
+             "citations": 0, "source": "test"},
+        ]
+
+        G = build_knowledge_graph(entities, mentions, papers, include_citation_edges=False)
+
+        # Count co-occur edges
+        cooccur_edges = [(u, v) for u, v, d in G.edges(data=True)
+                         if d.get("edge_type") == "co_occurs"]
+        print(f"  Co-occur edges: {len(cooccur_edges)}")
+
+        # 3 entities in 1 paper → 3 unique pairs (e1-e2, e1-e3, e2-e3)
+        # Without bidirectional: 3 edges. With bidirectional: 6 edges.
+        assert len(cooccur_edges) == 3, (
+            f"Expected 3 co-occur edges (no bidirectional), got {len(cooccur_edges)}"
+        )
+
+        # Verify no reverse duplicates
+        pairs = set()
+        for u, v in cooccur_edges:
+            pair = tuple(sorted([u, v]))
+            assert pair not in pairs, f"Duplicate co-occur pair: {pair}"
+            pairs.add(pair)
+        print("  No duplicate pairs confirmed")
+
+        print("PASS: No bidirectional co-occur edges")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_graphrag_defaults():
+    """Test that GraphRAG default parameters are correctly updated."""
+    print("\n" + "=" * 60)
+    print("Test 12: GraphRAG default parameters")
+    print("=" * 60)
+
+    try:
+        import inspect
+
+        # Check entity_linker defaults
+        from graphrag.entity_linker import cluster_similar_entities, link_entities
+        sig1 = inspect.signature(cluster_similar_entities)
+        assert sig1.parameters["threshold"].default == 0.75, (
+            f"cluster threshold should be 0.75, got {sig1.parameters['threshold'].default}"
+        )
+        print("  entity_linker cluster threshold = 0.75 OK")
+
+        sig2 = inspect.signature(link_entities)
+        assert sig2.parameters["similarity_threshold"].default == 0.75, (
+            f"link threshold should be 0.75, got {sig2.parameters['similarity_threshold'].default}"
+        )
+        print("  entity_linker link threshold = 0.75 OK")
+
+        # Check community_detector defaults
+        from graphrag.community_detector import build_community_hierarchy
+        sig3 = inspect.signature(build_community_hierarchy)
+        assert sig3.parameters["resolutions"].default == [1.0], (
+            f"resolutions should be [1.0], got {sig3.parameters['resolutions'].default}"
+        )
+        print("  community_detector resolutions = [1.0] OK")
+        assert sig3.parameters["min_community_size"].default == 3, (
+            f"min_community_size should be 3, got {sig3.parameters['min_community_size'].default}"
+        )
+        print("  community_detector min_community_size = 3 OK")
+
+        # Check integration defaults
+        from graphrag.integration import run_graphrag_pipeline
+        sig4 = inspect.signature(run_graphrag_pipeline)
+        assert sig4.parameters["similarity_threshold"].default == 0.75, (
+            f"integration similarity_threshold should be 0.75, got {sig4.parameters['similarity_threshold'].default}"
+        )
+        assert sig4.parameters["community_resolutions"].default == [1.0], (
+            f"integration resolutions should be [1.0], got {sig4.parameters['community_resolutions'].default}"
+        )
+        assert sig4.parameters["min_community_size"].default == 3, (
+            f"integration min_community_size should be 3, got {sig4.parameters['min_community_size'].default}"
+        )
+        print("  integration defaults OK")
+
+        # Check entity extraction prompt
+        from graphrag.prompts import ENTITY_EXTRACTION_PROMPT
+        assert "3-8 entities" in ENTITY_EXTRACTION_PROMPT, (
+            "Extraction prompt should say 3-8 entities"
+        )
+        assert "Do NOT extract generic" in ENTITY_EXTRACTION_PROMPT, (
+            "Extraction prompt should warn against generic entities"
+        )
+        print("  entity extraction prompt updated OK")
+
+        print("PASS: GraphRAG default parameters")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_single_resolution_community():
+    """Test that single resolution produces reasonable community count."""
+    print("\n" + "=" * 60)
+    print("Test 13: Single resolution community detection")
+    print("=" * 60)
+
+    try:
+        import networkx as nx
+        from graphrag.community_detector import build_community_hierarchy
+
+        # Create graph with 2 clear clusters of 3+ nodes each
+        G = nx.Graph()
+        # Cluster 1
+        G.add_edge("a1", "a2", weight=3)
+        G.add_edge("a2", "a3", weight=3)
+        G.add_edge("a1", "a3", weight=2)
+        # Cluster 2
+        G.add_edge("b1", "b2", weight=3)
+        G.add_edge("b2", "b3", weight=3)
+        G.add_edge("b1", "b3", weight=2)
+        # Weak link
+        G.add_edge("a1", "b1", weight=1)
+
+        for node in G.nodes():
+            G.nodes[node]["paper_ids"] = [f"paper_{node}"]
+
+        # Default: single resolution [1.0], min_community_size=3
+        communities = build_community_hierarchy(G)
+        print(f"  Communities with defaults: {len(communities)}")
+
+        # Should get exactly 2 communities (one per cluster)
+        # min_community_size=3 means both clusters (size 3) are kept
+        assert len(communities) <= 3, (
+            f"Expected ≤3 communities with single resolution, got {len(communities)}"
+        )
+        # Each community should be at level 0 (single resolution)
+        for c in communities:
+            assert c["level"] == 0, f"All communities should be level 0, got {c['level']}"
+        print("  All communities at level 0 OK")
+
+        # Compare with old multi-resolution behavior
+        communities_multi = build_community_hierarchy(
+            G, resolutions=[0.5, 1.0, 2.0], min_community_size=2
+        )
+        print(f"  Communities with old defaults: {len(communities_multi)}")
+        assert len(communities_multi) > len(communities), (
+            "Multi-resolution should produce more communities than single"
+        )
+        print("  Multi-resolution produces more communities (as expected)")
+
+        print("PASS: Single resolution community detection")
+        return True
+
+    except Exception as e:
+        print(f"FAIL: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Run all tests."""
     print("GraphRAG Module Tests")
@@ -513,6 +700,9 @@ def main():
     results.append(("Tracker params in GraphRAG", test_tracker_params_in_graphrag()))
     results.append(("Entity extraction retry", test_entity_extraction_retry_params()))
     results.append(("Threshold clustering", test_threshold_clustering()))
+    results.append(("No bidirectional co-occur", test_no_bidirectional_cooccur()))
+    results.append(("GraphRAG defaults", test_graphrag_defaults()))
+    results.append(("Single resolution community", test_single_resolution_community()))
 
     # Summary
     print("\n" + "=" * 60)
