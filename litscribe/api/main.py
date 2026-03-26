@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from litscribe.api.routes.reviews import router as reviews_router
+from litscribe.api.routes.memory import router as memory_router
 
 
 def create_app() -> FastAPI:
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(reviews_router)
+    app.include_router(memory_router)
 
     return app
 
