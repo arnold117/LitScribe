@@ -11,7 +11,7 @@ import aiosqlite
 from litscribe.models.analysis import ParsedDoc
 from litscribe.models.paper import Paper
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _DDL = """
 PRAGMA journal_mode=WAL;
@@ -53,11 +53,12 @@ CREATE TABLE IF NOT EXISTS parsed_docs (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-    session_id  TEXT PRIMARY KEY,
-    query       TEXT NOT NULL,
-    status      TEXT DEFAULT 'running',
-    created_at  TEXT DEFAULT (datetime('now')),
-    finished_at TEXT
+    session_id        TEXT PRIMARY KEY,
+    research_question TEXT NOT NULL,
+    review_type       TEXT NOT NULL DEFAULT 'standard',
+    language          TEXT NOT NULL DEFAULT 'en',
+    created_at        TEXT DEFAULT (datetime('now')),
+    updated_at        TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -84,12 +85,14 @@ AFTER INSERT ON episodes BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS review_versions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  TEXT NOT NULL,
-    version     INTEGER NOT NULL DEFAULT 1,
-    content     TEXT NOT NULL,
-    score       REAL DEFAULT 0.0,
-    created_at  TEXT DEFAULT (datetime('now'))
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT NOT NULL,
+    version_number INTEGER NOT NULL DEFAULT 1,
+    review_text    TEXT NOT NULL,
+    word_count     INTEGER DEFAULT 0,
+    instruction    TEXT DEFAULT '',
+    diff_text      TEXT DEFAULT '',
+    created_at     TEXT DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS skills_meta (
@@ -284,3 +287,99 @@ class SQLiteStore:
         ) as cursor:
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Sessions
+    # ------------------------------------------------------------------
+
+    async def create_session(
+        self, session_id: str, question: str, review_type: str = "standard", language: str = "en"
+    ):
+        await self._db.execute(
+            """INSERT OR REPLACE INTO sessions
+               (session_id, research_question, review_type, language)
+               VALUES (?, ?, ?, ?)""",
+            (session_id, question, review_type, language),
+        )
+        await self._db.commit()
+
+    async def get_session(self, session_id: str) -> dict | None:
+        cursor = await self._db.execute(
+            "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "research_question": row["research_question"],
+            "review_type": row["review_type"],
+            "language": row["language"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def list_sessions(self, limit: int = 20) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT session_id, research_question, review_type, created_at FROM sessions ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"session_id": row["session_id"], "question": row["research_question"],
+             "review_type": row["review_type"], "created_at": row["created_at"]}
+            for row in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # Review Versions
+    # ------------------------------------------------------------------
+
+    async def save_version(
+        self, session_id: str, version_number: int, review_text: str,
+        word_count: int = 0, instruction: str = "", diff_text: str = "",
+    ):
+        await self._db.execute(
+            """INSERT OR REPLACE INTO review_versions
+               (session_id, version_number, review_text, word_count, instruction, diff_text)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (session_id, version_number, review_text, word_count, instruction, diff_text),
+        )
+        await self._db.commit()
+
+    async def get_versions(self, session_id: str) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT * FROM review_versions WHERE session_id = ? ORDER BY version_number",
+            (session_id,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "session_id": row["session_id"],
+                "version_number": row["version_number"],
+                "review_text": row["review_text"],
+                "word_count": row["word_count"],
+                "instruction": row["instruction"],
+                "diff_text": row["diff_text"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    async def get_latest_version(self, session_id: str) -> dict | None:
+        cursor = await self._db.execute(
+            "SELECT * FROM review_versions WHERE session_id = ? ORDER BY version_number DESC LIMIT 1",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row["session_id"],
+            "version_number": row["version_number"],
+            "review_text": row["review_text"],
+            "word_count": row["word_count"],
+            "instruction": row["instruction"],
+            "diff_text": row["diff_text"],
+            "created_at": row["created_at"],
+        }

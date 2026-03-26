@@ -40,3 +40,21 @@ class UnifiedStore:
 
     def semantic_search(self, query: str, collection: str, n: int = 10) -> list[dict]:
         return self.vectors.search(query, collection, n)
+
+    async def create_session(self, session_id, question, review_type="standard", language="en"):
+        await self.sqlite.create_session(session_id, question, review_type, language)
+
+    async def get_session(self, session_id) -> dict | None:
+        return await self.sqlite.get_session(session_id)
+
+    async def list_sessions(self, limit=20) -> list[dict]:
+        return await self.sqlite.list_sessions(limit)
+
+    async def save_version(self, session_id, version_number, review_text, word_count=0, instruction="", diff_text=""):
+        await self.sqlite.save_version(session_id, version_number, review_text, word_count, instruction, diff_text)
+
+    async def get_versions(self, session_id) -> list[dict]:
+        return await self.sqlite.get_versions(session_id)
+
+    async def get_latest_version(self, session_id) -> dict | None:
+        return await self.sqlite.get_latest_version(session_id)
