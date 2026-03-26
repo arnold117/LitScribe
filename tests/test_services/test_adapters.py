@@ -1,4 +1,4 @@
-"""Tests that all service adapter stubs correctly implement the SearchService protocol."""
+"""Tests that all service adapters implement the SearchService protocol."""
 import pytest
 from litscribe.services.base import SearchService
 
@@ -44,16 +44,6 @@ def test_source_names_are_unique():
     assert len(names) == len(set(names)), "Service source_names must be unique"
 
 
-@pytest.mark.asyncio
-async def test_stub_search_raises_not_implemented():
-    """Remaining stubs (not yet ported) still raise NotImplementedError."""
-    from litscribe.services.openalex import OpenAlexService
-
-    svc = OpenAlexService()
-    with pytest.raises(NotImplementedError):
-        await svc.search("test query")
-
-
 def test_pdf_service_stub_exists():
     from litscribe.services.pdf import PDFService
 
@@ -61,11 +51,11 @@ def test_pdf_service_stub_exists():
     assert svc is not None
 
 
-def test_exporter_stubs_exist():
-    from litscribe.exporters.bibtex import export_bibtex
-    from litscribe.exporters.pandoc import export_pandoc
-    from litscribe.exporters.citation_formatter import format_citation, format_citations
+def test_exporters_are_importable():
+    from litscribe.exporters.bibtex import papers_to_bibtex, escape_bibtex
+    from litscribe.exporters.pandoc import export_review, ExportFormat
+    from litscribe.exporters.citation_formatter import format_citation, CitationStyle
 
-    for fn in [export_bibtex, export_pandoc, format_citation, format_citations]:
-        with pytest.raises(NotImplementedError):
-            fn([], "out.bib") if fn.__name__ in ("export_bibtex", "export_pandoc") else fn(object())
+    assert callable(papers_to_bibtex)
+    assert callable(format_citation)
+    assert callable(export_review)
