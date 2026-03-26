@@ -45,10 +45,11 @@ def test_source_names_are_unique():
 
 
 @pytest.mark.asyncio
-async def test_search_raises_not_implemented():
-    from litscribe.services.arxiv import ArxivService
+async def test_stub_search_raises_not_implemented():
+    """Remaining stubs (not yet ported) still raise NotImplementedError."""
+    from litscribe.services.openalex import OpenAlexService
 
-    svc = ArxivService()
+    svc = OpenAlexService()
     with pytest.raises(NotImplementedError):
         await svc.search("test query")
 
