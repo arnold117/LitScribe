@@ -33,14 +33,25 @@ class GraphRAGPlugin:
         from litscribe.plugins.graphrag.linker import link_entities
         from litscribe.plugins.graphrag.graph_builder import build_graph
         from litscribe.plugins.graphrag.community_detector import detect_communities
+        from litscribe.plugins.graphrag.summarizer import summarize_communities
 
         entities, mentions = await extract_entities(analyses, self.llm_call)
         linked = link_entities(entities)
+        entities_by_id = {e["entity_id"]: e for e in linked}
         graph = build_graph(linked, mentions)
         communities = detect_communities(graph)
 
+        # Enrich communities with entity/paper data for richer summaries
+        for comm in communities:
+            comm["entities"] = [
+                entities_by_id[eid] for eid in comm.get("entity_ids", [])
+                if eid in entities_by_id
+            ]
+
+        await summarize_communities(communities, self.llm_call)
+
         return {
-            "entities": {e["entity_id"]: e for e in linked},
+            "entities": entities_by_id,
             "mentions": mentions,
             "graph": graph,
             "communities": communities,

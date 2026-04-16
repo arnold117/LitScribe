@@ -133,11 +133,53 @@ def test_detect_communities_single_component():
     assert set(communities[0]["entity_ids"]) == {"a", "b", "c"}
 
 
-def test_summarizer_raises_not_implemented():
+@pytest.mark.asyncio
+async def test_summarizer_fills_summaries():
     from litscribe.plugins.graphrag.summarizer import summarize_communities
-    import asyncio
 
-    with pytest.raises(NotImplementedError):
-        asyncio.get_event_loop().run_until_complete(
-            summarize_communities([], AsyncMock())
-        )
+    communities = [
+        {
+            "community_id": "0",
+            "level": 0,
+            "entity_ids": ["a", "b"],
+            "paper_ids": ["p1"],
+            "summary": "",
+            "parent_id": None,
+            "children_ids": [],
+        }
+    ]
+    mock_llm = AsyncMock(return_value="This community studies attention mechanisms.")
+    result = await summarize_communities(communities, mock_llm)
+
+    assert len(result) == 1
+    assert result[0]["summary"] == "This community studies attention mechanisms."
+    mock_llm.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_summarizer_skips_already_summarized():
+    from litscribe.plugins.graphrag.summarizer import summarize_communities
+
+    communities = [
+        {
+            "community_id": "0",
+            "level": 0,
+            "entity_ids": ["a"],
+            "paper_ids": ["p1"],
+            "summary": "Existing summary.",
+            "parent_id": None,
+            "children_ids": [],
+        }
+    ]
+    mock_llm = AsyncMock()
+    await summarize_communities(communities, mock_llm)
+
+    mock_llm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_summarizer_empty_input():
+    from litscribe.plugins.graphrag.summarizer import summarize_communities
+
+    result = await summarize_communities([], AsyncMock())
+    assert result == []
