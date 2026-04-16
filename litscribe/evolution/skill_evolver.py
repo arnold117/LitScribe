@@ -1,12 +1,46 @@
-"""Skill evolver — post-task evaluation and skill lifecycle management."""
+"""Skill evolver — post-task evaluation and skill lifecycle management.
+
+Uses multi-signal trigger conditions instead of a single complexity int
+to decide whether a task outcome is worth extracting as a reusable skill.
+"""
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from litscribe.evolution.episodic import EpisodicMemory
 from litscribe.evolution.procedural import ProceduralMemory
 
 SCORE_THRESHOLD = 0.7
-COMPLEXITY_THRESHOLD = 5
 FAILURE_THRESHOLD = 0.5
+
+
+@dataclass
+class TaskMetrics:
+    """Signals collected from a single pipeline run."""
+
+    sub_topic_count: int = 1
+    papers_found: int = 0
+    papers_relevant: int = 0
+    loop_back_count: int = 0
+    source_count: int = 1
+
+    @property
+    def signal_to_noise(self) -> float:
+        """Fraction of discovered papers that were actually relevant."""
+        if self.papers_found == 0:
+            return 1.0
+        return self.papers_relevant / self.papers_found
+
+    @property
+    def is_non_trivial(self) -> bool:
+        """True when any trigger condition fires — meaning the task was
+        complex enough that a successful strategy is worth remembering."""
+        return (
+            self.sub_topic_count >= 3
+            or self.signal_to_noise < 0.5
+            or self.loop_back_count >= 2
+            or self.source_count > 2
+        )
 
 
 class SkillEvolver:
@@ -16,22 +50,38 @@ class SkillEvolver:
         self.episodic = episodic
         self.procedural = procedural
 
-    def should_extract_skill(self, score: float, complexity: int) -> bool:
-        """Return True when the outcome warrants extracting a reusable skill."""
-        return score >= SCORE_THRESHOLD and complexity >= COMPLEXITY_THRESHOLD
+    def should_extract_skill(self, score: float, metrics: TaskMetrics) -> bool:
+        """Return True when the outcome warrants extracting a reusable skill.
+
+        High score + non-trivial task = worth remembering.
+        """
+        return score >= SCORE_THRESHOLD and metrics.is_non_trivial
 
     async def post_task_evaluate(
         self,
         session_id: str,
         question: str,
         score: float,
-        complexity: int,
+        metrics: TaskMetrics,
         domain: str,
         trace_summary: str,
         used_skills: list[str] | None = None,
     ) -> None:
         """Record the outcome and update the skill library accordingly."""
-        if self.should_extract_skill(score, complexity):
+        # Record episode regardless of outcome
+        await self.episodic.record(
+            session_id=session_id,
+            question=question,
+            outcome_score=score,
+            key_events=[
+                f"score={score}, subs={metrics.sub_topic_count}, "
+                f"papers={metrics.papers_relevant}/{metrics.papers_found}, "
+                f"loops={metrics.loop_back_count}, sources={metrics.source_count}",
+                trace_summary,
+            ],
+        )
+
+        if self.should_extract_skill(score, metrics):
             existing = self.procedural.find_relevant(question, n=1)
             if existing and existing[0].get("domain") == domain:
                 self.procedural.patch_skill(
@@ -45,7 +95,9 @@ class SkillEvolver:
                     trigger=f"Research questions about {domain}",
                     strategy=trace_summary,
                     learned_adjustments=[],
+                    success_rate=score,
                 )
+
         if score < FAILURE_THRESHOLD:
             await self.record_failure(session_id, question, score, trace_summary)
             if used_skills:
@@ -54,7 +106,7 @@ class SkillEvolver:
                     if skill:
                         self.procedural.patch_skill(
                             slug,
-                            adjustment=f"NEEDS REVIEW: failed in session {session_id}",
+                            adjustment=f"NEEDS REVIEW: failed in session {session_id[:8]}",
                         )
 
     async def record_failure(

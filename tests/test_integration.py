@@ -77,7 +77,10 @@ async def test_full_pipeline_with_mock_llm(tmp_data_dir, tmp_skills_dir):
     assert result.text == "CoT review text"
 
     # Skill evolution trigger check
-    assert memory.evolver.should_extract_skill(score=0.85, complexity=5)
+    from litscribe.evolution.skill_evolver import TaskMetrics
+    assert memory.evolver.should_extract_skill(
+        score=0.85, metrics=TaskMetrics(sub_topic_count=3, source_count=3)
+    )
 
     # Episodic memory
     await memory.episodic.record(
