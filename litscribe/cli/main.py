@@ -161,3 +161,55 @@ def config(
             err=True,
         )
         raise typer.Exit(1)
+
+
+# ---------------------------------------------------------------------------
+# chat
+# ---------------------------------------------------------------------------
+
+@app.command()
+def chat() -> None:
+    """Interactive chat — talk to LitScribe, it decides when to run reviews."""
+    import asyncio
+
+    from litscribe.config import Config
+    from litscribe.evolution.memory_manager import MemoryManager
+    from litscribe.llm.router import LLMRouter
+    from litscribe.agents.chat import ChatAgent
+
+    cfg = Config()
+    cfg.ensure_directories()
+
+    async def _run_chat() -> None:
+        mm = MemoryManager(
+            db_path=cfg.db_path,
+            chroma_path=cfg.chroma_path,
+            skills_dir=cfg.skills_dir,
+        )
+        await mm.initialize()
+
+        router = LLMRouter(cfg)
+        agent = ChatAgent(config=cfg, memory=mm, router=router)
+
+        typer.echo("LitScribe Chat (type 'exit' or 'quit' to leave)")
+        typer.echo("─" * 50)
+
+        try:
+            while True:
+                try:
+                    user_input = input("\nyou> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    break
+
+                if not user_input:
+                    continue
+                if user_input.lower() in ("exit", "quit"):
+                    break
+
+                response = await agent.send(user_input)
+                typer.echo(f"\nlitscribe> {response}")
+        finally:
+            await mm.close()
+            typer.echo("\nBye!")
+
+    asyncio.run(_run_chat())
