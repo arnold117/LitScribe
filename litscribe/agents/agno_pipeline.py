@@ -15,6 +15,7 @@ from litscribe.agents.agno_agents import (
     create_reviewer_agent,
 )
 from litscribe.agents.pipeline import LitScribePipeline
+from litscribe.evolution.memory_manager import MemoryManager
 from litscribe.llm.router import LLMRouter
 from litscribe.models.plan import ResearchPlan, ReviewTier, SubTopic
 from litscribe.models.paper import Paper
@@ -45,7 +46,7 @@ async def _agent_run_text_async(agent: Agent, message: str) -> str:
     return str(response)
 
 
-def create_agno_pipeline(config: Config) -> LitScribePipeline:
+def create_agno_pipeline(config: Config, memory: MemoryManager | None = None) -> LitScribePipeline:
     """Factory that creates a LitScribePipeline wired with Agno agents and config."""
     router = LLMRouter(config)
 
@@ -262,4 +263,5 @@ def create_agno_pipeline(config: Config) -> LitScribePipeline:
         read_fn=read_fn,
         synthesize_fn=synthesize_fn,
         review_fn=review_fn,
+        memory=memory,
     )
