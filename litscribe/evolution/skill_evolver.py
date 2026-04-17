@@ -87,6 +87,7 @@ class SkillEvolver:
                 self.procedural.patch_skill(
                     existing[0]["slug"],
                     adjustment=f"Refined from session {session_id[:8]} (score={score})",
+                    score=score,
                 )
             else:
                 self.procedural.save_skill(

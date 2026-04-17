@@ -157,8 +157,10 @@ class ProceduralMemory:
         slug: str,
         strategy: str | None = None,
         adjustment: str | None = None,
+        score: float | None = None,
     ) -> bool:
-        """Increment version, optionally update strategy and append an adjustment."""
+        """Increment version, optionally update strategy, append an adjustment,
+        and update success_rate via exponential moving average."""
         path = self._path(slug)
         if not path.exists():
             return False
@@ -169,6 +171,20 @@ class ProceduralMemory:
             return f"{m.group(1)}{int(m.group(2)) + 1}"
 
         content = _VERSION_RE.sub(_bump, content, count=1)
+
+        # Update success_rate via EMA: new = 0.7 * old + 0.3 * score
+        if score is not None:
+            def _update_rate(m: re.Match) -> str:
+                old_rate = float(m.group(2))
+                new_rate = round(0.7 * old_rate + 0.3 * score, 3)
+                return f"{m.group(1)}{new_rate}"
+            content = re.sub(
+                r"^(success_rate:\s*)([\d.]+)",
+                _update_rate,
+                content,
+                count=1,
+                flags=re.MULTILINE,
+            )
 
         # Replace strategy section if provided
         if strategy is not None:
