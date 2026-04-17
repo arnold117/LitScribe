@@ -18,6 +18,7 @@ from litscribe.agents.pipeline import LitScribePipeline
 from litscribe.evolution.memory_manager import MemoryManager
 from litscribe.llm.router import LLMRouter
 from litscribe.models.plan import ResearchPlan, ReviewTier, SubTopic
+from litscribe.services.base import SearchService, dedup_papers
 from litscribe.models.paper import Paper
 from litscribe.models.analysis import PaperAnalysis
 from litscribe.models.review import ReviewOutput, Citation, Theme
@@ -44,6 +45,64 @@ async def _agent_run_text_async(agent: Agent, message: str) -> str:
     if hasattr(response, "content"):
         return response.content or ""
     return str(response)
+
+
+def _build_services(config: Config) -> list[SearchService]:
+    """Instantiate available search services based on config credentials."""
+    services: list[SearchService] = []
+
+    # Always available (no API key required)
+    try:
+        from litscribe.services.arxiv import ArxivService
+        services.append(ArxivService())
+    except ImportError:
+        pass
+
+    try:
+        from litscribe.services.openalex import OpenAlexService
+        services.append(OpenAlexService())
+    except ImportError:
+        pass
+
+    try:
+        from litscribe.services.europe_pmc import EuropePMCService
+        services.append(EuropePMCService())
+    except ImportError:
+        pass
+
+    # Require credentials
+    if config.services.semantic_scholar_api_key:
+        try:
+            from litscribe.services.semantic_scholar import SemanticScholarService
+            services.append(SemanticScholarService(api_key=config.services.semantic_scholar_api_key))
+        except ImportError:
+            pass
+    else:
+        # S2 works without key (just rate-limited)
+        try:
+            from litscribe.services.semantic_scholar import SemanticScholarService
+            services.append(SemanticScholarService())
+        except ImportError:
+            pass
+
+    if config.services.ncbi_email:
+        try:
+            from litscribe.services.pubmed import PubMedService
+            services.append(PubMedService(email=config.services.ncbi_email, api_key=config.services.ncbi_api_key or None))
+        except ImportError:
+            pass
+
+    if config.services.zotero_api_key and config.services.zotero_library_id:
+        try:
+            from litscribe.services.zotero import ZoteroService
+            services.append(ZoteroService(
+                api_key=config.services.zotero_api_key,
+                library_id=config.services.zotero_library_id,
+            ))
+        except ImportError:
+            pass
+
+    return services
 
 
 def create_agno_pipeline(config: Config, memory: MemoryManager | None = None) -> LitScribePipeline:
@@ -127,14 +186,44 @@ def create_agno_pipeline(config: Config, memory: MemoryManager | None = None) ->
         )
 
     async def discover_fn(plan: ResearchPlan, **kwargs: Any) -> list[Paper]:
-        """Discovery uses external services, not an LLM agent.
+        """Search across multiple academic sources and deduplicate results."""
+        # Allow test injection
+        if "_papers" in kwargs:
+            return kwargs["_papers"]
 
-        This stub returns an empty list so the pipeline can be instantiated
-        without live service dependencies.  Callers should replace this with
-        a real service-backed implementation when building a production
-        pipeline.
-        """
-        return kwargs.get("_papers", [])
+        services = _build_services(config)
+        if not services:
+            return []
+
+        max_papers: int = kwargs.get("max_papers", plan.max_papers)
+        per_source = max(max_papers // max(len(services), 1), 5)
+
+        # Build query list from sub-topics
+        queries = [st.name for st in plan.sub_topics] + kwargs.get("extra_queries", [])
+        if not queries:
+            queries = [plan.question]
+
+        # Concurrent search across all sources × all queries
+        import asyncio
+
+        async def _search_one(svc: SearchService, query: str) -> list[Paper]:
+            try:
+                return await svc.search(query, max_results=per_source)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Search failed for %s query=%s: %s", svc.source_name, query[:40], exc
+                )
+                return []
+
+        tasks = [_search_one(svc, q) for svc in services for q in queries]
+        results = await asyncio.gather(*tasks)
+
+        all_papers: list[Paper] = []
+        for batch in results:
+            all_papers.extend(batch)
+
+        return dedup_papers(all_papers)[:max_papers]
 
     async def read_fn(papers: list[Paper], **kwargs: Any) -> list[PaperAnalysis]:
         if not papers:
