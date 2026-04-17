@@ -40,10 +40,64 @@ Call with: {"tool": "export", "format": "bibtex|apa|mla"}
 
 If the user is just chatting, asking a question, or you don't need a tool, \
 respond directly without calling any tool.
-
-When you need a tool, respond with ONLY a JSON block: {"tool": "...", ...}
-When you don't, respond in natural language.
 """
+
+# OpenAI-style tool definitions for function calling
+_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "review",
+            "description": "Run a full literature review pipeline on a research topic.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The research question to review."},
+                    "tier": {"type": "string", "enum": ["quick", "standard", "comprehensive"], "default": "standard"},
+                    "max_papers": {"type": "integer", "default": 40},
+                    "language": {"type": "string", "default": "en"},
+                },
+                "required": ["question"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": "Search past research sessions and accumulated knowledge.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search terms."},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": "Show learned research strategies and skills.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "export",
+            "description": "Export the last review to a citation format.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "format": {"type": "string", "enum": ["bibtex", "apa", "mla", "ieee", "chicago"]},
+                },
+                "required": ["format"],
+            },
+        },
+    },
+]
 
 
 class ChatAgent:
@@ -73,33 +127,72 @@ class ChatAgent:
         self.history.append({"role": "user", "content": user_message})
 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}] + self.history
-        raw = await self.router.call(
-            messages, task_type="planning", agent_name="chat"
-        )
 
-        # Check if the response is a tool call
-        tool_call = self._parse_tool_call(raw)
-        if tool_call:
-            result = await self._dispatch(tool_call)
-            self.history.append({"role": "assistant", "content": result})
-            return result
+        # Strategy 1: try function calling (most reliable)
+        tool_call = await self._try_function_calling(messages)
+
+        # Strategy 2: fall back to text-based tool dispatch
+        if tool_call is None:
+            raw = await self.router.call(
+                messages, task_type="planning", agent_name="chat"
+            )
+            tool_call = self._parse_tool_call(raw)
+            if tool_call is None:
+                # Plain conversation — no tool needed
+                self.history.append({"role": "assistant", "content": raw})
+                return raw
+
+        result = await self._dispatch(tool_call)
+        self.history.append({"role": "assistant", "content": result})
+        return result
 
         self.history.append({"role": "assistant", "content": raw})
         return raw
 
+    async def _try_function_calling(self, messages: list[dict]) -> dict | None:
+        """Attempt OpenAI-style function calling via the LLM router.
+
+        Returns a normalised tool-call dict ``{"tool": ..., ...}`` or ``None``
+        if the model doesn't support tools or chose not to call one.
+        """
+        result = await self.router.call_with_tools(
+            messages, tools=_TOOL_DEFINITIONS, task_type="planning", agent_name="chat"
+        )
+        if result is None:
+            return None
+        # Normalise: function calling returns {"name": ..., "arguments": {...}}
+        # but _dispatch expects {"tool": ..., **args}
+        return {"tool": result["name"], **result.get("arguments", {})}
+
     def _parse_tool_call(self, text: str) -> dict | None:
-        """Try to extract a JSON tool call from the LLM response."""
+        """Fuzzy-extract a JSON tool call from mixed LLM output.
+
+        Handles: pure JSON, markdown-fenced JSON, and JSON embedded in text.
+        """
         text = text.strip()
-        # Strip markdown fences
-        if text.startswith("```"):
-            text = re.sub(r"^```\w*\n?", "", text)
-            text = re.sub(r"\n?```$", "", text)
+
+        # Try 1: pure JSON (with optional markdown fences)
+        cleaned = text
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```\w*\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```$", "", cleaned)
         try:
-            data = json.loads(text)
+            data = json.loads(cleaned)
             if isinstance(data, dict) and "tool" in data:
                 return data
         except (json.JSONDecodeError, ValueError):
             pass
+
+        # Try 2: extract first JSON object from mixed text
+        match = re.search(r"\{[^{}]*\"tool\"[^{}]*\}", text)
+        if match:
+            try:
+                data = json.loads(match.group())
+                if isinstance(data, dict) and "tool" in data:
+                    return data
+            except (json.JSONDecodeError, ValueError):
+                pass
+
         return None
 
     async def _dispatch(self, call: dict[str, Any]) -> str:
@@ -145,7 +238,9 @@ class ChatAgent:
             self._pipeline_running = False
 
         # Process staged messages
-        await self._drain_stage_queue()
+        staged_responses = await self._drain_stage_queue()
+        if staged_responses:
+            result += "\n\n--- Staged messages processed ---\n" + "\n".join(staged_responses)
 
         return result
 
@@ -185,19 +280,55 @@ class ChatAgent:
         return "\n".join(lines)
 
     def _handle_export(self, call: dict[str, Any]) -> str:
-        """Export the last review."""
+        """Export the last review's cited papers."""
         if self._last_review is None:
             return "No review to export. Run a review first."
-        fmt = call.get("format", "bibtex")
-        return f"Export to {fmt} is not yet wired. Last review has {self._last_review.word_count} words."
 
-    async def _drain_stage_queue(self) -> None:
-        """Process any messages that were staged during pipeline execution."""
+        # Collect Paper objects from citations
+        papers = self._collect_cited_papers()
+        if not papers:
+            return "No cited papers to export."
+
+        fmt = call.get("format", "bibtex")
+
+        if fmt == "bibtex":
+            from litscribe.exporters.bibtex import papers_to_bibtex
+            return papers_to_bibtex(papers)
+
+        from litscribe.exporters.citation_formatter import CitationStyle, format_citations
+        style_map = {
+            "apa": CitationStyle.APA,
+            "mla": CitationStyle.MLA,
+            "ieee": CitationStyle.IEEE,
+            "chicago": CitationStyle.CHICAGO,
+            "gbt7714": CitationStyle.GB_T_7714,
+        }
+        style = style_map.get(fmt, CitationStyle.APA)
+        return format_citations(papers, style=style)
+
+    def _collect_cited_papers(self) -> list:
+        """Build Paper objects from the last review's citations."""
+        if self._last_review is None:
+            return []
+        from litscribe.models.paper import Paper
+        papers = []
+        for cit in self._last_review.citations:
+            papers.append(Paper(
+                paper_id=cit.paper_id,
+                title=cit.claim or cit.paper_id,
+                authors=[],
+                abstract="",
+                year=0,
+                sources={},
+            ))
+        return papers
+
+    async def _drain_stage_queue(self) -> list[str]:
+        """Process staged messages and return their responses."""
+        responses: list[str] = []
         while not self._stage_queue.empty():
             staged = await self._stage_queue.get()
             logger.info("Processing staged message: %s", staged[:80])
-            # Feed staged messages back through the agent
             response = await self.send(staged)
-            # In REPL mode the response gets printed by the caller;
-            # here we just append to history so context is maintained
-            logger.info("Staged response: %s", response[:80])
+            responses.append(response)
+        return responses

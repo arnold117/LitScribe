@@ -40,6 +40,60 @@ class LLMRouter:
             self.tracker.record(agent_name, model, {"prompt_tokens": response.usage.prompt_tokens, "completion_tokens": response.usage.completion_tokens})
         return content
 
+    async def call_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        task_type: str | None = None,
+        agent_name: str = "unknown",
+    ) -> dict[str, Any] | None:
+        """Call the LLM with OpenAI-style tool definitions.
+
+        Returns a dict ``{"name": ..., "arguments": {...}}`` if the model
+        invoked a tool, or ``None`` if it responded with plain text.
+        The plain text content is appended to ``messages`` as an assistant
+        message so the caller can read it.
+        """
+        model = self.resolve_model(task_type)
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "max_tokens": 4096,
+        }
+        if self.config.llm.api_key:
+            kwargs["api_key"] = self.config.llm.api_key
+        if self.config.llm.api_base:
+            kwargs["api_base"] = self.config.llm.api_base
+        if not self._is_reasoning_model(model):
+            kwargs["temperature"] = 0.7
+
+        try:
+            response = await litellm.acompletion(**kwargs)
+        except Exception:
+            # Model may not support tools — caller should fall back
+            logger.debug("call_with_tools failed, model may not support tools", exc_info=True)
+            return None
+
+        msg = response.choices[0].message
+        if response.usage:
+            self.tracker.record(agent_name, model, {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+            })
+
+        # Check for tool call in response
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            tc = msg.tool_calls[0]
+            fn = tc.function
+            try:
+                args = json.loads(fn.arguments) if isinstance(fn.arguments, str) else fn.arguments
+            except json.JSONDecodeError:
+                args = {}
+            return {"name": fn.name, "arguments": args}
+
+        return None
+
     async def call_json(self, messages: list[dict], task_type: str | None = None, agent_name: str = "unknown", max_retries: int = 2) -> dict:
         for attempt in range(max_retries + 1):
             temp = 0.7 if attempt == 0 else max(0.3, 0.7 - attempt * 0.2)
