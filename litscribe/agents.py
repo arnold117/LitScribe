@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from typing import Any
+
+from deepagents import SubAgent, create_deep_agent
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+
+from litscribe.config import Config
+from litscribe.evolution.memory_manager import MemoryManager
+from litscribe.middleware.evolution import EvolutionMiddleware
+from litscribe.middleware.token_tracking import TokenTrackingMiddleware
+from litscribe.models.assessment import ReviewAssessment
+from litscribe.models.plan import ResearchPlan
+from litscribe.models.review import ReviewOutput
+from litscribe.prompts.planner_system import (
+    PLANNER_SYSTEM_PROMPT,
+    READER_SYSTEM_PROMPT,
+    SYNTHESIZER_SYSTEM_PROMPT,
+    REVIEWER_SYSTEM_PROMPT,
+)
+from litscribe.prompts.supervisor import SUPERVISOR_PROMPT
+from litscribe.tools.status import PipelineState, check_status as _check_status
+
+logger = logging.getLogger(__name__)
+
+
+def _build_model(config: Config) -> ChatOpenAI:
+    return ChatOpenAI(
+        base_url=config.llm.api_base,
+        api_key=config.llm.api_key,
+        model=config.llm.default_model.replace("openai/", ""),
+    )
+
+
+def create_pipeline_tools(config: Config, state: PipelineState):
+    from litscribe.llm.router import LLMRouter
+    router = LLMRouter(config)
+
+    @tool
+    async def discover_papers(research_question: str, extra_queries: str = "") -> str:
+        """Search academic databases for papers on a research topic. Call this after planning."""
+        from litscribe.tools.discovery import discover_papers as _discover
+
+        extra = [q.strip() for q in extra_queries.split(",") if q.strip()] if extra_queries else []
+
+        result = await _discover(
+            research_question=research_question,
+            domain=state.domain,
+            config=config,
+            router=router,
+            max_papers=40,
+            extra_queries=extra,
+        )
+
+        state.papers = result["papers"]
+        state.iteration += 1
+        return (
+            f"Found {result['total_found']} papers, selected {result['total_selected']}. "
+            f"Used {result['queries_used']} queries. "
+            f"Call check_status for next step."
+        )
+
+    @tool
+    async def analyze_papers() -> str:
+        """Critically analyze all discovered papers. Call this after discovery."""
+        from litscribe.tools.reading import analyze_papers as _analyze
+
+        if not state.papers:
+            return "No papers to analyze. Run discover_papers first."
+
+        analyses = await _analyze(state.papers, state.research_question, router)
+        state.analyses = analyses
+        return (
+            f"Analyzed {len(analyses)} papers. "
+            f"Average relevance: {sum(a.relevance_score for a in analyses) / max(len(analyses), 1):.2f}. "
+            f"Call check_status for next step."
+        )
+
+    @tool
+    async def build_knowledge_graph() -> str:
+        """Build a knowledge graph from paper analyses. Call when ≥5 papers analyzed."""
+        from litscribe.tools.graphrag import build_knowledge_graph as _build
+
+        if len(state.analyses) < 5:
+            return f"Only {len(state.analyses)} analyses, skipping graph (need ≥5)."
+
+        async def llm_call(prompt: str, **kwargs) -> str:
+            return await router.call([{"role": "user", "content": prompt}], **kwargs)
+
+        graph = await _build(state.analyses, llm_call)
+        state.graph = graph
+        n_communities = len(graph.get("communities", []))
+        return f"Built knowledge graph: {n_communities} communities. Call check_status."
+
+    @tool
+    async def write_review() -> str:
+        """Write the literature review from analyses. Call after reading (and optionally graphrag)."""
+        from litscribe.tools.synthesis import synthesize
+
+        if not state.analyses:
+            return "No analyses available. Run analyze_papers first."
+
+        review = await synthesize(
+            router=router,
+            analyses=state.analyses,
+            research_question=state.research_question,
+            language=state.language,
+            graph_context=state.graph,
+        )
+        state.synthesis = review
+        return (
+            f"Review written: {review.word_count} words, {len(review.themes)} themes. "
+            f"Call check_status for next step."
+        )
+
+    @tool
+    async def evaluate_review() -> str:
+        """Evaluate the review quality. Call after writing the review."""
+        from litscribe.tools.review import evaluate_review as _evaluate
+
+        if state.synthesis is None:
+            return "No review to evaluate. Run write_review first."
+
+        assessment = await _evaluate(
+            router=router,
+            review=state.synthesis,
+            analyses=state.analyses,
+            plan=state.plan,
+            research_question=state.research_question,
+        )
+        state.assessment = assessment
+        passed = "PASSED" if assessment.passed else "NEEDS IMPROVEMENT"
+        return (
+            f"Review evaluation: {passed} (score={assessment.score:.2f}, "
+            f"coverage={assessment.coverage_score:.2f}). "
+            f"Call check_status for next step."
+        )
+
+    @tool
+    def check_pipeline_status() -> str:
+        """Check current pipeline progress and get routing recommendation. Call after EVERY step."""
+        result = _check_status(state)
+        return json.dumps(result, indent=2, ensure_ascii=False)
+
+    @tool
+    async def export_results(format: str = "markdown", style: str = "apa") -> str:
+        """Export the review. Formats: markdown, bibtex, citations."""
+        from litscribe.tools.export import export_review
+
+        if state.synthesis is None:
+            return "No review to export."
+
+        result = await export_review(state.synthesis, state.papers, format, style)
+        return result.get("content", "Export failed")[:3000]
+
+    return [
+        discover_papers,
+        analyze_papers,
+        build_knowledge_graph,
+        write_review,
+        evaluate_review,
+        check_pipeline_status,
+        export_results,
+    ]
+
+
+def _build_subagents() -> list[SubAgent]:
+    planner: SubAgent = {
+        "name": "planner",
+        "description": "Decompose a research question into sub-topics with search strategy and domain classification",
+        "system_prompt": PLANNER_SYSTEM_PROMPT,
+        "tools": [],
+    }
+    reader: SubAgent = {
+        "name": "reader",
+        "description": "Critically analyze academic papers — extract findings, methodology, strengths, limitations",
+        "system_prompt": READER_SYSTEM_PROMPT,
+        "tools": [],
+    }
+    synthesizer: SubAgent = {
+        "name": "synthesizer",
+        "description": "Write a comprehensive literature review from paper analyses, organized by themes",
+        "system_prompt": SYNTHESIZER_SYSTEM_PROMPT,
+        "tools": [],
+    }
+    reviewer: SubAgent = {
+        "name": "reviewer",
+        "description": "Evaluate review quality — relevance, coverage, coherence, claim support",
+        "system_prompt": REVIEWER_SYSTEM_PROMPT,
+        "tools": [],
+    }
+    return [planner, reader, synthesizer, reviewer]
+
+
+def create_litscribe_agent(
+    config: Config,
+    memory: MemoryManager | None = None,
+):
+    model = _build_model(config)
+    state = PipelineState()
+
+    tools = create_pipeline_tools(config, state)
+    subagents = _build_subagents()
+
+    middleware = []
+    if memory:
+        evolution_mw = EvolutionMiddleware(memory)
+        middleware.append(evolution_mw)
+    token_mw = TokenTrackingMiddleware()
+    middleware.append(token_mw)
+
+    agent = create_deep_agent(
+        model=model,
+        tools=tools,
+        subagents=subagents,
+        system_prompt=SUPERVISOR_PROMPT,
+        middleware=middleware,
+        name="litscribe",
+    )
+
+    return agent, state, token_mw
