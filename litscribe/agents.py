@@ -30,10 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 def _build_model(config: Config) -> ChatOpenAI:
+    model_name = config.llm.default_model
+    # litellm prefixes (openai/, deepseek/) are not used by ChatOpenAI
+    for prefix in ("openai/", "deepseek/"):
+        if model_name.startswith(prefix):
+            model_name = model_name[len(prefix):]
+            break
+
     return ChatOpenAI(
         base_url=config.llm.api_base,
         api_key=config.llm.api_key,
-        model=config.llm.default_model.replace("openai/", ""),
+        model=model_name,
     )
 
 

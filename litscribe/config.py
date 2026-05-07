@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_DEFAULT_TASK_MODELS = {
+_DASHSCOPE_TASK_MODELS = {
     "query_expansion": "openai/qwen-turbo",
     "planning": "openai/qwen-plus",
     "paper_analysis": "openai/qwen-plus",
@@ -21,16 +21,29 @@ _DEFAULT_TASK_MODELS = {
     "skill_extraction": "openai/qwen-turbo",
 }
 
-_DEFAULT_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+_DEEPSEEK_TASK_MODELS = {
+    "query_expansion": "deepseek/deepseek-chat",
+    "planning": "deepseek/deepseek-chat",
+    "paper_analysis": "deepseek/deepseek-chat",
+    "entity_extraction": "deepseek/deepseek-chat",
+    "synthesis": "deepseek/deepseek-chat",
+    "self_review": "deepseek/deepseek-chat",
+    "refinement": "deepseek/deepseek-reasoner",
+    "skill_extraction": "deepseek/deepseek-chat",
+}
+
+_DASHSCOPE_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+_DEEPSEEK_API_BASE = "https://api.deepseek.com/v1"
 
 
 @dataclass
 class LLMConfig:
-    api_base: str = _DEFAULT_API_BASE
+    api_base: str = ""
     api_key: str = ""
-    default_model: str = "openai/qwen-plus"
-    reasoning_model: str = "openai/deepseek-r1"
-    task_models: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_TASK_MODELS))
+    default_model: str = ""
+    reasoning_model: str = ""
+    task_models: dict[str, str] = field(default_factory=dict)
+    provider: str = ""
 
 
 @dataclass
@@ -70,9 +83,33 @@ class Config:
                 self._load_yaml(default_yaml)
 
     def _load_env(self):
-        self.llm.api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        self.llm.api_base = os.getenv("LITSCRIBE_API_BASE", _DEFAULT_API_BASE)
-        self.llm.default_model = os.getenv("LITSCRIBE_DEFAULT_MODEL", self.llm.default_model)
+        deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+        dashscope_key = os.getenv("DASHSCOPE_API_KEY", "")
+
+        if deepseek_key:
+            self.llm.provider = "deepseek"
+            self.llm.api_key = deepseek_key
+            self.llm.api_base = os.getenv("LITSCRIBE_API_BASE", _DEEPSEEK_API_BASE)
+            self.llm.default_model = os.getenv("LITSCRIBE_DEFAULT_MODEL", "deepseek/deepseek-chat")
+            self.llm.reasoning_model = "deepseek/deepseek-reasoner"
+            self.llm.task_models = dict(_DEEPSEEK_TASK_MODELS)
+        elif dashscope_key:
+            self.llm.provider = "dashscope"
+            self.llm.api_key = dashscope_key
+            self.llm.api_base = os.getenv("LITSCRIBE_API_BASE", _DASHSCOPE_API_BASE)
+            self.llm.default_model = os.getenv("LITSCRIBE_DEFAULT_MODEL", "openai/qwen-plus")
+            self.llm.reasoning_model = "openai/deepseek-r1"
+            self.llm.task_models = dict(_DASHSCOPE_TASK_MODELS)
+        else:
+            self.llm.provider = "deepseek"
+            self.llm.api_base = os.getenv("LITSCRIBE_API_BASE", _DEEPSEEK_API_BASE)
+            self.llm.default_model = os.getenv("LITSCRIBE_DEFAULT_MODEL", "deepseek/deepseek-chat")
+            self.llm.reasoning_model = "deepseek/deepseek-reasoner"
+            self.llm.task_models = dict(_DEEPSEEK_TASK_MODELS)
+
+        override_model = os.getenv("LITSCRIBE_DEFAULT_MODEL")
+        if override_model:
+            self.llm.default_model = override_model
 
         self.services.ncbi_email = os.getenv("NCBI_EMAIL", "")
         self.services.ncbi_api_key = os.getenv("NCBI_API_KEY", "")
