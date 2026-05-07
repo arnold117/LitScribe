@@ -82,11 +82,11 @@ async def search_all_sources(
 
     try:
         from litscribe.services.pubmed import PubMedService
-        ncbi_email = getattr(config, "ncbi_email", None) or getattr(
-            getattr(config, "services", None), "ncbi_email", None
-        )
+        svc_cfg = getattr(config, "services", None)
+        ncbi_email = getattr(svc_cfg, "ncbi_email", None) or getattr(config, "ncbi_email", None)
+        ncbi_key = getattr(svc_cfg, "ncbi_api_key", None) or getattr(config, "ncbi_api_key", None)
         if ncbi_email:
-            services.append(PubMedService(email=ncbi_email))
+            services.append(PubMedService(ncbi_email=ncbi_email, ncbi_api_key=ncbi_key))
     except Exception:
         pass
 
