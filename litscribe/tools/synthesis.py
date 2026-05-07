@@ -89,13 +89,13 @@ async def write_review(
     language: str = "en",
     graph_context: dict | None = None,
     user_instructions: str = "",
+    papers: list | None = None,
 ) -> ReviewOutput:
-    summaries_text = format_summaries_for_prompt(
-        [a.model_dump() for a in analyses], max_chars=20000
-    )
+    enriched = _enrich_analyses_with_papers(analyses, papers)
+    summaries_text = format_summaries_for_prompt(enriched, max_chars=20000)
     themes_text = json.dumps(themes, indent=2, ensure_ascii=False)[:5000]
     gaps_text = json.dumps(gaps, indent=2, ensure_ascii=False)[:2000]
-    checklist = build_citation_checklist([a.model_dump() for a in analyses])
+    checklist = build_citation_checklist(enriched)
 
     target_words = max(1000, len(analyses) * 130)
     if language == "zh":
@@ -155,6 +155,28 @@ async def write_review(
     )
 
 
+def _enrich_analyses_with_papers(
+    analyses: list[PaperAnalysis],
+    papers: list | None,
+) -> list[dict]:
+    paper_map = {}
+    if papers:
+        for p in papers:
+            obj = p.model_dump() if hasattr(p, "model_dump") else p
+            paper_map[obj.get("paper_id", "")] = obj
+
+    enriched = []
+    for a in analyses:
+        d = a.model_dump()
+        paper = paper_map.get(a.paper_id, {})
+        d.setdefault("title", paper.get("title", a.paper_id))
+        d.setdefault("authors", paper.get("authors", []))
+        d.setdefault("year", paper.get("year", "N/A"))
+        d.setdefault("venue", paper.get("venue", ""))
+        enriched.append(d)
+    return enriched
+
+
 async def synthesize(
     router,
     analyses: list[PaperAnalysis],
@@ -163,6 +185,7 @@ async def synthesize(
     language: str = "en",
     graph_context: dict | None = None,
     user_instructions: str = "",
+    papers: list | None = None,
 ) -> ReviewOutput:
     themes = await identify_themes(router, analyses, research_question)
     gaps = await identify_gaps(router, analyses, themes, research_question)
@@ -171,6 +194,7 @@ async def synthesize(
         router, analyses, themes, gaps,
         research_question, review_type, language, graph_context,
         user_instructions=user_instructions,
+        papers=papers,
     )
 
     logger.info(f"Synthesis complete: {review.word_count} words, {len(review.themes)} themes")

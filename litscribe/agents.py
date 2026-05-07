@@ -116,6 +116,7 @@ def create_pipeline_tools(config: Config, state: PipelineState):
             language=state.language,
             graph_context=state.graph,
             user_instructions=instructions,
+            papers=state.papers,
         )
         state.synthesis = review
         return (
