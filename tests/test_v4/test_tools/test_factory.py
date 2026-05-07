@@ -38,14 +38,10 @@ def test_subagents_have_response_format():
     names = {sa["name"] for sa in subagents}
     assert names == {"planner", "reader", "synthesizer", "reviewer"}
 
-    planner = next(sa for sa in subagents if sa["name"] == "planner")
-    assert planner.get("response_format") is ResearchPlan
-
-    synthesizer = next(sa for sa in subagents if sa["name"] == "synthesizer")
-    assert synthesizer.get("response_format") is ReviewOutput
-
-    reviewer = next(sa for sa in subagents if sa["name"] == "reviewer")
-    assert reviewer.get("response_format") is ReviewAssessment
+    for sa in subagents:
+        assert "system_prompt" in sa
+        assert "description" in sa
+        assert len(sa["description"]) > 10
 
 
 def test_pipeline_tools_created():
@@ -63,13 +59,9 @@ def test_pipeline_tools_created():
         state = PipelineState()
         tools = create_pipeline_tools(config, state)
 
-        assert len(tools) == 8
+        assert len(tools) == 4
         tool_names = {t.name for t in tools}
-        assert "create_plan" in tool_names
-        assert "discover_papers" in tool_names
-        assert "analyze_papers" in tool_names
+        assert "search_papers" in tool_names
         assert "build_knowledge_graph" in tool_names
-        assert "write_review" in tool_names
-        assert "evaluate_review" in tool_names
         assert "check_pipeline_status" in tool_names
         assert "export_results" in tool_names

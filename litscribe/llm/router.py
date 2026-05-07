@@ -17,8 +17,20 @@ class LLMRouter:
 
     def resolve_model(self, task_type: str | None = None) -> str:
         if task_type and task_type in self.config.llm.task_models:
-            return self.config.llm.task_models[task_type]
-        return self.config.llm.default_model
+            return self._ensure_litellm_prefix(self.config.llm.task_models[task_type])
+        return self._ensure_litellm_prefix(self.config.llm.default_model)
+
+    def _ensure_litellm_prefix(self, model: str) -> str:
+        if "/" in model:
+            return model
+        api_base = self.config.llm.api_base.lower()
+        if "deepseek" in api_base:
+            return f"deepseek/{model}"
+        if "dashscope" in api_base or "aliyun" in api_base:
+            return f"openai/{model}"
+        if "openai.com" in api_base:
+            return model
+        return f"openai/{model}"
 
     def _is_reasoning_model(self, model: str) -> bool:
         return bool(REASONING_PATTERNS.search(model))
