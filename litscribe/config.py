@@ -56,10 +56,21 @@ class Config:
                 self._load_yaml(default_yaml)
 
     def _load_env(self):
-        self.llm.api_key = os.getenv("LLM_API_KEY", "")
-        self.llm.api_base = os.getenv("LLM_API_BASE", "")
-        self.llm.default_model = os.getenv("LLM_MODEL", "")
-        self.llm.reasoning_model = os.getenv("LLM_REASONING_MODEL", self.llm.default_model)
+        self.llm.api_key = (
+            os.getenv("llm-key", "")
+            or os.getenv("LLM_API_KEY", "")
+        )
+        self.llm.api_base = (
+            os.getenv("llm-location", "")
+            or os.getenv("LLM_API_BASE", "")
+        )
+        self.llm.default_model = (
+            os.getenv("llm-model", "")
+            or os.getenv("LLM_MODEL", "")
+        )
+        self.llm.reasoning_model = os.getenv(
+            "LLM_REASONING_MODEL", self.llm.default_model
+        )
 
         self.services.ncbi_email = os.getenv("NCBI_EMAIL", "")
         self.services.ncbi_api_key = os.getenv("NCBI_API_KEY", "")
