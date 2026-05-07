@@ -166,13 +166,13 @@ async def domain_filter(
     if len(papers) <= 5:
         return papers
 
-    batch_size = 20
+    batch_size = 10
     kept: list[Paper] = []
 
     for i in range(0, len(papers), batch_size):
         batch = papers[i : i + batch_size]
         batch_text = "\n".join(
-            f'- paper_id: {p.paper_id}, title: "{p.title}", abstract: "{(p.abstract or "")[:150]}"'
+            f'- paper_id: {p.paper_id}, title: "{p.title}", abstract: "{(p.abstract or "")[:200]}"'
             for p in batch
         )
         prompt = ABSTRACT_SCREENING_PROMPT.format(
@@ -194,8 +194,42 @@ async def domain_filter(
             logger.warning(f"Domain filter failed for batch: {e}, keeping all")
             kept.extend(batch)
 
+    if not kept:
+        logger.warning("Domain filter removed all papers, keeping original")
+        return papers
+
+    # Second pass: stricter check on borderline papers if still too many
+    if len(kept) > 30:
+        logger.info(f"Domain filter pass 2: {len(kept)} papers still large, running strict filter")
+        batch_text = "\n".join(
+            f'- paper_id: {p.paper_id}, title: "{p.title}", abstract: "{(p.abstract or "")[:150]}"'
+            for p in kept[:30]
+        )
+        strict_prompt = (
+            f"You are filtering papers for a VERY SPECIFIC literature review.\n\n"
+            f"Research Question: {research_question}\n"
+            f"Domain: {domain}\n\n"
+            f"For each paper, answer: is this paper's PRIMARY topic directly about "
+            f'"{research_question}"? Not just mentioning it — it must be a central focus.\n\n'
+            f"Papers:\n{batch_text}\n\n"
+            f"Output JSON array: [{{\"paper_id\": \"...\", \"relevant\": true/false}}]"
+        )
+        try:
+            results2 = await router.call_json(_msg(strict_prompt), task_type="planning")
+            if isinstance(results2, list):
+                strict_ids = {
+                    r.get("paper_id") for r in results2
+                    if isinstance(r, dict) and r.get("relevant", False)
+                }
+                strict_kept = [p for p in kept if p.paper_id in strict_ids]
+                if len(strict_kept) >= 5:
+                    kept = strict_kept
+                    logger.info(f"Domain filter pass 2: {len(kept)} papers after strict filter")
+        except Exception as e:
+            logger.warning(f"Domain filter pass 2 failed: {e}")
+
     logger.info(f"Domain filter: {len(papers)} → {len(kept)} papers")
-    return kept if kept else papers
+    return kept
 
 
 async def snowball_sample(

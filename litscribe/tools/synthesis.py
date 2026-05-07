@@ -51,6 +51,11 @@ async def identify_themes(
     try:
         themes = await router.call_json(_msg(prompt), task_type="synthesis")
         if isinstance(themes, list):
+            # Cap themes based on paper count: at least 3 papers per theme
+            max_themes = max(2, len(analyses) // 3)
+            if len(themes) > max_themes:
+                logger.info(f"Capping themes from {len(themes)} to {max_themes} (for {len(analyses)} papers)")
+                themes = themes[:max_themes]
             return themes
     except Exception as e:
         logger.warning(f"Theme identification failed: {e}")
@@ -76,9 +81,20 @@ async def identify_gaps(
     try:
         gaps = await router.call_json(_msg(prompt), task_type="synthesis")
         if isinstance(gaps, dict):
-            return gaps
+            return {
+                "gaps": gaps.get("gaps", [])[:5],
+                "future_directions": gaps.get("future_directions", [])[:5],
+            }
+        if isinstance(gaps, list):
+            return {"gaps": gaps[:5], "future_directions": []}
     except Exception as e:
-        logger.warning(f"Gap analysis failed: {e}")
+        logger.warning(f"Gap analysis JSON failed: {e}, trying plain text")
+        try:
+            raw = await router.call(_msg(prompt), task_type="synthesis", max_tokens=800)
+            lines = [l.strip("- ").strip() for l in raw.strip().split("\n") if l.strip()]
+            return {"gaps": lines[:5], "future_directions": []}
+        except Exception:
+            pass
     return {"gaps": [], "future_directions": []}
 
 

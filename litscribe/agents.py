@@ -42,6 +42,52 @@ def create_pipeline_tools(config: Config, state: PipelineState):
     router = LLMRouter(config)
 
     @tool
+    async def create_plan(research_question: str, domain: str = "General") -> str:
+        """Create a research plan by decomposing the question into sub-topics. MUST be called first before discovery."""
+        from litscribe.prompts.planning import COMPLEXITY_ASSESSMENT_PROMPT
+
+        state.research_question = research_question
+        state.domain = domain
+
+        prompt = COMPLEXITY_ASSESSMENT_PROMPT.format(research_question=research_question)
+        try:
+            result = await router.call_json(_msg(prompt), task_type="planning")
+            if isinstance(result, dict):
+                from litscribe.models.plan import ResearchPlan, SubTopic
+                sub_topics = []
+                for st in result.get("sub_topics", []):
+                    sub_topics.append(SubTopic(
+                        name=st.get("name", ""),
+                        keywords=st.get("custom_queries", st.get("keywords", [])),
+                        estimated_papers=st.get("estimated_papers", 10),
+                    ))
+                state.plan = ResearchPlan(
+                    question=research_question,
+                    sub_topics=sub_topics,
+                    domain=result.get("domain", domain),
+                    tier="standard",
+                    max_papers=40,
+                    language=state.language,
+                    target_words=max(1000, sum(st.estimated_papers for st in sub_topics) * 130),
+                )
+                state.domain = result.get("domain", domain)
+                topics_str = ", ".join(st.name for st in sub_topics)
+                return (
+                    f"Plan created: {len(sub_topics)} sub-topics ({topics_str}), "
+                    f"domain={state.domain}. Call check_pipeline_status for next step."
+                )
+        except Exception as e:
+            logger.warning(f"Plan creation failed: {e}")
+
+        from litscribe.models.plan import ResearchPlan, SubTopic
+        state.plan = ResearchPlan(
+            question=research_question,
+            sub_topics=[SubTopic(name=research_question, keywords=[research_question], estimated_papers=20)],
+            domain=domain, tier="standard", max_papers=40, language=state.language, target_words=3000,
+        )
+        return f"Fallback plan created (single topic). Call check_pipeline_status."
+
+    @tool
     async def discover_papers(
         research_question: str,
         max_papers: int = 40,
@@ -51,6 +97,11 @@ def create_pipeline_tools(config: Config, state: PipelineState):
         from litscribe.tools.discovery import discover_papers as _discover
 
         extra = [q.strip() for q in extra_queries.split(",") if q.strip()] if extra_queries else []
+
+        # Use sub-topic queries from plan if available
+        if state.plan and state.plan.sub_topics:
+            for st in state.plan.sub_topics:
+                extra.extend(st.keywords[:3])
 
         result = await _discover(
             research_question=research_question,
@@ -165,6 +216,7 @@ def create_pipeline_tools(config: Config, state: PipelineState):
         return result.get("content", "Export failed")[:3000]
 
     return [
+        create_plan,
         discover_papers,
         analyze_papers,
         build_knowledge_graph,

@@ -27,7 +27,8 @@ When delegating, provide all necessary context in your message:
 - To reviewer: the review text + paper list + research plan
 
 ## How to use tools
-- `discover_papers(research_question, max_papers)`: pass user's topic. Adjust max_papers based on user request (default 40, use 10-15 for quick reviews, 30-50 for comprehensive)
+- `create_plan(research_question, domain)`: FIRST step — decompose question into sub-topics. Pass the domain if you can infer it (e.g. "Biology", "Computer Science", "Chemistry")
+- `discover_papers(research_question, max_papers)`: AFTER planning. Adjust max_papers based on user request (default 40, use 10-15 for quick, 30-50 for comprehensive)
 - `analyze_papers()`: no args needed, uses discovered papers
 - `build_knowledge_graph()`: call after reading, before synthesis
 - `write_review(instructions)`: pass user preferences as instructions — e.g. "3 themes, focus on methodology comparison, emphasize recent work". Extract these from the user's original request

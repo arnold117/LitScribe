@@ -59,8 +59,9 @@ def test_pipeline_tools_created():
         state = PipelineState()
         tools = create_pipeline_tools(config, state)
 
-        assert len(tools) == 7
+        assert len(tools) == 8
         tool_names = {t.name for t in tools}
+        assert "create_plan" in tool_names
         assert "discover_papers" in tool_names
         assert "analyze_papers" in tool_names
         assert "build_knowledge_graph" in tool_names

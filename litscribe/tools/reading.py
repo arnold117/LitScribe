@@ -17,20 +17,46 @@ def _msg(prompt: str) -> list[dict]:
     return [{"role": "user", "content": prompt}]
 
 
+async def _try_get_full_text(paper: Paper) -> str | None:
+    if not paper.pdf_urls:
+        return None
+    try:
+        from litscribe.services.pdf import PDFService
+        pdf_svc = PDFService()
+        parsed = await pdf_svc.parse(paper.pdf_urls[0])
+        if parsed and parsed.markdown and len(parsed.markdown) > 200:
+            return parsed.markdown[:8000]
+    except Exception as e:
+        logger.debug(f"PDF fetch failed for {paper.paper_id}: {e}")
+    return None
+
+
 async def analyze_single_paper(
     router,
     paper: Paper,
     research_question: str,
 ) -> PaperAnalysis:
-    prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
-        research_question=research_question,
-        title=paper.title,
-        authors=", ".join(paper.authors[:3]) if paper.authors else "Unknown",
-        year=paper.year or "N/A",
-        venue=getattr(paper, "venue", "") or "",
-        abstract=paper.abstract or "(no abstract)",
-        metadata_section=f"Citations: {paper.citations or 0}, Sources: {list(paper.sources.keys())}",
-    )
+    full_text = await _try_get_full_text(paper)
+
+    if full_text:
+        prompt = COMBINED_PAPER_ANALYSIS_PROMPT.format(
+            research_question=research_question,
+            title=paper.title,
+            authors=", ".join(paper.authors[:3]) if paper.authors else "Unknown",
+            year=paper.year or "N/A",
+            abstract=paper.abstract or "(no abstract)",
+            full_text=full_text,
+        )
+    else:
+        prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
+            research_question=research_question,
+            title=paper.title,
+            authors=", ".join(paper.authors[:3]) if paper.authors else "Unknown",
+            year=paper.year or "N/A",
+            venue=getattr(paper, "venue", "") or "",
+            abstract=paper.abstract or "(no abstract)",
+            metadata_section=f"Citations: {paper.citations or 0}, Sources: {list(paper.sources.keys())}",
+        )
 
     try:
         result = await router.call_json(_msg(prompt), task_type="paper_analysis")
