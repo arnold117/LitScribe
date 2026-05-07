@@ -7,7 +7,9 @@ import pytest
 def test_agent_creation():
     """Test that create_litscribe_agent returns agent, state, token_mw."""
     with patch.dict(os.environ, {
-        "DASHSCOPE_API_KEY": "sk-test-fake-key",
+        "LLM_API_KEY": "sk-test-fake-key",
+        "LLM_API_BASE": "https://api.example.com/v1",
+        "LLM_MODEL": "test-model",
     }):
         from litscribe.config import Config
         from litscribe.agents import create_litscribe_agent
@@ -49,7 +51,9 @@ def test_subagents_have_response_format():
 def test_pipeline_tools_created():
     """Test that create_pipeline_tools returns all 7 tools."""
     with patch.dict(os.environ, {
-        "DASHSCOPE_API_KEY": "sk-test-fake-key",
+        "LLM_API_KEY": "sk-test-fake-key",
+        "LLM_API_BASE": "https://api.example.com/v1",
+        "LLM_MODEL": "test-model",
     }):
         from litscribe.config import Config
         from litscribe.agents import create_pipeline_tools
