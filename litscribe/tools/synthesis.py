@@ -11,6 +11,9 @@ from litscribe.prompts.synthesis import (
     GAP_ANALYSIS_PROMPT,
     GRAPHRAG_LITERATURE_REVIEW_PROMPT,
     LITERATURE_REVIEW_PROMPT,
+    REVIEW_CONCLUSION_PROMPT,
+    REVIEW_INTRO_PROMPT,
+    REVIEW_THEME_SECTION_PROMPT,
     THEME_IDENTIFICATION_PROMPT,
 )
 from litscribe.prompts.utils import (
@@ -177,6 +180,131 @@ def _enrich_analyses_with_papers(
     return enriched
 
 
+async def write_review_sectioned(
+    router,
+    analyses: list[PaperAnalysis],
+    themes: list[dict],
+    gaps: dict,
+    research_question: str,
+    review_type: str = "narrative",
+    language: str = "en",
+    user_instructions: str = "",
+    papers: list | None = None,
+) -> ReviewOutput:
+    enriched = _enrich_analyses_with_papers(analyses, papers)
+    lang_instruction = get_language_instruction(language)
+    num_themes = max(len(themes), 1)
+
+    target_words = max(1000, len(analyses) * 150)
+    if language == "zh":
+        target_words = int(target_words * 1.5)
+
+    intro_words = int(target_words * 0.10)
+    body_per_theme = int(target_words * 0.70) // num_themes
+    conclusion_words = int(target_words * 0.20)
+
+    theme_names_text = "\n".join(
+        f"{i+1}. {t.get('theme', '')}: {t.get('description', '')[:100]}"
+        for i, t in enumerate(themes)
+    )
+
+    sections = []
+
+    logger.info(f"Sectioned review: {num_themes} themes, ~{target_words} words target")
+
+    intro_summaries = format_summaries_for_prompt(enriched, max_chars=8000)
+    intro_prompt = REVIEW_INTRO_PROMPT.format(
+        review_type=review_type,
+        research_question=research_question,
+        num_papers=len(analyses),
+        knowledge_graph_section="",
+        theme_names=theme_names_text,
+        paper_summaries=intro_summaries,
+        word_count=intro_words,
+    ) + lang_instruction
+    if user_instructions:
+        intro_prompt += f"\n\nADDITIONAL USER INSTRUCTIONS: {user_instructions}"
+
+    try:
+        intro = await router.call(_msg(intro_prompt), task_type="synthesis", max_tokens=4000)
+        sections.append(intro.strip())
+    except Exception as e:
+        logger.warning(f"Sectioned intro failed: {e}")
+        sections.append(f"# Literature Review: {research_question}\n\nThis review synthesizes {len(analyses)} papers.")
+
+    previous_ending = sections[-1][-200:]
+
+    for i, theme in enumerate(themes):
+        theme_paper_ids = set(theme.get("paper_ids", []))
+        theme_enriched = [e for e in enriched if e.get("paper_id") in theme_paper_ids]
+        if not theme_enriched:
+            start = (i * len(enriched)) // num_themes
+            end = ((i + 1) * len(enriched)) // num_themes
+            theme_enriched = enriched[start:end] if start < end else enriched[:3]
+
+        theme_summaries = format_summaries_for_prompt(theme_enriched)
+        theme_checklist = build_citation_checklist(theme_enriched)
+        key_points = "\n".join(f"- {p}" for p in theme.get("key_points", [])[:5]) or "N/A"
+
+        theme_prompt = REVIEW_THEME_SECTION_PROMPT.format(
+            research_question=research_question,
+            knowledge_graph_section="",
+            theme_number=i + 1,
+            total_themes=num_themes,
+            theme_name=theme.get("theme", f"Theme {i+1}"),
+            theme_description=theme.get("description", ""),
+            key_points=key_points,
+            num_theme_papers=len(theme_enriched),
+            theme_papers=theme_summaries,
+            theme_citation_checklist=theme_checklist,
+            previous_ending=previous_ending,
+            word_count=body_per_theme,
+        ) + lang_instruction
+
+        try:
+            theme_text = await router.call(_msg(theme_prompt), task_type="synthesis", max_tokens=6000)
+            sections.append(theme_text.strip())
+            previous_ending = theme_text.strip()[-200:]
+        except Exception as e:
+            logger.warning(f"Sectioned theme '{theme.get('theme')}' failed: {e}")
+            sections.append(f"## {i+1}. {theme.get('theme', '')}\n\n{theme.get('description', '')}")
+            previous_ending = sections[-1][-200:]
+
+    gaps_text = "\n".join(f"- {g}" for g in gaps.get("gaps", []))
+    conclusion_prompt = REVIEW_CONCLUSION_PROMPT.format(
+        research_question=research_question,
+        num_papers=len(analyses),
+        knowledge_graph_section="",
+        theme_names=theme_names_text,
+        gaps=gaps_text,
+        previous_ending=previous_ending,
+        uncited_section="",
+        word_count=conclusion_words,
+    ) + lang_instruction
+
+    try:
+        conclusion = await router.call(_msg(conclusion_prompt), task_type="synthesis", max_tokens=4000)
+        sections.append(conclusion.strip())
+    except Exception as e:
+        logger.warning(f"Sectioned conclusion failed: {e}")
+        sections.append("## Conclusion\n\nFurther research is needed.")
+
+    full_text = "\n\n".join(sections)
+
+    parsed_themes = [
+        Theme(name=t.get("theme", ""), description=t.get("description", ""), paper_ids=t.get("paper_ids", []))
+        for t in themes
+    ]
+
+    return ReviewOutput(
+        text=full_text,
+        citations=[],
+        themes=parsed_themes,
+        word_count=_count_words(full_text),
+        language=language,
+    )
+
+
 async def synthesize(
     router,
     analyses: list[PaperAnalysis],
@@ -190,12 +318,21 @@ async def synthesize(
     themes = await identify_themes(router, analyses, research_question)
     gaps = await identify_gaps(router, analyses, themes, research_question)
 
-    review = await write_review(
-        router, analyses, themes, gaps,
-        research_question, review_type, language, graph_context,
-        user_instructions=user_instructions,
-        papers=papers,
-    )
+    use_sectioned = len(analyses) > 15 or (len(analyses) * 150 > 4000)
+
+    if use_sectioned:
+        logger.info(f"Using sectioned review generation ({len(analyses)} papers)")
+        review = await write_review_sectioned(
+            router, analyses, themes, gaps,
+            research_question, review_type, language,
+            user_instructions=user_instructions, papers=papers,
+        )
+    else:
+        review = await write_review(
+            router, analyses, themes, gaps,
+            research_question, review_type, language, graph_context,
+            user_instructions=user_instructions, papers=papers,
+        )
 
     logger.info(f"Synthesis complete: {review.word_count} words, {len(review.themes)} themes")
     return review
