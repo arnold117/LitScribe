@@ -32,6 +32,16 @@ def skills(action: str = typer.Argument("list", help="list | show <slug> | delet
     asyncio.run(_manage_skills(action))
 
 
+@app.command()
+def export(
+    format: str = typer.Argument("markdown", help="markdown | bibtex | citations"),
+    style: str = typer.Option("apa", "--style", "-s", help="Citation style: apa, mla, ieee, chicago"),
+    output: str = typer.Option(None, "--output", "-o", help="Output file path"),
+):
+    """Export the last review."""
+    asyncio.run(_export_review(format, style, output))
+
+
 async def _init_agent(verbose: bool = False):
     if verbose:
         logging.basicConfig(level=logging.INFO)
@@ -142,6 +152,18 @@ async def _manage_skills(action: str):
         await memory.close()
     except Exception as e:
         print(f"Skills error: {e}")
+
+
+async def _export_review(format: str, style: str, output: str | None):
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    from litscribe.config import Config
+    from litscribe.tools.export import export_review
+    from litscribe.models.review import ReviewOutput
+
+    print(f"Export not yet connected to session storage.")
+    print(f"Use 'litscribe chat' and ask the agent to export after a review.")
 
 
 def main():

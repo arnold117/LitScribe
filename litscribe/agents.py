@@ -175,6 +175,7 @@ def _build_subagents() -> list[SubAgent]:
         "description": "Decompose a research question into sub-topics with search strategy and domain classification",
         "system_prompt": PLANNER_SYSTEM_PROMPT,
         "tools": [],
+        "response_format": ResearchPlan,
     }
     reader: SubAgent = {
         "name": "reader",
@@ -187,12 +188,14 @@ def _build_subagents() -> list[SubAgent]:
         "description": "Write a comprehensive literature review from paper analyses, organized by themes",
         "system_prompt": SYNTHESIZER_SYSTEM_PROMPT,
         "tools": [],
+        "response_format": ReviewOutput,
     }
     reviewer: SubAgent = {
         "name": "reviewer",
         "description": "Evaluate review quality — relevance, coverage, coherence, claim support",
         "system_prompt": REVIEWER_SYSTEM_PROMPT,
         "tools": [],
+        "response_format": ReviewAssessment,
     }
     return [planner, reader, synthesizer, reviewer]
 
@@ -209,7 +212,7 @@ def create_litscribe_agent(
 
     middleware = []
     if memory:
-        evolution_mw = EvolutionMiddleware(memory)
+        evolution_mw = EvolutionMiddleware(memory, pipeline_state=state)
         middleware.append(evolution_mw)
     token_mw = TokenTrackingMiddleware()
     middleware.append(token_mw)

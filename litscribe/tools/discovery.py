@@ -157,6 +157,87 @@ async def select_papers(
     return papers[:max_papers]
 
 
+async def domain_filter(
+    router,
+    papers: list[Paper],
+    research_question: str,
+    domain: str,
+) -> list[Paper]:
+    if len(papers) <= 5:
+        return papers
+
+    batch_size = 20
+    kept: list[Paper] = []
+
+    for i in range(0, len(papers), batch_size):
+        batch = papers[i : i + batch_size]
+        batch_text = "\n".join(
+            f'- paper_id: {p.paper_id}, title: "{p.title}", abstract: "{(p.abstract or "")[:150]}"'
+            for p in batch
+        )
+        prompt = ABSTRACT_SCREENING_PROMPT.format(
+            research_question=research_question,
+            domain_hint=domain,
+            papers_batch=batch_text,
+        )
+        try:
+            results = await router.call_json(_msg(prompt), task_type="planning")
+            if isinstance(results, list):
+                relevant_ids = {
+                    r.get("paper_id") for r in results
+                    if isinstance(r, dict) and r.get("relevant", False)
+                }
+                kept.extend(p for p in batch if p.paper_id in relevant_ids)
+            else:
+                kept.extend(batch)
+        except Exception as e:
+            logger.warning(f"Domain filter failed for batch: {e}, keeping all")
+            kept.extend(batch)
+
+    logger.info(f"Domain filter: {len(papers)} → {len(kept)} papers")
+    return kept if kept else papers
+
+
+async def snowball_sample(
+    papers: list[Paper],
+    config,
+    max_extra: int = 10,
+) -> list[Paper]:
+    try:
+        from litscribe.services.semantic_scholar import SemanticScholarService
+        s2_key = getattr(config, "s2_api_key", None) or getattr(
+            getattr(config, "services", None), "s2_api_key", None
+        )
+        s2 = SemanticScholarService(api_key=s2_key)
+    except Exception:
+        return papers
+
+    seed_ids = [p.paper_id for p in papers if p.paper_id.startswith("s2:") or ":" not in p.paper_id]
+    if not seed_ids:
+        return papers
+
+    cited_papers: list[Paper] = []
+    existing_ids = {p.paper_id for p in papers}
+
+    for seed_id in seed_ids[:5]:
+        try:
+            refs = await s2.search(f"references:{seed_id}", max_results=5)
+            for p in refs:
+                if p.paper_id not in existing_ids:
+                    existing_ids.add(p.paper_id)
+                    cited_papers.append(p)
+                    if len(cited_papers) >= max_extra:
+                        break
+        except Exception:
+            continue
+        if len(cited_papers) >= max_extra:
+            break
+
+    if cited_papers:
+        logger.info(f"Snowball: added {len(cited_papers)} papers from references")
+    return papers + cited_papers
+
+
 async def discover_papers(
     research_question: str,
     domain: str,
@@ -164,12 +245,22 @@ async def discover_papers(
     router,
     max_papers: int = 40,
     extra_queries: list[str] | None = None,
+    disable_domain_filter: bool = False,
+    enable_snowball: bool = True,
 ) -> dict[str, Any]:
     queries = await expand_queries(router, research_question, domain)
     if extra_queries:
         queries.extend(extra_queries)
 
     papers = await search_all_sources(queries, config)
+
+    if not disable_domain_filter and len(papers) > 10:
+        papers = await domain_filter(router, papers, research_question, domain)
+
+    if enable_snowball and len(papers) >= 3:
+        papers = await snowball_sample(papers, config, max_extra=min(10, max_papers // 4))
+
+    papers = dedup_papers(papers)
     selected = await select_papers(router, papers, research_question, domain, max_papers)
 
     return {
