@@ -42,8 +42,12 @@ def create_pipeline_tools(config: Config, state: PipelineState):
     router = LLMRouter(config)
 
     @tool
-    async def discover_papers(research_question: str, extra_queries: str = "") -> str:
-        """Search academic databases for papers on a research topic. Call this after planning."""
+    async def discover_papers(
+        research_question: str,
+        max_papers: int = 40,
+        extra_queries: str = "",
+    ) -> str:
+        """Search academic databases for papers. Pass max_papers based on user preference (default 40)."""
         from litscribe.tools.discovery import discover_papers as _discover
 
         extra = [q.strip() for q in extra_queries.split(",") if q.strip()] if extra_queries else []
@@ -53,7 +57,7 @@ def create_pipeline_tools(config: Config, state: PipelineState):
             domain=state.domain,
             config=config,
             router=router,
-            max_papers=40,
+            max_papers=max_papers,
             extra_queries=extra,
         )
 
@@ -98,8 +102,8 @@ def create_pipeline_tools(config: Config, state: PipelineState):
         return f"Built knowledge graph: {n_communities} communities. Call check_status."
 
     @tool
-    async def write_review() -> str:
-        """Write the literature review from analyses. Call after reading (and optionally graphrag)."""
+    async def write_review(instructions: str = "") -> str:
+        """Write the literature review. Pass user preferences in instructions (e.g. 'focus on efficiency, 3 themes, compare methods')."""
         from litscribe.tools.synthesis import synthesize
 
         if not state.analyses:
@@ -111,6 +115,7 @@ def create_pipeline_tools(config: Config, state: PipelineState):
             research_question=state.research_question,
             language=state.language,
             graph_context=state.graph,
+            user_instructions=instructions,
         )
         state.synthesis = review
         return (

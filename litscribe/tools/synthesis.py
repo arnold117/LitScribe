@@ -88,6 +88,7 @@ async def write_review(
     review_type: str = "narrative",
     language: str = "en",
     graph_context: dict | None = None,
+    user_instructions: str = "",
 ) -> ReviewOutput:
     summaries_text = format_summaries_for_prompt(
         [a.model_dump() for a in analyses], max_chars=20000
@@ -131,6 +132,9 @@ async def write_review(
 
     prompt += lang_instruction
 
+    if user_instructions:
+        prompt += f"\n\nADDITIONAL USER INSTRUCTIONS: {user_instructions}"
+
     review_text = await router.call(_msg(prompt), task_type="synthesis", max_tokens=8000)
 
     parsed_themes = [
@@ -158,6 +162,7 @@ async def synthesize(
     review_type: str = "narrative",
     language: str = "en",
     graph_context: dict | None = None,
+    user_instructions: str = "",
 ) -> ReviewOutput:
     themes = await identify_themes(router, analyses, research_question)
     gaps = await identify_gaps(router, analyses, themes, research_question)
@@ -165,6 +170,7 @@ async def synthesize(
     review = await write_review(
         router, analyses, themes, gaps,
         research_question, review_type, language, graph_context,
+        user_instructions=user_instructions,
     )
 
     logger.info(f"Synthesis complete: {review.word_count} words, {len(review.themes)} themes")
