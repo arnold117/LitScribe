@@ -43,7 +43,13 @@ async def search_all_sources(
 
     async def _search_one(svc, query: str) -> list[Paper]:
         try:
-            return await svc.search(query, max_results=max_per_query)
+            return await asyncio.wait_for(
+                svc.search(query, max_results=max_per_query),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"{svc.source_name} timed out for '{query[:40]}'")
+            return []
         except Exception as e:
             logger.warning(f"{svc.source_name} failed for '{query[:40]}': {e}")
             return []

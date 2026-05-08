@@ -37,13 +37,26 @@ async def _call_llm_json(model: ChatOpenAI, prompt: str, retries: int = 2) -> di
     return {}
 
 
-async def step_plan(model: ChatOpenAI, state: PipelineState) -> None:
-    from litscribe.prompts.planning import COMPLEXITY_ASSESSMENT_PROMPT
+FAST_PLAN_PROMPT = """Decompose this research question into 2-4 sub-topics for a literature review.
 
+Research Question: {research_question}
+
+Output JSON:
+{{
+  "domain": "Primary academic field (e.g. Biology, Computer Science, Chemistry)",
+  "sub_topics": [
+    {{"name": "sub-topic name", "custom_queries": ["search query 1", "search query 2"]}}
+  ]
+}}
+
+Keep queries in English, 3-8 words each, optimized for academic search engines."""
+
+
+async def step_plan(model: ChatOpenAI, state: PipelineState) -> None:
     logger.info("Pipeline step: PLAN")
     t = time.time()
 
-    prompt = COMPLEXITY_ASSESSMENT_PROMPT.format(research_question=state.research_question)
+    prompt = FAST_PLAN_PROMPT.format(research_question=state.research_question)
     result = await _call_llm_json(model, prompt)
 
     if isinstance(result, dict) and result.get("sub_topics"):
@@ -84,7 +97,7 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
     queries = [state.research_question]
     if state.plan:
         for st in state.plan.sub_topics:
-            queries.extend(st.keywords[:3])
+            queries.extend(st.keywords[:2])
     if state.extra_queries:
         queries.extend(state.extra_queries)
 
@@ -96,7 +109,7 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
             seen.add(ql)
             unique.append(q.strip())
 
-    papers = await search_all_sources(unique[:12], config, max_per_source=max_papers)
+    papers = await search_all_sources(unique[:6], config, max_per_source=max_papers)
     state.papers = papers[:max_papers]
     state.iteration += 1
 
