@@ -109,7 +109,7 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
             seen.add(ql)
             unique.append(q.strip())
 
-    papers = await search_all_sources(unique[:6], config, max_per_source=max_papers)
+    papers = await search_all_sources(unique[:6], config, max_per_source=max_papers, domain=state.domain)
     state.papers = papers[:max_papers]
     state.iteration += 1
 

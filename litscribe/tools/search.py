@@ -13,12 +13,22 @@ async def search_all_sources(
     queries: list[str],
     config,
     max_per_source: int = 10,
+    domain: str = "",
 ) -> list[Paper]:
-    from litscribe.services.arxiv import ArxivService
     from litscribe.services.openalex import OpenAlexService
     from litscribe.services.europe_pmc import EuropePMCService
 
-    services = [ArxivService(), OpenAlexService(), EuropePMCService()]
+    services = [OpenAlexService(), EuropePMCService()]
+
+    bio_domains = {"biology", "medicine", "chemistry", "biochemistry", "pharmacology", "bioengineering"}
+    cs_domains = {"computer science", "mathematics", "physics", "engineering"}
+
+    if not domain or domain.lower() in cs_domains:
+        try:
+            from litscribe.services.arxiv import ArxivService
+            services.append(ArxivService())
+        except Exception:
+            pass
 
     try:
         from litscribe.services.semantic_scholar import SemanticScholarService

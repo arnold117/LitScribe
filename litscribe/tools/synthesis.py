@@ -387,15 +387,19 @@ async def synthesize_parallel(
         theme_summaries = format_summaries_for_prompt(theme_enriched)
         theme_checklist = build_citation_checklist(theme_enriched)
 
+        other_themes = [t.get("theme", "") for j, t in enumerate(themes) if j != i]
+        context = f"Other themes in this review: {', '.join(other_themes)}. " if other_themes else ""
+
         p = (
             f"Write a theme section (~{target_words_per_theme} words) for a literature review.\n\n"
             f"Research Question: {research_question}\n"
             f"Theme: {theme.get('theme', '')}\n"
-            f"Description: {theme.get('description', '')}\n\n"
+            f"Description: {theme.get('description', '')}\n"
+            f"{context}Avoid overlapping with other themes.\n\n"
             f"Papers for this theme:\n{theme_summaries}\n\n"
-            f"Citation checklist (MUST cite all):\n{theme_checklist}\n\n"
-            f"Start with ## {theme.get('theme', '')}. Synthesize across papers, don't summarize individually. "
-            f"Use [Author, Year] citations."
+            f"Full paper list for cross-referencing:\n{checklist}\n\n"
+            f"Start with ## {theme.get('theme', '')}. Synthesize across papers — compare and contrast approaches, "
+            f"highlight agreements and disagreements. Use [Author, Year] citations."
             f"{lang_instruction}{user_suffix}"
         )
         theme_prompts.append(p)
