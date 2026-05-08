@@ -321,6 +321,119 @@ async def write_review_sectioned(
     )
 
 
+async def _write_section(router, prompt: str) -> str:
+    try:
+        return await router.call(_msg(prompt), task_type="synthesis", max_tokens=4000)
+    except Exception as e:
+        logger.warning(f"Section generation failed: {e}")
+        return ""
+
+
+async def synthesize_parallel(
+    router,
+    analyses: list[PaperAnalysis],
+    research_question: str,
+    language: str = "en",
+    user_instructions: str = "",
+    papers: list | None = None,
+) -> ReviewOutput:
+    import asyncio
+
+    enriched = _enrich_analyses_with_papers(analyses, papers)
+    lang_instruction = get_language_instruction(language)
+    num_papers = len(analyses)
+
+    # Step 1: themes + gaps in parallel
+    themes_coro = identify_themes(router, analyses, research_question)
+    gaps_coro = identify_gaps(router, analyses, [], research_question)
+    themes, gaps = await asyncio.gather(themes_coro, gaps_coro)
+
+    max_themes = max(2, num_papers // 3)
+    themes = themes[:max_themes]
+
+    # Step 2: build section prompts
+    summaries_text = format_summaries_for_prompt(enriched, max_chars=15000)
+    checklist = build_citation_checklist(enriched)
+    theme_names = "\n".join(f"{i+1}. {t.get('theme','')}" for i, t in enumerate(themes))
+    gaps_text = "\n".join(f"- {g}" for g in gaps.get("gaps", []))
+
+    target_words_per_theme = max(200, 800 // max(len(themes), 1))
+    intro_words = 150
+    conclusion_words = 200
+
+    user_suffix = f"\n\nADDITIONAL INSTRUCTIONS: {user_instructions}" if user_instructions else ""
+
+    # Intro prompt
+    intro_prompt = (
+        f"Write a concise introduction (2-3 paragraphs, ~{intro_words} words) for a literature review.\n\n"
+        f"Research Question: {research_question}\n"
+        f"Number of papers: {num_papers}\n"
+        f"Themes: {theme_names}\n\n"
+        f"Papers:\n{summaries_text[:5000]}\n\n"
+        f"Cite key papers using [Author, Year]. Start with a # heading."
+        f"{lang_instruction}{user_suffix}"
+    )
+
+    # Theme section prompts (one per theme)
+    theme_prompts = []
+    for i, theme in enumerate(themes):
+        theme_paper_ids = set(theme.get("paper_ids", []))
+        theme_enriched = [e for e in enriched if e.get("paper_id") in theme_paper_ids]
+        if not theme_enriched:
+            start = (i * len(enriched)) // max(len(themes), 1)
+            end = ((i + 1) * len(enriched)) // max(len(themes), 1)
+            theme_enriched = enriched[start:end] if start < end else enriched[:3]
+
+        theme_summaries = format_summaries_for_prompt(theme_enriched)
+        theme_checklist = build_citation_checklist(theme_enriched)
+
+        p = (
+            f"Write a theme section (~{target_words_per_theme} words) for a literature review.\n\n"
+            f"Research Question: {research_question}\n"
+            f"Theme: {theme.get('theme', '')}\n"
+            f"Description: {theme.get('description', '')}\n\n"
+            f"Papers for this theme:\n{theme_summaries}\n\n"
+            f"Citation checklist (MUST cite all):\n{theme_checklist}\n\n"
+            f"Start with ## {theme.get('theme', '')}. Synthesize across papers, don't summarize individually. "
+            f"Use [Author, Year] citations."
+            f"{lang_instruction}{user_suffix}"
+        )
+        theme_prompts.append(p)
+
+    # Conclusion prompt
+    conclusion_prompt = (
+        f"Write conclusion sections (~{conclusion_words} words) for a literature review.\n\n"
+        f"Research Question: {research_question}\n"
+        f"Themes covered: {theme_names}\n"
+        f"Research gaps: {gaps_text}\n\n"
+        f"Write: ## Research Gaps and Future Directions (1 paragraph), then ## Conclusion (1 paragraph). "
+        f"Use [Author, Year] citations where appropriate."
+        f"{lang_instruction}"
+    )
+
+    # Step 3: generate ALL sections in parallel
+    logger.info(f"Parallel synthesis: intro + {len(theme_prompts)} themes + conclusion")
+    all_prompts = [intro_prompt] + theme_prompts + [conclusion_prompt]
+    all_sections = await asyncio.gather(*[_write_section(router, p) for p in all_prompts])
+
+    # Step 4: assemble
+    sections = [s.strip() for s in all_sections if s.strip()]
+    full_text = "\n\n".join(sections)
+
+    parsed_themes = [
+        Theme(name=t.get("theme", ""), description=t.get("description", ""), paper_ids=t.get("paper_ids", []))
+        for t in themes
+    ]
+
+    return ReviewOutput(
+        text=full_text,
+        citations=[],
+        themes=parsed_themes,
+        word_count=_count_words(full_text),
+        language=language,
+    )
+
+
 async def synthesize(
     router=None,
     analyses: list[PaperAnalysis] = None,
@@ -336,24 +449,10 @@ async def synthesize(
         from litscribe.llm.adapter import ModelAdapter
         router = ModelAdapter(model)
 
-    themes = await identify_themes(router, analyses, research_question)
-    gaps = await identify_gaps(router, analyses, themes, research_question)
-
-    use_sectioned = len(analyses) > 15 or (len(analyses) * 150 > 4000)
-
-    if use_sectioned:
-        logger.info(f"Using sectioned review generation ({len(analyses)} papers)")
-        review = await write_review_sectioned(
-            router, analyses, themes, gaps,
-            research_question, review_type, language,
-            user_instructions=user_instructions, papers=papers,
-        )
-    else:
-        review = await write_review(
-            router, analyses, themes, gaps,
-            research_question, review_type, language, graph_context,
-            user_instructions=user_instructions, papers=papers,
-        )
+    review = await synthesize_parallel(
+        router, analyses, research_question, language,
+        user_instructions=user_instructions, papers=papers,
+    )
 
     logger.info(f"Synthesis complete: {review.word_count} words, {len(review.themes)} themes")
     return review
