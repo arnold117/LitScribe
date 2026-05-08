@@ -25,43 +25,42 @@ def test_agent_creation():
         assert token_mw.total_calls == 0
 
 
-def test_subagents_have_response_format():
-    """Test that subagents are defined with proper response_format."""
-    from litscribe.agents import _build_subagents
-    from litscribe.models.plan import ResearchPlan
-    from litscribe.models.review import ReviewOutput
-    from litscribe.models.assessment import ReviewAssessment
-
-    subagents = _build_subagents()
-    assert len(subagents) == 4
-
-    names = {sa["name"] for sa in subagents}
-    assert names == {"planner", "reader", "synthesizer", "reviewer"}
-
-    for sa in subagents:
-        assert "system_prompt" in sa
-        assert "description" in sa
-        assert len(sa["description"]) > 10
-
-
-def test_pipeline_tools_created():
-    """Test that create_pipeline_tools returns all 7 tools."""
+def test_agent_has_tools():
+    """Test that agent has the expected tools."""
     with patch.dict(os.environ, {
         "LLM_API_KEY": "sk-test-fake-key",
         "LLM_API_BASE": "https://api.example.com/v1",
         "LLM_MODEL": "test-model",
     }):
         from litscribe.config import Config
-        from litscribe.agents import create_pipeline_tools
+        from litscribe.agents import create_litscribe_agent
+
+        config = Config()
+        config.ensure_directories()
+        agent, state, token_mw = create_litscribe_agent(config)
+
+        assert agent is not None
+        assert state.research_question == ""
+
+
+def test_pipeline_tools_created():
+    """Test that create_pipeline_tools returns the 3 tools."""
+    with patch.dict(os.environ, {
+        "LLM_API_KEY": "sk-test-fake-key",
+        "LLM_API_BASE": "https://api.example.com/v1",
+        "LLM_MODEL": "test-model",
+    }):
+        from litscribe.config import Config
+        from litscribe.agents import create_pipeline_tools, _build_model
         from litscribe.tools.status import PipelineState
 
         config = Config()
         state = PipelineState()
-        tools = create_pipeline_tools(config, state)
+        model = _build_model(config)
+        tools = create_pipeline_tools(config, state, model)
 
-        assert len(tools) == 4
+        assert len(tools) == 3
         tool_names = {t.name for t in tools}
+        assert "run_review" in tool_names
         assert "search_papers" in tool_names
-        assert "build_knowledge_graph" in tool_names
-        assert "check_pipeline_status" in tool_names
         assert "export_results" in tool_names

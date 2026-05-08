@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from deepagents import SubAgent, create_deep_agent
+from deepagents import create_deep_agent
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 
@@ -12,17 +12,8 @@ from litscribe.config import Config
 from litscribe.evolution.memory_manager import MemoryManager
 from litscribe.middleware.evolution import EvolutionMiddleware
 from litscribe.middleware.token_tracking import TokenTrackingMiddleware
-from litscribe.models.assessment import ReviewAssessment
-from litscribe.models.plan import ResearchPlan
-from litscribe.models.review import ReviewOutput
-from litscribe.prompts.planner_system import (
-    PLANNER_SYSTEM_PROMPT,
-    READER_SYSTEM_PROMPT,
-    REVIEWER_SYSTEM_PROMPT,
-    SYNTHESIZER_SYSTEM_PROMPT,
-)
 from litscribe.prompts.supervisor import SUPERVISOR_PROMPT
-from litscribe.tools.status import PipelineState, check_status as _check_status
+from litscribe.tools.status import PipelineState
 
 logger = logging.getLogger(__name__)
 
@@ -48,51 +39,29 @@ def _build_model(config: Config) -> ChatOpenAI:
     return ChatOpenAI(**kwargs)
 
 
-def _build_subagents() -> list[SubAgent]:
-    planner: SubAgent = {
-        "name": "planner",
-        "description": (
-            "Decompose a research question into sub-topics with search queries and domain classification. "
-            "Returns a structured research plan with sub-topics, keywords, and estimated paper counts."
-        ),
-        "system_prompt": PLANNER_SYSTEM_PROMPT,
-        "tools": [],
-    }
-    reader: SubAgent = {
-        "name": "reader",
-        "description": (
-            "Critically analyze academic papers. Given paper titles and abstracts, "
-            "extract key findings, methodology, strengths, limitations, and relevance scores."
-        ),
-        "system_prompt": READER_SYSTEM_PROMPT,
-        "tools": [],
-    }
-    synthesizer: SubAgent = {
-        "name": "synthesizer",
-        "description": (
-            "Write a comprehensive literature review from paper analyses. "
-            "Organize by themes, cite every paper with [Author, Year] format."
-        ),
-        "system_prompt": SYNTHESIZER_SYSTEM_PROMPT,
-        "tools": [],
-    }
-    reviewer: SubAgent = {
-        "name": "reviewer",
-        "description": (
-            "Evaluate review quality on relevance, coverage, coherence, and claim support. "
-            "Return a score and suggestions for improvement."
-        ),
-        "system_prompt": REVIEWER_SYSTEM_PROMPT,
-        "tools": [],
-    }
-    return [planner, reader, synthesizer, reviewer]
-
-
-def create_pipeline_tools(config: Config, state: PipelineState):
+def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenAI):
 
     @tool
-    async def search_papers(queries: str, max_papers: int = 40) -> str:
-        """Search academic databases with given queries (comma-separated). Pure API search, no LLM."""
+    async def run_review(
+        research_question: str,
+        max_papers: int = 40,
+        language: str = "en",
+        instructions: str = "",
+    ) -> str:
+        """Run a complete literature review pipeline. This handles plan → search → read → graphrag → synthesize → review automatically."""
+        from litscribe.tools.pipeline import run_review as _run
+
+        state.research_question = research_question
+        state.language = language
+
+        return await _run(
+            model=model, config=config, state=state,
+            max_papers=max_papers, user_instructions=instructions,
+        )
+
+    @tool
+    async def search_papers(queries: str, max_papers: int = 20) -> str:
+        """Search academic databases with queries (comma-separated). Use for quick searches without full review."""
         from litscribe.tools.search import search_all_sources
 
         query_list = [q.strip() for q in queries.split(",") if q.strip()]
@@ -101,38 +70,13 @@ def create_pipeline_tools(config: Config, state: PipelineState):
 
         papers = await search_all_sources(query_list, config, max_per_source=max_papers)
         state.papers = papers[:max_papers]
-        state.iteration += 1
 
-        return (
-            f"Found {len(papers)} papers, kept top {len(state.papers)}. "
-            f"Sources searched: arXiv, OpenAlex, Europe PMC, PubMed, S2. "
-            f"Call check_pipeline_status for next step."
-        )
+        summaries = []
+        for p in state.papers[:10]:
+            authors = ", ".join(p.authors[:2]) if p.authors else "Unknown"
+            summaries.append(f"- {p.title} ({authors}, {p.year})")
 
-    @tool
-    async def build_knowledge_graph() -> str:
-        """Build a knowledge graph from paper analyses. Call when ≥5 papers analyzed."""
-        from litscribe.tools.graphrag import build_knowledge_graph as _build
-
-        if len(state.analyses) < 5:
-            return f"Only {len(state.analyses)} analyses, skipping graph (need ≥5)."
-
-        kg_model = _build_model(config)
-
-        async def llm_call(prompt: str, **kwargs) -> str:
-            result = await kg_model.ainvoke(prompt)
-            return result.content
-
-        graph = await _build(state.analyses, llm_call)
-        state.graph = graph
-        n = len(graph.get("communities", []))
-        return f"Built knowledge graph: {n} communities. Call check_pipeline_status."
-
-    @tool
-    def check_pipeline_status() -> str:
-        """Check pipeline progress and get routing recommendation. Call after EVERY step."""
-        result = _check_status(state)
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return f"Found {len(papers)} papers, kept {len(state.papers)}:\n" + "\n".join(summaries)
 
     @tool
     async def export_results(format: str = "markdown", style: str = "apa") -> str:
@@ -140,12 +84,12 @@ def create_pipeline_tools(config: Config, state: PipelineState):
         from litscribe.tools.export import export_review
 
         if state.synthesis is None:
-            return "No review to export."
+            return "No review to export. Run a review first."
 
         result = await export_review(state.synthesis, state.papers, format, style)
         return result.get("content", "Export failed")[:3000]
 
-    return [search_papers, build_knowledge_graph, check_pipeline_status, export_results]
+    return [run_review, search_papers, export_results]
 
 
 def create_litscribe_agent(
@@ -155,8 +99,7 @@ def create_litscribe_agent(
     model = _build_model(config)
     state = PipelineState()
 
-    tools = create_pipeline_tools(config, state)
-    subagents = _build_subagents()
+    tools = create_pipeline_tools(config, state, model)
 
     middleware = []
     if memory:
@@ -168,7 +111,6 @@ def create_litscribe_agent(
     agent = create_deep_agent(
         model=model,
         tools=tools,
-        subagents=subagents,
         system_prompt=SUPERVISOR_PROMPT,
         middleware=middleware,
         name="litscribe",

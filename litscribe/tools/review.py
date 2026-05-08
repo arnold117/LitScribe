@@ -44,12 +44,16 @@ def _fallback_assessment(error_msg: str) -> ReviewAssessment:
 
 
 async def evaluate_review(
-    router,
-    review: ReviewOutput,
-    analyses: list[PaperAnalysis],
-    plan: ResearchPlan | None,
-    research_question: str,
+    router=None,
+    review: ReviewOutput = None,
+    analyses: list[PaperAnalysis] = None,
+    plan: ResearchPlan | None = None,
+    research_question: str = "",
+    model=None,
 ) -> ReviewAssessment:
+    if router is None and model is not None:
+        from litscribe.llm.adapter import ModelAdapter
+        router = ModelAdapter(model)
     paper_dicts = []
     for a in analyses:
         paper_dicts.append({

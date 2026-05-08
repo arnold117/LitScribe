@@ -322,15 +322,20 @@ async def write_review_sectioned(
 
 
 async def synthesize(
-    router,
-    analyses: list[PaperAnalysis],
-    research_question: str,
+    router=None,
+    analyses: list[PaperAnalysis] = None,
+    research_question: str = "",
     review_type: str = "narrative",
     language: str = "en",
     graph_context: dict | None = None,
     user_instructions: str = "",
     papers: list | None = None,
+    model=None,
 ) -> ReviewOutput:
+    if router is None and model is not None:
+        from litscribe.llm.adapter import ModelAdapter
+        router = ModelAdapter(model)
+
     themes = await identify_themes(router, analyses, research_question)
     gaps = await identify_gaps(router, analyses, themes, research_question)
 
