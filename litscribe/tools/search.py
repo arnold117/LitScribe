@@ -8,6 +8,8 @@ from litscribe.services.base import dedup_papers
 
 logger = logging.getLogger(__name__)
 
+_search_cache: dict[str, list[Paper]] = {}
+
 
 async def search_all_sources(
     queries: list[str],
@@ -52,11 +54,16 @@ async def search_all_sources(
     max_per_query = max(max_per_source // max(len(queries_to_use), 1), 5)
 
     async def _search_one(svc, query: str) -> list[Paper]:
+        cache_key = f"{svc.source_name}:{query}"
+        if cache_key in _search_cache:
+            return _search_cache[cache_key]
         try:
-            return await asyncio.wait_for(
+            papers = await asyncio.wait_for(
                 svc.search(query, max_results=max_per_query),
                 timeout=15.0,
             )
+            _search_cache[cache_key] = papers
+            return papers
         except asyncio.TimeoutError:
             logger.warning(f"{svc.source_name} timed out for '{query[:40]}'")
             return []

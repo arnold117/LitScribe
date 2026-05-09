@@ -116,24 +116,50 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
     logger.info(f"  SEARCH done: {len(papers)} found → {len(state.papers)} kept ({time.time()-t:.1f}s)")
 
 
+async def _try_get_full_text(paper: Paper) -> str | None:
+    if not paper.pdf_urls:
+        return None
+    try:
+        from litscribe.services.pdf import PDFService
+        pdf_svc = PDFService()
+        parsed = await pdf_svc.parse(paper.pdf_urls[0])
+        if parsed and parsed.markdown and len(parsed.markdown) > 200:
+            return parsed.markdown[:8000]
+    except Exception:
+        pass
+    return None
+
+
 async def step_read(model: ChatOpenAI, state: PipelineState) -> None:
     import asyncio
-    from litscribe.prompts.reading import ABSTRACT_ONLY_ANALYSIS_PROMPT
+    from litscribe.prompts.reading import ABSTRACT_ONLY_ANALYSIS_PROMPT, COMBINED_PAPER_ANALYSIS_PROMPT
     from litscribe.models.analysis import PaperAnalysis
 
     logger.info(f"Pipeline step: READ ({len(state.papers)} papers)")
     t = time.time()
 
     async def analyze_one(paper: Paper) -> PaperAnalysis:
-        prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
-            research_question=state.research_question,
-            title=paper.title,
-            authors=", ".join(paper.authors[:3]) if paper.authors else "Unknown",
-            year=paper.year or "N/A",
-            venue=paper.venue or "",
-            abstract=paper.abstract or "(no abstract)",
-            metadata_section=f"Citations: {paper.citations or 0}",
-        )
+        full_text = await _try_get_full_text(paper)
+
+        if full_text:
+            prompt = COMBINED_PAPER_ANALYSIS_PROMPT.format(
+                research_question=state.research_question,
+                title=paper.title,
+                authors=", ".join(paper.authors[:3]) if paper.authors else "Unknown",
+                year=paper.year or "N/A",
+                abstract=paper.abstract or "(no abstract)",
+                full_text=full_text,
+            )
+        else:
+            prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
+                research_question=state.research_question,
+                title=paper.title,
+                authors=", ".join(paper.authors[:3]) if paper.authors else "Unknown",
+                year=paper.year or "N/A",
+                venue=paper.venue or "",
+                abstract=paper.abstract or "(no abstract)",
+                metadata_section=f"Citations: {paper.citations or 0}",
+            )
         try:
             result = await _call_llm_json(model, prompt, retries=1)
             if isinstance(result, dict):
@@ -187,7 +213,7 @@ async def step_graphrag(model: ChatOpenAI, state: PipelineState) -> None:
     except Exception as e:
         logger.warning(f"GraphRAG failed: {e}, skipping")
         state.graph = None
-    n = len(state.graph.get("communities", []))
+    n = len(state.graph.get("communities", [])) if state.graph else 0
     logger.info(f"  GRAPHRAG done: {n} communities ({time.time()-t:.1f}s)")
 
 
@@ -229,6 +255,7 @@ async def run_review(
     state: PipelineState,
     max_papers: int = 40,
     user_instructions: str = "",
+    memory=None,
 ) -> str:
     total_start = time.time()
 
@@ -265,6 +292,27 @@ async def run_review(
             state.synthesis = None
             state.assessment = None
             state.graph = None
+
+    # Evolution: post-task evaluate
+    if memory and state.assessment:
+        try:
+            from litscribe.evolution.skill_evolver import TaskMetrics
+            metrics = TaskMetrics(
+                sub_topic_count=len(state.plan.sub_topics) if state.plan else 0,
+                papers_found=len(state.papers),
+                papers_relevant=len(state.analyses),
+                loop_back_count=max(0, state.iteration - 1),
+                source_count=len({s for p in state.papers for s in p.sources}),
+            )
+            memory.evolver.post_task_evaluate(
+                session_id=f"review-{int(total_start)}",
+                domain=state.domain,
+                score=state.assessment.score,
+                metrics=metrics,
+            )
+            logger.info(f"Evolution: post_task_evaluate done (score={state.assessment.score:.2f})")
+        except Exception as e:
+            logger.warning(f"Evolution post_task_evaluate failed: {e}")
 
     elapsed = time.time() - total_start
     logger.info(f"Pipeline complete in {elapsed:.1f}s")

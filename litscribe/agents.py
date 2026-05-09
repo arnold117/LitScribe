@@ -39,7 +39,7 @@ def _build_model(config: Config) -> ChatOpenAI:
     return ChatOpenAI(**kwargs)
 
 
-def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenAI):
+def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenAI, memory=None):
 
     @tool
     async def run_review(
@@ -57,6 +57,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         return await _run(
             model=model, config=config, state=state,
             max_papers=max_papers, user_instructions=instructions,
+            memory=memory,
         )
 
     @tool
@@ -99,7 +100,7 @@ def create_litscribe_agent(
     model = _build_model(config)
     state = PipelineState()
 
-    tools = create_pipeline_tools(config, state, model)
+    tools = create_pipeline_tools(config, state, model, memory=memory)
 
     middleware = []
     if memory:
