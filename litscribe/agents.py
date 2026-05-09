@@ -80,6 +80,34 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         return f"Found {len(papers)} papers, kept {len(state.papers)}:\n" + "\n".join(summaries)
 
     @tool
+    async def refine_review(instruction: str) -> str:
+        """Modify an existing review based on user instruction. Examples: 'add a section about delivery methods', 'expand the methodology discussion', 'remove the part about X', 'rewrite the conclusion'."""
+        from litscribe.tools.refinement import refine_review as _refine
+        from litscribe.prompts.utils import format_summaries_for_prompt
+
+        if state.synthesis is None:
+            return "No review to refine. Run a review first."
+
+        papers_ctx = ""
+        if state.analyses:
+            from litscribe.tools.synthesis import _enrich_analyses_with_papers
+            enriched = _enrich_analyses_with_papers(state.analyses, state.papers)
+            papers_ctx = format_summaries_for_prompt(enriched, max_chars=5000)
+
+        new_review = await _refine(
+            model=model, current_review=state.synthesis,
+            instruction_text=instruction,
+            research_question=state.research_question,
+            papers_context=papers_ctx,
+            language=state.language,
+        )
+        state.synthesis = new_review
+        return (
+            f"Review refined: {new_review.word_count} words (was {state.synthesis.word_count}).\n"
+            f"Instruction applied: {instruction}"
+        )
+
+    @tool
     async def export_results(format: str = "markdown", style: str = "apa") -> str:
         """Export the review. Formats: markdown, bibtex, citations."""
         from litscribe.tools.export import export_review
@@ -90,7 +118,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         result = await export_review(state.synthesis, state.papers, format, style)
         return result.get("content", "Export failed")[:3000]
 
-    return [run_review, search_papers, export_results]
+    return [run_review, search_papers, refine_review, export_results]
 
 
 def create_litscribe_agent(

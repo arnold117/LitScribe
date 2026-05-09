@@ -57,10 +57,11 @@ def test_pipeline_tools_created():
         config = Config()
         state = PipelineState()
         model = _build_model(config)
-        tools = create_pipeline_tools(config, state, model)
+        tools = create_pipeline_tools(config, state, model, memory=None)
 
-        assert len(tools) == 3
+        assert len(tools) == 4
         tool_names = {t.name for t in tools}
         assert "run_review" in tool_names
         assert "search_papers" in tool_names
+        assert "refine_review" in tool_names
         assert "export_results" in tool_names
