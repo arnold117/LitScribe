@@ -110,6 +110,26 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
             unique.append(q.strip())
 
     papers = await search_all_sources(unique[:6], config, max_per_source=max_papers, domain=state.domain)
+
+    # Keyword relevance filter: keep papers whose title or abstract
+    # contains at least one core term from the first 3 queries
+    core_terms = set()
+    for q in unique[:3]:
+        for word in q.lower().split():
+            if len(word) >= 4 and word not in {"with", "from", "that", "this", "have", "been", "their", "using", "based"}:
+                core_terms.add(word)
+
+    if core_terms and len(papers) > max_papers:
+        def _relevance(p):
+            text = f"{p.title} {p.abstract or ''}".lower()
+            return sum(1 for term in core_terms if term in text)
+
+        papers.sort(key=_relevance, reverse=True)
+        before = len(papers)
+        papers = [p for p in papers if _relevance(p) >= 1] or papers[:max_papers]
+        if len(papers) != before:
+            logger.info(f"  Keyword filter: {before} → {len(papers)} (terms: {list(core_terms)[:5]})")
+
     state.papers = papers[:max_papers]
     state.iteration += 1
 

@@ -363,6 +363,12 @@ async def synthesize_parallel(
 
     user_suffix = f"\n\nADDITIONAL INSTRUCTIONS: {user_instructions}" if user_instructions else ""
 
+    citation_rule = (
+        "\n\nCITATION FORMAT (STRICT): Use [LastName et al., Year] for EVERY factual claim. "
+        "Copy author surnames EXACTLY from the paper list. NEVER write [Year] alone — always include the author name. "
+        "NEVER omit the year. Example: [Smith et al., 2023], [Zhang, 2020]."
+    )
+
     # Intro prompt
     intro_prompt = (
         f"Write a concise introduction (2-3 paragraphs, ~{intro_words} words) for a literature review.\n\n"
@@ -370,8 +376,8 @@ async def synthesize_parallel(
         f"Number of papers: {num_papers}\n"
         f"Themes: {theme_names}\n\n"
         f"Papers:\n{summaries_text[:5000]}\n\n"
-        f"Cite key papers using [Author, Year]. Start with a # heading."
-        f"{lang_instruction}{user_suffix}"
+        f"Start with a # heading."
+        f"{citation_rule}{lang_instruction}{user_suffix}"
     )
 
     # Theme section prompts (one per theme)
@@ -399,8 +405,8 @@ async def synthesize_parallel(
             f"Papers for this theme:\n{theme_summaries}\n\n"
             f"Full paper list for cross-referencing:\n{checklist}\n\n"
             f"Start with ## {theme.get('theme', '')}. Synthesize across papers — compare and contrast approaches, "
-            f"highlight agreements and disagreements. Use [Author, Year] citations."
-            f"{lang_instruction}{user_suffix}"
+            f"highlight agreements and disagreements."
+            f"{citation_rule}{lang_instruction}{user_suffix}"
         )
         theme_prompts.append(p)
 
@@ -410,9 +416,8 @@ async def synthesize_parallel(
         f"Research Question: {research_question}\n"
         f"Themes covered: {theme_names}\n"
         f"Research gaps: {gaps_text}\n\n"
-        f"Write: ## Research Gaps and Future Directions (1 paragraph), then ## Conclusion (1 paragraph). "
-        f"Use [Author, Year] citations where appropriate."
-        f"{lang_instruction}"
+        f"Write: ## Research Gaps and Future Directions (1 paragraph), then ## Conclusion (1 paragraph)."
+        f"{citation_rule}{lang_instruction}"
     )
 
     # Step 3: generate ALL sections in parallel
