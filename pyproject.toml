@@ -17,8 +17,6 @@ dependencies = [
     "langgraph>=0.2.0",
     "langgraph-checkpoint-sqlite>=3.0.0",
     "langchain-core>=0.3.0",
-    # LLM routing
-    "litellm",
     # Search services
     "arxiv",
     "pyzotero",
@@ -30,25 +28,17 @@ dependencies = [
     "pymupdf",
     # Vector store + embeddings
     "chromadb>=0.5.0",
-    "sentence-transformers",
     # Storage
     "aiosqlite>=0.20.0",
     # GraphRAG
     "networkx>=3.2",
     "graspologic>=3.4.0",
-    # Export
+    # Core
     "pydantic>=2.0",
-    # Web (keep for future API)
-    "fastapi",
-    "uvicorn",
-    # CLI
     "typer>=0.12.0",
-    # Utilities
-    "requests",
-    "tenacity",
-    "tqdm",
     "python-dotenv",
-    "numpy",
+    "tenacity",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
@@ -62,11 +52,10 @@ dev = [
 
 [project.scripts]
 litscribe = "litscribe.cli.main:main"
-litscribe-old = "cli.litscribe_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["litscribe*", "src*"]
+include = ["litscribe*"]
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
@@ -91,5 +80,5 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --cov=litscribe --cov=src --cov-report=html --cov-report=term"
+addopts = "-v --cov=litscribe --cov-report=html --cov-report=term"
 asyncio_mode = "auto"
