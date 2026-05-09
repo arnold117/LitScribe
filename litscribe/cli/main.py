@@ -70,10 +70,10 @@ async def _init_agent(verbose: bool = False):
 async def _chat_loop(verbose: bool):
     agent, state, token_mw, memory = await _init_agent(verbose)
 
-    print("LitScribe Chat (type 'exit' to quit, 'review <question>' to start a review)")
+    print("LitScribe Chat (type 'exit' to quit)")
     print()
 
-    thread_config = {"configurable": {"thread_id": "chat-session"}}
+    history: list[tuple[str, str]] = []
 
     while True:
         try:
@@ -87,11 +87,20 @@ async def _chat_loop(verbose: bool):
             break
 
         try:
-            result = await agent.ainvoke(
-                {"messages": [("human", user_input)]},
-            )
+            messages = []
+            for role, content in history:
+                messages.append((role, content))
+            messages.append(("human", user_input))
+
+            result = await agent.ainvoke({"messages": messages})
             response = result["messages"][-1].content
             print(f"\nLitScribe> {response}\n")
+
+            history.append(("human", user_input))
+            history.append(("assistant", response))
+
+            if len(history) > 20:
+                history = history[-20:]
         except Exception as e:
             print(f"\nError: {e}\n")
 
