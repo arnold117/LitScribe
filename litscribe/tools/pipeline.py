@@ -254,6 +254,38 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
     logger.info(f"  SYNTHESIZE done: {review.word_count} words, {len(review.themes)} themes ({time.time()-t:.1f}s)")
 
 
+async def step_ground(model: ChatOpenAI, state: PipelineState) -> None:
+    from litscribe.tools.grounding import ground_citations, apply_fixes
+
+    if state.synthesis is None:
+        return
+
+    logger.info("Pipeline step: GROUND (citation verification)")
+    t = time.time()
+
+    report = await ground_citations(
+        model, state.synthesis.text, state.papers, state.analyses,
+    )
+
+    if report.unsupported > 0:
+        fixed_text = apply_fixes(state.synthesis.text, report)
+        if fixed_text != state.synthesis.text:
+            from litscribe.models.review import ReviewOutput
+            state.synthesis = ReviewOutput(
+                text=fixed_text,
+                citations=state.synthesis.citations,
+                themes=state.synthesis.themes,
+                word_count=state.synthesis.word_count,
+                language=state.synthesis.language,
+            )
+            logger.info(f"  GROUND: fixed {report.unsupported} unsupported claims")
+
+    logger.info(
+        f"  GROUND done: {report.verified}/{report.total_citations} verified, "
+        f"{report.unsupported} fixed, accuracy={report.accuracy:.0%} ({time.time()-t:.1f}s)"
+    )
+
+
 async def step_review(model: ChatOpenAI, state: PipelineState) -> None:
     from litscribe.tools.review import evaluate_review
 
@@ -298,7 +330,10 @@ async def run_review(
         # 5. Synthesize
         await step_synthesize(model, state, user_instructions)
 
-        # 6. Review
+        # 6. Citation grounding
+        await step_ground(model, state)
+
+        # 7. Review
         await step_review(model, state)
 
         # Check if good enough
