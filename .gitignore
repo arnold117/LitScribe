@@ -252,3 +252,8 @@ temp/
 
 # VSCode settings (uncomment if you want to share settings)
 # .vscode/
+/output/
+/scripts/
+/benchmarks/
+/demo.py
+/.vscode/
