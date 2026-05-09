@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LitScribe</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+.container { max-width: 900px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 24px; margin-bottom: 4px; }
+.subtitle { color: #666; margin-bottom: 20px; font-size: 14px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.input-group { display: flex; gap: 8px; margin-bottom: 12px; }
+.input-group input, .input-group select { padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+.input-group input[type="text"] { flex: 1; }
+.input-group input[type="number"] { width: 80px; }
+button { padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+button:hover { background: #1d4ed8; }
+button:disabled { background: #93c5fd; cursor: not-allowed; }
+.status { padding: 8px 12px; background: #f0f9ff; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #1e40af; }
+.progress-bar { height: 4px; background: #dbeafe; border-radius: 2px; overflow: hidden; margin-bottom: 12px; }
+.progress-bar .fill { height: 100%; background: #2563eb; transition: width 0.3s; }
+.review-text { white-space: pre-wrap; line-height: 1.7; font-size: 14px; max-height: 600px; overflow-y: auto; padding: 16px; background: #fafafa; border-radius: 6px; }
+.stats { display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px; color: #666; }
+.stats span { background: #f0f0f0; padding: 4px 10px; border-radius: 4px; }
+.refine-box { display: flex; gap: 8px; margin-top: 12px; }
+.refine-box input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+.refine-box button { padding: 8px 16px; font-size: 13px; }
+.hidden { display: none; }
+.tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
+.tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; background: #e5e7eb; font-size: 13px; }
+.tab.active { background: white; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>LitScribe</h1>
+  <p class="subtitle">AI-powered literature review engine</p>
+
+  <div class="card">
+    <div class="input-group">
+      <input type="text" id="question" placeholder="Research question (e.g., CRISPR CHO knockout productivity)">
+      <input type="number" id="maxPapers" value="15" min="5" max="50" title="Max papers">
+      <select id="language">
+        <option value="en">English</option>
+        <option value="zh">中文</option>
+      </select>
+      <button id="runBtn" onclick="runReview()">Run Review</button>
+    </div>
+    <input type="text" id="instructions" placeholder="Optional: focus areas, themes, style preferences..." style="width:100%;padding:8px 14px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+  </div>
+
+  <div id="progressCard" class="card hidden">
+    <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+    <div id="statusText" class="status">Starting...</div>
+  </div>
+
+  <div id="resultCard" class="card hidden">
+    <div class="stats" id="stats"></div>
+    <div class="review-text" id="reviewText"></div>
+    <div class="refine-box">
+      <input type="text" id="refineInput" placeholder="Modify: e.g. 'add a section about delivery methods'">
+      <button onclick="refineReview()">Refine</button>
+      <button onclick="exportReview('markdown')">Export MD</button>
+      <button onclick="exportReview('bibtex')">Export BibTeX</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const steps = {plan: 15, search: 35, read: 55, synthesize: 80, review: 95, complete: 100};
+
+async function runReview() {
+  const q = document.getElementById('question').value.trim();
+  if (!q) return;
+
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('progressCard').classList.remove('hidden');
+  document.getElementById('resultCard').classList.add('hidden');
+
+  const body = {
+    question: q,
+    max_papers: parseInt(document.getElementById('maxPapers').value),
+    language: document.getElementById('language').value,
+    instructions: document.getElementById('instructions').value,
+  };
+
+  const response = await fetch('/api/review', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    let event = null, data = null;
+    for (const line of lines) {
+      if (line.startsWith('event: ')) event = line.slice(7);
+      else if (line.startsWith('data: ') && event) {
+        data = JSON.parse(line.slice(6));
+        handleEvent(event, data);
+        event = null;
+      }
+    }
+  }
+
+  document.getElementById('runBtn').disabled = false;
+}
+
+function handleEvent(event, data) {
+  const fill = document.getElementById('progressFill');
+  const status = document.getElementById('statusText');
+
+  if (steps[event]) fill.style.width = steps[event] + '%';
+
+  if (event === 'status') {
+    status.textContent = data.message;
+  } else if (event === 'plan') {
+    status.textContent = `Domain: ${data.domain}, Topics: ${data.sub_topics.join(', ')}`;
+  } else if (event === 'search') {
+    status.textContent = `Found ${data.papers_found} papers`;
+  } else if (event === 'read') {
+    status.textContent = `Analyzed ${data.analyzed} papers`;
+  } else if (event === 'complete') {
+    document.getElementById('progressCard').classList.add('hidden');
+    document.getElementById('resultCard').classList.remove('hidden');
+    document.getElementById('stats').innerHTML =
+      `<span>${data.papers} papers</span>` +
+      `<span>${data.word_count} words</span>` +
+      `<span>Score: ${data.score.toFixed(2)}</span>` +
+      `<span>${data.time}s</span>`;
+    document.getElementById('reviewText').textContent = data.text;
+  }
+}
+
+async function refineReview() {
+  const instruction = document.getElementById('refineInput').value.trim();
+  if (!instruction) return;
+
+  document.getElementById('reviewText').textContent = 'Refining...';
+  const res = await fetch('/api/refine', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({instruction}),
+  });
+  const data = await res.json();
+  document.getElementById('reviewText').textContent = data.text;
+  document.getElementById('refineInput').value = '';
+}
+
+async function exportReview(format) {
+  const res = await fetch(`/api/export/${format}`);
+  const data = await res.json();
+  const blob = new Blob([data.content], {type: 'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `review.${format === 'bibtex' ? 'bib' : 'md'}`;
+  a.click();
+}
+</script>
+</body>
+</html>

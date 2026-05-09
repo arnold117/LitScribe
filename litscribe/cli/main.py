@@ -42,6 +42,19 @@ def export(
     asyncio.run(_export_review(format, style, output))
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+):
+    """Start the Web UI server."""
+    import uvicorn
+    from dotenv import load_dotenv
+    load_dotenv()
+    print(f"LitScribe Web UI: http://{host}:{port}")
+    uvicorn.run("litscribe.api.app:app", host=host, port=port, reload=False)
+
+
 async def _init_agent(verbose: bool = False):
     if verbose:
         logging.basicConfig(level=logging.INFO)
