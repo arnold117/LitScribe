@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+from deepagents import create_deep_agent
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+
+from litscribe.config import Config
+from litscribe.evolution.memory_manager import MemoryManager
+from litscribe.middleware.evolution import EvolutionMiddleware
+from litscribe.middleware.token_tracking import TokenTrackingMiddleware
+from litscribe.prompts.supervisor import SUPERVISOR_PROMPT
+from litscribe.tools.status import PipelineState
+
+logger = logging.getLogger(__name__)
+
+
+def _build_model(config: Config) -> ChatOpenAI:
+    model_name = config.llm.default_model
+    if "/" in model_name:
+        model_name = model_name.split("/", 1)[1]
+
+    kwargs = dict(
+        model=model_name,
+        openai_api_key=config.llm.api_key,
+        openai_api_base=config.llm.api_base,
+        temperature=0.1,
+        timeout=300,
+        max_retries=2,
+    )
+    if "deepseek" in config.llm.api_base.lower() and any(
+        k in model_name.lower() for k in ("v4", "reasoner")
+    ):
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+    return ChatOpenAI(**kwargs)
+
+
+def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenAI, memory=None):
+
+    @tool
+    async def run_review(
+        research_question: str,
+        max_papers: int = 40,
+        language: str = "en",
+        instructions: str = "",
+    ) -> str:
+        """Run a complete literature review pipeline. This handles plan → search → read → graphrag → synthesize → review automatically."""
+        from litscribe.tools.pipeline import run_review as _run
+
+        state.research_question = research_question
+        state.language = language
+
+        return await _run(
+            model=model, config=config, state=state,
+            max_papers=max_papers, user_instructions=instructions,
+            memory=memory,
+        )
+
+    @tool
+    async def search_papers(queries: str, max_papers: int = 20) -> str:
+        """Search academic databases with queries (comma-separated). Use for quick searches without full review."""
+        from litscribe.tools.search import search_all_sources
+
+        query_list = [q.strip() for q in queries.split(",") if q.strip()]
+        if not query_list:
+            return "No queries provided."
+
+        papers = await search_all_sources(query_list, config, max_per_source=max_papers)
+        state.papers = papers[:max_papers]
+
+        summaries = []
+        for p in state.papers[:10]:
+            authors = ", ".join(p.authors[:2]) if p.authors else "Unknown"
+            summaries.append(f"- {p.title} ({authors}, {p.year})")
+
+        return f"Found {len(papers)} papers, kept {len(state.papers)}:\n" + "\n".join(summaries)
+
+    @tool
+    async def export_results(format: str = "markdown", style: str = "apa") -> str:
+        """Export the review. Formats: markdown, bibtex, citations."""
+        from litscribe.tools.export import export_review
+
+        if state.synthesis is None:
+            return "No review to export. Run a review first."
+
+        result = await export_review(state.synthesis, state.papers, format, style)
+        return result.get("content", "Export failed")[:3000]
+
+    return [run_review, search_papers, export_results]
+
+
+def create_litscribe_agent(
+    config: Config,
+    memory: MemoryManager | None = None,
+):
+    model = _build_model(config)
+    state = PipelineState()
+
+    tools = create_pipeline_tools(config, state, model, memory=memory)
+
+    middleware = []
+    if memory:
+        evolution_mw = EvolutionMiddleware(memory, pipeline_state=state)
+        middleware.append(evolution_mw)
+    token_mw = TokenTrackingMiddleware()
+    middleware.append(token_mw)
+
+    agent = create_deep_agent(
+        model=model,
+        tools=tools,
+        system_prompt=SUPERVISOR_PROMPT,
+        middleware=middleware,
+        name="litscribe",
+    )
+
+    return agent, state, token_mw
