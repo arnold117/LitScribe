@@ -369,11 +369,21 @@ async def run_review(
         except Exception as e:
             logger.warning(f"Evolution post_task_evaluate failed: {e}")
 
+    # Save session
+    session_id = ""
+    try:
+        from litscribe.store.sessions import SessionStore
+        store = SessionStore(config.db_path)
+        session_id = await store.save_session(state)
+        logger.info(f"Session saved: {session_id}")
+    except Exception as e:
+        logger.warning(f"Session save failed: {e}")
+
     elapsed = time.time() - total_start
     logger.info(f"Pipeline complete in {elapsed:.1f}s")
 
     return (
-        f"Literature review complete.\n"
+        f"Literature review complete (session: {session_id}).\n"
         f"- Papers: {len(state.papers)} found, {len(state.analyses)} analyzed\n"
         f"- Review: {state.synthesis.word_count} words, {len(state.synthesis.themes)} themes\n"
         f"- Score: {state.assessment.score:.2f}\n"

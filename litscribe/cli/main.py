@@ -27,6 +27,12 @@ def review(
 
 
 @app.command()
+def sessions(session_id: str = typer.Argument(None, help="Session ID to view details, or omit to list all")):
+    """List past reviews or view a specific session."""
+    asyncio.run(_manage_sessions(session_id))
+
+
+@app.command()
 def skills(action: str = typer.Argument("list", help="list | show <slug> | delete <slug>")):
     """Manage learned research skills."""
     asyncio.run(_manage_skills(action))
@@ -146,6 +152,49 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
         print(f"\nToken usage: {token_mw.summary()}")
     if memory:
         await memory.close()
+
+
+async def _manage_sessions(session_id: str | None):
+    from dotenv import load_dotenv
+    load_dotenv()
+    from litscribe.config import Config
+    from litscribe.store.sessions import SessionStore
+
+    config = Config()
+    config.ensure_directories()
+    store = SessionStore(config.db_path)
+
+    if session_id is None:
+        sessions = await store.list_sessions()
+        if not sessions:
+            print("No sessions yet. Run 'litscribe review <question>' to create one.")
+            return
+        print(f"{'ID':<10} {'Score':>5} {'Papers':>6} {'Words':>6} {'Question':<50} {'Date'}")
+        print("-" * 95)
+        for s in sessions:
+            print(f"{s['session_id']:<10} {s['score']:>5.2f} {s['papers']:>6} {s['words']:>6} "
+                  f"{s['question'][:50]:<50} {s['created_at'][:10]}")
+    else:
+        session = await store.get_session(session_id)
+        if not session:
+            print(f"Session '{session_id}' not found.")
+            return
+        print(f"Session: {session['session_id']}")
+        print(f"Question: {session['research_question']}")
+        print(f"Domain: {session['domain']}")
+        print(f"Papers: {session['papers_count']}, Words: {session['word_count']}, Score: {session['score']:.2f}")
+        print(f"Created: {session['created_at']}")
+        print()
+
+        versions = await store.get_versions(session_id)
+        if versions:
+            print(f"Versions ({len(versions)}):")
+            for v in versions:
+                instr = f" — {v['instruction']}" if v['instruction'] else ""
+                print(f"  v{v['version']}: {v['words']} words{instr} ({v['created_at'][:16]})")
+
+        print(f"\nReview (first 500 chars):")
+        print(session['review_text'][:500])
 
 
 async def _manage_skills(action: str):

@@ -184,6 +184,25 @@ async def get_state():
     }
 
 
+@app.get("/api/sessions")
+async def list_sessions():
+    config, _ = _get_config()
+    from litscribe.store.sessions import SessionStore
+    store = SessionStore(config.db_path)
+    return await store.list_sessions()
+
+
+@app.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    config, _ = _get_config()
+    from litscribe.store.sessions import SessionStore
+    store = SessionStore(config.db_path)
+    session = await store.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    return session
+
+
 @app.get("/api/export/{format}")
 async def export(format: str, style: str = "apa"):
     if _state is None or _state.synthesis is None:
