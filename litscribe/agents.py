@@ -54,11 +54,21 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         state.research_question = research_question
         state.language = language
 
-        return await _run(
+        result = await _run(
             model=model, config=config, state=state,
             max_papers=max_papers, user_instructions=instructions,
             memory=memory,
         )
+
+        # Auto-save to file
+        if state.synthesis:
+            from pathlib import Path
+            filename = f"review_{research_question[:30].replace(' ', '_')}.md"
+            filename = "".join(c for c in filename if c.isalnum() or c in "._-")
+            Path(filename).write_text(state.synthesis.text, encoding="utf-8")
+            result += f"\n\n📄 Saved to: {filename}"
+
+        return result
 
     @tool
     async def search_papers(queries: str, max_papers: int = 20) -> str:
@@ -94,6 +104,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
             enriched = _enrich_analyses_with_papers(state.analyses, state.papers)
             papers_ctx = format_summaries_for_prompt(enriched, max_chars=5000)
 
+        old_text = state.synthesis.text
         old_words = state.synthesis.word_count
         new_review = await _refine(
             model=model, current_review=state.synthesis,
@@ -104,9 +115,21 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
             config=config,
         )
         state.synthesis = new_review
+
+        # Show diff stats
+        from litscribe.tools.diff import diff_stats
+        stats = diff_stats(old_text, new_review.text)
+
+        # Auto-save updated file
+        from pathlib import Path
+        filename = f"review_{state.research_question[:30].replace(' ', '_')}.md"
+        filename = "".join(c for c in filename if c.isalnum() or c in "._-")
+        Path(filename).write_text(new_review.text, encoding="utf-8")
+
         return (
             f"Review refined: {new_review.word_count} words (was {old_words}).\n"
-            f"Instruction applied: {instruction}"
+            f"Changes: +{stats['added']} lines, -{stats['removed']} lines\n"
+            f"📄 Updated: {filename}"
         )
 
     @tool

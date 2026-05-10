@@ -191,6 +191,7 @@ async def refine(req: RefineRequest):
         enriched = _enrich_analyses_with_papers(_state.analyses, _state.papers)
         papers_ctx = format_summaries_for_prompt(enriched, max_chars=5000)
 
+    old_text = _state.synthesis.text
     logger.info(f"Refine: current review {_state.synthesis.word_count} words, calling LLM...")
     new_review = await refine_review(
         model, _state.synthesis, req.instruction,
@@ -200,9 +201,15 @@ async def refine(req: RefineRequest):
     _state.synthesis = new_review
     logger.info(f"Refine done: {new_review.word_count} words")
 
+    from litscribe.tools.diff import diff_stats, unified_diff
+    stats = diff_stats(old_text, new_review.text)
+    diff = unified_diff(old_text, new_review.text, "before", "after")
+
     return {
         "text": new_review.text,
         "word_count": new_review.word_count,
+        "diff": diff,
+        "stats": stats,
     }
 
 
