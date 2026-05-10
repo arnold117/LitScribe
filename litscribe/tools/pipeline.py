@@ -248,8 +248,17 @@ async def step_read(model: ChatOpenAI, state: PipelineState) -> None:
             if isinstance(r, PaperAnalysis):
                 analyses.append(r)
 
-    state.analyses = analyses
-    logger.info(f"  READ done: {len(analyses)} analyzed ({time.time()-t:.1f}s)")
+    # Filter out irrelevant papers (relevance < 0.3)
+    relevant = [a for a in analyses if a.relevance_score >= 0.3]
+    dropped = len(analyses) - len(relevant)
+    if dropped:
+        logger.info(f"  Relevance filter: dropped {dropped} papers (score < 0.3)")
+        # Also remove from state.papers
+        relevant_ids = {a.paper_id for a in relevant}
+        state.papers = [p for p in state.papers if p.paper_id in relevant_ids]
+
+    state.analyses = relevant
+    logger.info(f"  READ done: {len(relevant)} relevant / {len(analyses)} analyzed ({time.time()-t:.1f}s)")
 
 
 async def step_contradictions(model: ChatOpenAI, state: PipelineState) -> None:
@@ -401,9 +410,24 @@ async def step_ground(model: ChatOpenAI, state: PipelineState) -> None:
     state.grounding_report = report
 
     if report.unsupported > 0:
+        # Try auto-fix first
         fixed_text = apply_fixes(state.synthesis.text, report)
+
+        # Then LLM fix pass: remove unsupported claims entirely
+        unsupported_keys = [c.author for c in report.claims if c.supported is False]
+        if unsupported_keys:
+            fix_prompt = (
+                f"Remove or rewrite sentences that cite these papers incorrectly: {unsupported_keys}\n\n"
+                f"Current review:\n{fixed_text[:3000]}\n\n"
+                f"Only remove/rewrite the specific unsupported claims. Keep everything else unchanged."
+            )
+            try:
+                fix_result = await model.ainvoke(fix_prompt)
+                fixed_text = fix_result.content.strip()
+            except Exception:
+                pass
+
         if fixed_text != state.synthesis.text:
-            from litscribe.models.review import ReviewOutput
             state.synthesis = ReviewOutput(
                 text=fixed_text,
                 citations=state.synthesis.citations,
