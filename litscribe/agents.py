@@ -189,6 +189,24 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         return "\n".join(lines)
 
     @tool
+    async def assess_reading_level() -> str:
+        """Assess the reading difficulty of the current review (undergraduate/masters/phd/expert)."""
+        if state.synthesis is None:
+            return "No review available."
+        from litscribe.tools.analytics import assess_readability
+        result = await assess_readability(model, state.synthesis.text)
+        level = result.get("level", "unknown")
+        score = result.get("score", "?")
+        jargon = result.get("jargon_terms", [])
+        suggestions = result.get("suggestions_to_simplify", [])
+        lines = [f"📊 Reading level: **{level}** ({score}/10)"]
+        if jargon:
+            lines.append(f"Technical terms: {', '.join(jargon[:5])}")
+        if suggestions:
+            lines.append(f"To simplify: {'; '.join(suggestions[:3])}")
+        return "\n".join(lines)
+
+    @tool
     async def export_results(format: str = "markdown", style: str = "apa") -> str:
         """Export the review. Formats: markdown, bibtex, citations."""
         from litscribe.tools.export import export_review
@@ -199,7 +217,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         result = await export_review(state.synthesis, state.papers, format, style)
         return result.get("content", "Export failed")[:3000]
 
-    return [run_review, search_papers, refine_review, analyze_draft, suggest_review_outline, export_results]
+    return [run_review, search_papers, refine_review, analyze_draft, suggest_review_outline, assess_reading_level, export_results]
 
 
 def create_litscribe_agent(

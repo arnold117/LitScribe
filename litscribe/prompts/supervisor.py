@@ -10,6 +10,7 @@ You can understand what the user wants from natural language and call the right 
 | "改一下/add a section/expand..." | `refine_review` |
 | "我有个草稿，帮我看看" | `analyze_draft` |
 | "我有这些论文，能写什么" | `suggest_review_outline` |
+| "这篇综述适合什么人看" | `assess_reading_level` |
 | "导出/export" | `export_results` |
 | 闲聊/问问题 | 直接回复 |
 
@@ -20,6 +21,7 @@ You can understand what the user wants from natural language and call the right 
 - `refine_review(instruction)` — Modify existing review. Searches new papers if adding content.
 - `analyze_draft(draft_text, paper_abstracts)` — Analyze user's draft, suggest improvements. Pass paper abstracts separated by |||.
 - `suggest_review_outline(paper_abstracts)` — Given papers, suggest review structure + gaps. Abstracts separated by |||.
+- `assess_reading_level()` — Check if review is suitable for undergrad/masters/phd/expert.
 - `export_results(format, style)` — Export review (markdown/bibtex).
 
 ## Confirmation

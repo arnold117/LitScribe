@@ -435,6 +435,50 @@ async def api_outline(req: OutlineRequest):
     return await suggest_outline(model, papers, analyses)
 
 
+@app.get("/api/citation-network")
+async def get_citation_network():
+    if not _state or not _state.papers:
+        raise HTTPException(400, "No papers available")
+    from litscribe.tools.analytics import build_citation_network, citation_network_to_mermaid
+    from litscribe.tools.cite_keys import assign_cite_keys
+    key_map = assign_cite_keys(_state.papers)
+    network = build_citation_network(_state.papers, key_map)
+    network["mermaid"] = citation_network_to_mermaid(network)
+    return network
+
+
+@app.get("/api/readability")
+async def get_readability():
+    if not _state or not _state.synthesis:
+        raise HTTPException(400, "No review available")
+    _, model = _get_config()
+    from litscribe.tools.analytics import assess_readability
+    return await assess_readability(model, _state.synthesis.text)
+
+
+class MultiReviewRequest(BaseModel):
+    session_ids: list[str]
+
+
+@app.post("/api/compare-reviews")
+async def api_compare_reviews(req: MultiReviewRequest):
+    config, model = _get_config()
+    from litscribe.store.sessions import SessionStore
+    store = SessionStore(config.db_path)
+
+    reviews = []
+    for sid in req.session_ids:
+        s = await store.get_session(sid)
+        if s and s.get("review_text"):
+            reviews.append(s["review_text"])
+
+    if len(reviews) < 2:
+        raise HTTPException(400, "Need at least 2 reviews to compare")
+
+    from litscribe.tools.analytics import compare_reviews
+    return await compare_reviews(model, reviews)
+
+
 @app.get("/api/claims")
 async def get_claims():
     if _state is None or _state.synthesis is None:

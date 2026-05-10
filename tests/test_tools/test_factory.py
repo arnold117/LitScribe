@@ -59,7 +59,7 @@ def test_pipeline_tools_created():
         model = _build_model(config)
         tools = create_pipeline_tools(config, state, model, memory=None)
 
-        assert len(tools) == 6
+        assert len(tools) == 7
         tool_names = {t.name for t in tools}
         assert "run_review" in tool_names
         assert "search_papers" in tool_names

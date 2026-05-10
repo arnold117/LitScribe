@@ -334,6 +334,21 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
         if timeline:
             appendix += f"\n\n## Research Timeline\n\n{timeline}"
 
+        # Statistics table
+        from litscribe.tools.analytics import extract_statistics, stats_to_markdown_table
+        stats = await extract_statistics(model, state.papers, state.analyses, key_map)
+        if stats:
+            appendix += f"\n\n## Statistical Summary\n\n{stats_to_markdown_table(stats)}"
+
+        # Figure suggestions
+        from litscribe.tools.analytics import suggest_figures
+        themes = [t.name for t in review.themes] if review.themes else []
+        figures = await suggest_figures(model, review.text[:2000], themes, len(state.papers))
+        if figures:
+            appendix += "\n\n## Suggested Figures\n"
+            for f in figures:
+                appendix += f"\n- **{f.get('title', 'Figure')}** ({f.get('type', '')}): {f.get('description', '')} — {f.get('placement', '')}"
+
         if appendix:
             review_with_refs = ReviewOutput(
                 text=review_with_refs.text + appendix,
@@ -343,7 +358,7 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
                 language=review_with_refs.language,
             )
     except Exception as e:
-        logger.debug(f"Comparison/timeline generation failed: {e}")
+        logger.debug(f"Comparison/timeline/stats generation failed: {e}")
 
     state.synthesis = review_with_refs
     logger.info(f"  SYNTHESIZE done: {review.word_count} words, {len(review.themes)} themes ({time.time()-t:.1f}s)")
