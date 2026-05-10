@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 import typer
 
@@ -24,6 +25,34 @@ def review(
 ):
     """Run a literature review directly."""
     asyncio.run(_run_review(question, max_papers, language, verbose))
+
+
+@app.command()
+def draft(
+    draft_file: str = typer.Argument(..., help="Path to draft file (.md/.txt)"),
+    papers: list[str] = typer.Argument(None, help="Paths to PDFs or BibTeX files"),
+):
+    """Analyze a draft review with reference papers. Suggests improvements."""
+    asyncio.run(_review_draft(draft_file, papers or []))
+
+
+@app.command()
+def outline(
+    papers: list[str] = typer.Argument(..., help="Paths to PDFs or BibTeX files"),
+):
+    """Given a collection of papers, suggest what review to write + what's missing."""
+    asyncio.run(_suggest_outline(papers))
+
+
+@app.command()
+def augment(
+    question: str = typer.Argument(..., help="Research question"),
+    papers: list[str] = typer.Argument(None, help="Paths to local PDFs or BibTeX"),
+    max_extra: int = typer.Option(10, "--max-extra", "-n"),
+    language: str = typer.Option("en", "--language", "-l"),
+):
+    """Write a review using your papers + additional search results."""
+    asyncio.run(_augmented_review(question, papers or [], max_extra, language))
 
 
 @app.command()
@@ -232,6 +261,113 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
 
     if memory:
         await memory.close()
+
+
+async def _review_draft(draft_file: str, paper_paths: list[str]):
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO)
+    from litscribe.config import Config
+    from litscribe.agents import _build_model
+    from litscribe.tools.local_review import parse_local_papers, review_draft
+    from litscribe.tools.pipeline import step_read
+
+    config = Config(); config.ensure_directories()
+    model = _build_model(config)
+
+    draft_text = Path(draft_file).read_text(encoding="utf-8")
+    print(f"Draft: {len(draft_text)} chars")
+
+    if paper_paths:
+        print(f"Parsing {len(paper_paths)} reference files...")
+        papers = await parse_local_papers(model, paper_paths)
+    else:
+        papers = []
+
+    print(f"Analyzing {len(papers)} papers...")
+    from litscribe.tools.status import PipelineState
+    state = PipelineState(research_question="draft review")
+    state.papers = papers
+    await step_read(model, state)
+
+    print("Reviewing draft...")
+    result = await review_draft(model, draft_text, papers, state.analyses)
+
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return
+
+    print(f"\n{'='*60}")
+    print("STRENGTHS:")
+    for s in result.get("strengths", []): print(f"  + {s}")
+    print("\nWEAKNESSES:")
+    for w in result.get("weaknesses", []): print(f"  - {w.get('issue','')}: {w.get('suggestion','')}")
+    print("\nMISSING TOPICS:")
+    for m in result.get("missing_topics", []): print(f"  ? {m}")
+    print("\nSUGGESTED ADDITIONS:")
+    for a in result.get("suggested_additions", []): print(f"  + [{a.get('paper','')}] → {a.get('where','')}: {a.get('why','')}")
+    print("\nREVISED OUTLINE:")
+    for o in result.get("revised_outline", []): print(f"  {o}")
+
+
+async def _suggest_outline(paper_paths: list[str]):
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO)
+    from litscribe.config import Config
+    from litscribe.agents import _build_model
+    from litscribe.tools.local_review import parse_local_papers, suggest_outline
+    from litscribe.tools.pipeline import step_read
+
+    config = Config(); config.ensure_directories()
+    model = _build_model(config)
+
+    print(f"Parsing {len(paper_paths)} files...")
+    papers = await parse_local_papers(model, paper_paths)
+
+    from litscribe.tools.status import PipelineState
+    state = PipelineState(research_question="outline suggestion")
+    state.papers = papers
+    await step_read(model, state)
+
+    print("Analyzing themes and gaps...")
+    result = await suggest_outline(model, papers, state.analyses)
+
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return
+
+    print(f"\n{'='*60}")
+    print(f"SUGGESTED QUESTION: {result.get('suggested_question', '?')}")
+    print("\nTHEMES:")
+    for t in result.get("themes", []): print(f"  [{', '.join(t.get('papers',[])[:3])}] {t.get('name','')}: {t.get('description','')[:60]}")
+    print("\nPROPOSED OUTLINE:")
+    for o in result.get("proposed_outline", []): print(f"  {o}")
+    print("\nGAPS (need more papers on):")
+    for g in result.get("gaps", []): print(f"  ? {g}")
+    print("\nSUGGESTED SEARCHES:")
+    for q in result.get("search_queries", []): print(f"  → {q}")
+
+
+async def _augmented_review(question: str, paper_paths: list[str], max_extra: int, language: str):
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO)
+    from litscribe.config import Config
+    from litscribe.agents import _build_model
+    from litscribe.tools.local_review import parse_local_papers, augmented_review
+
+    config = Config(); config.ensure_directories()
+    model = _build_model(config)
+
+    local_papers = []
+    if paper_paths:
+        print(f"Parsing {len(paper_paths)} local files...")
+        local_papers = await parse_local_papers(model, paper_paths)
+
+    print(f"Running augmented review: {len(local_papers)} local + up to {max_extra} searched...")
+    result = await augmented_review(model, config, question, local_papers, max_extra, language)
+    print(result)
 
 
 async def _run_benchmark(max_papers: int, output: str | None):

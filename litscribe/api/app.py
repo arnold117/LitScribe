@@ -352,6 +352,82 @@ async def share_session(session_id: str):
     """)
 
 
+class DraftRequest(BaseModel):
+    draft_text: str
+    paper_texts: list[str] = []
+
+
+class OutlineRequest(BaseModel):
+    paper_texts: list[str]
+
+
+@app.post("/api/draft-review")
+async def api_draft_review(req: DraftRequest):
+    await check_rate_limit("draft")
+    config, model = _get_config()
+    from litscribe.tools.local_review import review_draft, _extract_metadata
+    from litscribe.models.paper import Paper
+    from litscribe.models.analysis import PaperAnalysis
+    from litscribe.prompts.reading import ABSTRACT_ONLY_ANALYSIS_PROMPT
+
+    papers = []
+    for i, text in enumerate(req.paper_texts):
+        meta = await _extract_metadata(model, text, f"paper_{i}")
+        papers.append(Paper(
+            paper_id=f"local:{i}", title=meta.get("title", f"Paper {i}"),
+            authors=meta.get("authors", []), abstract=meta.get("abstract", text[:300]),
+            year=meta.get("year", 2024), sources={"local": str(i)},
+        ))
+
+    analyses = []
+    for p in papers:
+        prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
+            research_question="draft review", title=p.title,
+            authors=", ".join(p.authors[:3]), year=p.year, venue="",
+            abstract=p.abstract, metadata_section="",
+        )
+        try:
+            r = await model.ainvoke(prompt)
+            import json, re
+            raw = r.content.strip()
+            if raw.startswith("```"): raw = re.sub(r"^```\w*\n?", "", raw); raw = re.sub(r"\n?```$", "", raw)
+            d = json.loads(raw)
+            analyses.append(PaperAnalysis(
+                paper_id=p.paper_id, key_findings=d.get("key_findings", []),
+                methodology=d.get("methodology", ""), strengths=d.get("strengths", []),
+                limitations=d.get("limitations", []), relevance_score=0.5, themes=[],
+            ))
+        except Exception:
+            pass
+
+    return await review_draft(model, req.draft_text, papers, analyses)
+
+
+@app.post("/api/outline")
+async def api_outline(req: OutlineRequest):
+    await check_rate_limit("outline")
+    config, model = _get_config()
+    from litscribe.tools.local_review import suggest_outline, _extract_metadata
+    from litscribe.models.paper import Paper
+    from litscribe.models.analysis import PaperAnalysis
+
+    papers = []
+    for i, text in enumerate(req.paper_texts):
+        meta = await _extract_metadata(model, text, f"paper_{i}")
+        papers.append(Paper(
+            paper_id=f"local:{i}", title=meta.get("title", f"Paper {i}"),
+            authors=meta.get("authors", []), abstract=meta.get("abstract", text[:300]),
+            year=meta.get("year", 2024), sources={"local": str(i)},
+        ))
+
+    analyses = [PaperAnalysis(
+        paper_id=p.paper_id, key_findings=[p.abstract[:200]],
+        methodology="", strengths=[], limitations=[], relevance_score=0.5, themes=[],
+    ) for p in papers]
+
+    return await suggest_outline(model, papers, analyses)
+
+
 @app.get("/api/claims")
 async def get_claims():
     if _state is None or _state.synthesis is None:
