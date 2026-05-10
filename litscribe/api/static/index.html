@@ -56,6 +56,11 @@ button:disabled { background: #93c5fd; cursor: not-allowed; }
     <div id="statusText" class="status">Starting...</div>
   </div>
 
+  <div id="sessionsCard" class="card">
+    <h3 style="font-size:14px;margin-bottom:8px;">Past Reviews</h3>
+    <div id="sessionsList" style="font-size:13px;color:#666;">Loading...</div>
+  </div>
+
   <div id="resultCard" class="card hidden">
     <div class="stats" id="stats"></div>
     <div class="review-text" id="reviewText"></div>
@@ -158,6 +163,33 @@ async function refineReview() {
   document.getElementById('reviewText').textContent = data.text;
   document.getElementById('refineInput').value = '';
 }
+
+async function loadSessions() {
+  try {
+    const res = await fetch('/api/sessions');
+    const sessions = await res.json();
+    const el = document.getElementById('sessionsList');
+    if (!sessions.length) { el.textContent = 'No past reviews.'; return; }
+    el.innerHTML = sessions.map(s =>
+      `<div style="padding:4px 0;border-bottom:1px solid #eee;cursor:pointer" onclick="loadSession('${s.session_id}')">
+        <strong>${s.question.slice(0,50)}</strong>
+        <span style="float:right">${s.papers} papers, ${s.words} words, score ${s.score.toFixed(2)}</span>
+      </div>`
+    ).join('');
+  } catch(e) { document.getElementById('sessionsList').textContent = 'Failed to load.'; }
+}
+
+async function loadSession(id) {
+  const res = await fetch(`/api/sessions/${id}`);
+  const s = await res.json();
+  document.getElementById('resultCard').classList.remove('hidden');
+  document.getElementById('stats').innerHTML =
+    `<span>${s.papers_count} papers</span><span>${s.word_count} words</span><span>Score: ${s.score.toFixed(2)}</span>`;
+  document.getElementById('reviewText').textContent = s.review_text;
+  document.getElementById('question').value = s.research_question;
+}
+
+loadSessions();
 
 async function exportReview(format) {
   const res = await fetch(`/api/export/${format}`);

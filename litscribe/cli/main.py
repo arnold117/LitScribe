@@ -130,26 +130,92 @@ async def _chat_loop(verbose: bool):
 
 
 async def _run_review(question: str, max_papers: int, language: str, verbose: bool):
-    agent, state, token_mw, memory = await _init_agent(verbose)
-
-    state.research_question = question
-    state.language = language
-
-    prompt = (
-        f"Run a complete literature review on: {question}\n"
-        f"Max papers: {max_papers}, Language: {language}\n"
-        f"Start by calling check_pipeline_status, then follow the recommendation."
+    from litscribe.config import Config
+    from litscribe.agents import _build_model
+    from litscribe.tools.status import PipelineState
+    from litscribe.tools.pipeline import (
+        step_plan, step_search, step_read, step_graphrag,
+        step_synthesize, step_ground, step_review, run_review,
     )
+    from dotenv import load_dotenv
+    load_dotenv()
 
+    if verbose:
+        logging.basicConfig(level=logging.INFO)
+
+    config = Config()
+    config.ensure_directories()
+    model = _build_model(config)
+    state = PipelineState(research_question=question, language=language)
+
+    memory = None
     try:
-        result = await agent.ainvoke({"messages": [("human", prompt)]})
-        response = result["messages"][-1].content
-        print(f"\n{response}\n")
-    except Exception as e:
-        print(f"\nReview failed: {e}")
+        from litscribe.evolution.memory_manager import MemoryManager
+        memory = MemoryManager(config.db_path, config.chroma_path, config.skills_dir)
+        await memory.initialize()
+    except Exception:
+        pass
 
-    if token_mw.total_calls > 0:
-        print(f"\nToken usage: {token_mw.summary()}")
+    import time
+    t = time.time()
+
+    print(f"Planning...")
+    await step_plan(model, state)
+    print(f"  Domain: {state.domain}, {len(state.plan.sub_topics)} sub-topics")
+
+    print(f"Searching papers...")
+    await step_search(model, state, config, max_papers)
+    print(f"  Found {len(state.papers)} papers")
+
+    print(f"Analyzing papers...")
+    await step_read(model, state)
+    print(f"  Analyzed {len(state.analyses)} papers")
+
+    print(f"Building knowledge graph...")
+    await step_graphrag(model, state)
+
+    print(f"Writing review...")
+    await step_synthesize(model, state)
+    print(f"  {state.synthesis.word_count} words, {len(state.synthesis.themes)} themes")
+
+    print(f"Verifying citations...")
+    await step_ground(model, state)
+
+    print(f"Evaluating quality...")
+    await step_review(model, state)
+    print(f"  Score: {state.assessment.score:.2f}")
+
+    # Save session
+    try:
+        from litscribe.store.sessions import SessionStore
+        store = SessionStore(config.db_path)
+        session_id = await store.save_session(state)
+        print(f"\nSession saved: {session_id}")
+    except Exception:
+        pass
+
+    # Evolution
+    if memory and state.assessment:
+        try:
+            from litscribe.evolution.skill_evolver import TaskMetrics
+            metrics = TaskMetrics(
+                sub_topic_count=len(state.plan.sub_topics) if state.plan else 0,
+                papers_found=len(state.papers),
+                papers_relevant=len(state.analyses),
+                loop_back_count=max(0, state.iteration - 1),
+                source_count=len({s for p in state.papers for s in p.sources}),
+            )
+            memory.evolver.post_task_evaluate(
+                session_id=f"cli-{int(t)}", domain=state.domain,
+                score=state.assessment.score, metrics=metrics,
+            )
+        except Exception:
+            pass
+
+    elapsed = time.time() - t
+    print(f"\nDone in {elapsed:.0f}s")
+    print(f"\n{state.synthesis.text[:2000]}")
+
     if memory:
         await memory.close()
 
@@ -228,13 +294,32 @@ async def _manage_skills(action: str):
 async def _export_review(format: str, style: str, output: str | None):
     from dotenv import load_dotenv
     load_dotenv()
-
     from litscribe.config import Config
-    from litscribe.tools.export import export_review
-    from litscribe.models.review import ReviewOutput
+    from litscribe.store.sessions import SessionStore
 
-    print(f"Export not yet connected to session storage.")
-    print(f"Use 'litscribe chat' and ask the agent to export after a review.")
+    config = Config()
+    config.ensure_directories()
+    store = SessionStore(config.db_path)
+
+    sessions = await store.list_sessions()
+    if not sessions:
+        print("No sessions to export. Run 'litscribe review <question>' first.")
+        return
+
+    latest = sessions[0]
+    session = await store.get_session(latest["session_id"])
+
+    if format == "bibtex":
+        print("BibTeX export requires paper data (not stored in session). Use 'litscribe chat' instead.")
+        return
+
+    content = session["review_text"]
+    if output:
+        from pathlib import Path
+        Path(output).write_text(content, encoding="utf-8")
+        print(f"Exported to {output}")
+    else:
+        print(content)
 
 
 def main():

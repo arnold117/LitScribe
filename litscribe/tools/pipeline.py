@@ -250,7 +250,24 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
         user_instructions=user_instructions, papers=state.papers,
         model=model,
     )
-    state.synthesis = review
+    # Append reference list
+    ref_lines = ["\n\n## References\n"]
+    for i, p in enumerate(state.papers, 1):
+        authors = ", ".join(p.authors[:3]) if p.authors else "Unknown"
+        if len(p.authors) > 3:
+            authors += " et al."
+        venue = f" *{p.venue}*." if p.venue else ""
+        doi = f" doi:{p.doi}" if p.doi else ""
+        ref_lines.append(f"{i}. {authors} ({p.year}). {p.title}.{venue}{doi}")
+
+    review_with_refs = ReviewOutput(
+        text=review.text + "\n".join(ref_lines),
+        citations=review.citations,
+        themes=review.themes,
+        word_count=review.word_count,
+        language=review.language,
+    )
+    state.synthesis = review_with_refs
     logger.info(f"  SYNTHESIZE done: {review.word_count} words, {len(review.themes)} themes ({time.time()-t:.1f}s)")
 
 

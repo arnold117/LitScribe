@@ -94,6 +94,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
             enriched = _enrich_analyses_with_papers(state.analyses, state.papers)
             papers_ctx = format_summaries_for_prompt(enriched, max_chars=5000)
 
+        old_words = state.synthesis.word_count
         new_review = await _refine(
             model=model, current_review=state.synthesis,
             instruction_text=instruction,
@@ -103,7 +104,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         )
         state.synthesis = new_review
         return (
-            f"Review refined: {new_review.word_count} words (was {state.synthesis.word_count}).\n"
+            f"Review refined: {new_review.word_count} words (was {old_words}).\n"
             f"Instruction applied: {instruction}"
         )
 

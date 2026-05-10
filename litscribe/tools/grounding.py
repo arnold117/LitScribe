@@ -104,19 +104,32 @@ def match_citations_to_papers(
                 paper_index[f"{ln[:3]}:{p.year}"] = p.paper_id
 
     for claim in claims:
-        cite_name = claim.author.lower().replace(" et al.", "").strip()
+        cite_name = claim.author.lower().replace(" et al.", "").replace(" et al", "").strip()
         cite_parts = cite_name.split()
-        # Try full last name first, then first word
-        for name in [cite_parts[-1] if cite_parts else "", cite_parts[0] if cite_parts else ""]:
+
+        candidates = set()
+        if cite_parts:
+            candidates.add(cite_parts[-1])
+            candidates.add(cite_parts[0])
+            candidates.add(cite_name.replace(" ", ""))
+
+        for name in candidates:
+            if not name:
+                continue
             key = f"{name}:{claim.year}"
             if key in paper_index:
                 claim.paper_id = paper_index[key]
                 break
-            # Try prefix match
             key3 = f"{name[:3]}:{claim.year}" if len(name) >= 3 else ""
             if key3 and key3 in paper_index:
                 claim.paper_id = paper_index[key3]
                 break
+
+        # Fallback: try matching year only if single paper for that year
+        if not claim.paper_id:
+            year_matches = [pid for k, pid in paper_index.items() if k.endswith(f":{claim.year}")]
+            if len(set(year_matches)) == 1:
+                claim.paper_id = year_matches[0]
 
 
 async def verify_single_claim(
