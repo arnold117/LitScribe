@@ -56,7 +56,7 @@ async def _search_for_new_content(
     papers = papers[:max_papers]
 
     if not papers:
-        return [], ""
+        return [], "", "", {}
 
     key_map = assign_cite_keys(papers)
 
