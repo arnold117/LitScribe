@@ -181,7 +181,7 @@ SEMANTIC_SCHOLAR_API_KEY=your-key
 ## Project Structure
 
 ```
-litscribe/                    # 79 files, 8741 lines
+litscribe/                    # 86 files, 10,250 lines
 ├── agents.py                 # DeepAgents supervisor + tool factory
 ├── config.py                 # 3 env vars: llm-key/location/model
 ├── errors.py                 # Error types + retry decorators
@@ -218,7 +218,7 @@ litscribe/                    # 79 files, 8741 lines
 
 ```bash
 conda activate litscribe
-pytest tests/                 # 37 tests
+pytest tests/                 # 49 tests
 litscribe evaluate            # Benchmark (requires API key)
 litscribe --help
 ```
