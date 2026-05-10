@@ -53,23 +53,27 @@ async def search_all_sources(
     queries_to_use = queries[:12]
     max_per_query = max(max_per_source // max(len(queries_to_use), 1), 5)
 
+    # Limit concurrent connections to avoid DNS/TCP exhaustion
+    sem = asyncio.Semaphore(3)
+
     async def _search_one(svc, query: str) -> list[Paper]:
         cache_key = f"{svc.source_name}:{query}"
         if cache_key in _search_cache:
             return _search_cache[cache_key]
-        try:
-            papers = await asyncio.wait_for(
-                svc.search(query, max_results=max_per_query),
-                timeout=15.0,
-            )
-            _search_cache[cache_key] = papers
-            return papers
-        except asyncio.TimeoutError:
-            logger.warning(f"{svc.source_name} timed out for '{query[:40]}'")
-            return []
-        except Exception as e:
-            logger.warning(f"{svc.source_name} failed for '{query[:40]}': {e}")
-            return []
+        async with sem:
+            try:
+                papers = await asyncio.wait_for(
+                    svc.search(query, max_results=max_per_query),
+                    timeout=15.0,
+                )
+                _search_cache[cache_key] = papers
+                return papers
+            except asyncio.TimeoutError:
+                logger.warning(f"{svc.source_name} timed out for '{query[:40]}'")
+                return []
+            except Exception as e:
+                logger.warning(f"{svc.source_name} failed for '{query[:40]}': {e}")
+                return []
 
     tasks = [_search_one(svc, q) for svc in services for q in queries_to_use]
     results = await asyncio.gather(*tasks, return_exceptions=True)
