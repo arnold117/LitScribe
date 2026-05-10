@@ -179,14 +179,32 @@ async function loadSessions() {
   } catch(e) { document.getElementById('sessionsList').textContent = 'Failed to load.'; }
 }
 
+let _currentReview = null; // stash current review before loading past session
+
 async function loadSession(id) {
+  // Save current review if exists
+  const currentText = document.getElementById('reviewText').textContent;
+  const currentStats = document.getElementById('stats').innerHTML;
+  if (currentText && currentText !== 'Refining...' && !_currentReview) {
+    _currentReview = { text: currentText, stats: currentStats, question: document.getElementById('question').value };
+  }
+
   const res = await fetch(`/api/sessions/${id}`);
   const s = await res.json();
   document.getElementById('resultCard').classList.remove('hidden');
   document.getElementById('stats').innerHTML =
-    `<span>${s.papers_count} papers</span><span>${s.word_count} words</span><span>Score: ${s.score.toFixed(2)}</span>`;
+    `<span>${s.papers_count} papers</span><span>${s.word_count} words</span><span>Score: ${s.score.toFixed(2)}</span>` +
+    (_currentReview ? `<span style="cursor:pointer;color:#2563eb" onclick="restoreCurrent()">↩ Back to current</span>` : '');
   document.getElementById('reviewText').textContent = s.review_text;
   document.getElementById('question').value = s.research_question;
+}
+
+function restoreCurrent() {
+  if (!_currentReview) return;
+  document.getElementById('reviewText').textContent = _currentReview.text;
+  document.getElementById('stats').innerHTML = _currentReview.stats;
+  document.getElementById('question').value = _currentReview.question;
+  _currentReview = null;
 }
 
 loadSessions();

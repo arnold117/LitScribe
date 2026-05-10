@@ -125,8 +125,11 @@ async def execute_refinement(
         extra = (
             f"\n\n## NEW PAPERS for the added section (use [@key] citations):\n"
             f"{new_papers_context}\n\n"
-            f"IMPORTANT: The new section MUST cite these new papers using their [@key]. "
-            f"Do NOT make claims without citing a paper from this list."
+            f"IMPORTANT:\n"
+            f"- Start the new section with a ## heading (e.g., ## Delivery Methods)\n"
+            f"- The new section MUST cite these new papers using their [@key]\n"
+            f"- Do NOT make claims without citing a paper from this list\n"
+            f"- Place the new section in a logical position in the review"
         )
 
     prompt = REFINEMENT_EXECUTE_PROMPT.format(
