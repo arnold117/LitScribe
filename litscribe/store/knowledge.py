@@ -65,24 +65,23 @@ class KnowledgeStore:
     async def query(self, domain: str = "", topic: str = "", limit: int = 20) -> list[dict]:
         db = await self._db()
 
+        query = "SELECT domain, topic, finding, cite_key, confidence, created_at FROM knowledge"
         conditions = []
-        params = []
+        params: list = []
         if domain:
             conditions.append("domain = ?")
             params.append(domain)
         if topic:
+            safe_topic = topic.replace("%", "").replace("_", "")[:100]
             conditions.append("(topic LIKE ? OR finding LIKE ?)")
-            params.extend([f"%{topic}%", f"%{topic}%"])
+            params.extend([f"%{safe_topic}%", f"%{safe_topic}%"])
 
-        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY confidence DESC, created_at DESC LIMIT ?"
+        params.append(limit)
 
-        rows = await db.execute_fetchall(
-            f"""SELECT domain, topic, finding, cite_key, confidence, created_at
-                FROM knowledge {where}
-                ORDER BY confidence DESC, created_at DESC
-                LIMIT ?""",
-            params + [limit],
-        )
+        rows = await db.execute_fetchall(query, params)
         await db.close()
 
         return [

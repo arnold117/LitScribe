@@ -153,13 +153,33 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
     logger.info(f"  SEARCH done: {len(papers)} found → {len(state.papers)} kept ({time.time()-t:.1f}s)")
 
 
+SAFE_PDF_DOMAINS = {
+    "arxiv.org", "ncbi.nlm.nih.gov", "pmc", "doi.org",
+    "nature.com", "wiley.com", "springer.com", "elsevier.com",
+    "sciencedirect.com", "plos.org", "mdpi.com", "biomedcentral.com",
+    "biorxiv.org", "medrxiv.org", "frontiersin.org", "acs.org",
+    "rsc.org", "ieee.org", "acm.org",
+}
+
+
+def _is_safe_pdf_url(url: str) -> bool:
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname or ""
+    return any(domain in host for domain in SAFE_PDF_DOMAINS)
+
+
 async def _try_get_full_text(paper: Paper) -> str | None:
     if not paper.pdf_urls:
         return None
+
+    url = paper.pdf_urls[0]
+    if not _is_safe_pdf_url(url):
+        return None
+
     try:
         from litscribe.services.pdf import PDFService
         pdf_svc = PDFService()
-        parsed = await pdf_svc.parse(paper.pdf_urls[0])
+        parsed = await pdf_svc.parse(url)
         if parsed and parsed.markdown and len(parsed.markdown) > 200:
             return parsed.markdown[:8000]
     except Exception:
@@ -381,6 +401,13 @@ async def run_review(
     memory=None,
 ) -> str:
     total_start = time.time()
+
+    # Sanitize input
+    from litscribe.tools.sanitize import sanitize_research_question
+    state.research_question = sanitize_research_question(state.research_question)
+    if user_instructions:
+        from litscribe.tools.sanitize import sanitize_input
+        user_instructions = sanitize_input(user_instructions, max_length=500)
 
     # 1. Plan
     await step_plan(model, state)

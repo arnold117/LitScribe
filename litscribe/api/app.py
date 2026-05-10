@@ -22,6 +22,19 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="LitScribe", version="4.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# Simple rate limiter
+_request_times: dict[str, list[float]] = {}
+RATE_LIMIT = 10  # requests per minute per endpoint
+
+async def check_rate_limit(endpoint: str):
+    import time as _time
+    now = _time.time()
+    times = _request_times.setdefault(endpoint, [])
+    times[:] = [t for t in times if now - t < 60]
+    if len(times) >= RATE_LIMIT:
+        raise HTTPException(429, "Rate limit exceeded. Try again in a minute.")
+    times.append(now)
+
 
 class ReviewRequest(BaseModel):
     question: str
@@ -65,6 +78,7 @@ async def index():
 
 @app.post("/api/review")
 async def run_review(req: ReviewRequest):
+    await check_rate_limit("review")
     global _state
     config, model = _get_config()
     _state = PipelineState(
@@ -162,6 +176,7 @@ async def run_review(req: ReviewRequest):
 @app.post("/api/refine")
 async def refine(req: RefineRequest):
     global _state
+    await check_rate_limit("refine")
     logger.info(f"Refine request: '{req.instruction[:50]}', state={'has synthesis' if _state and _state.synthesis else 'NO synthesis'}")
     if _state is None or _state.synthesis is None:
         raise HTTPException(400, "No review to refine. Run a review first.")
@@ -326,13 +341,14 @@ async def share_session(session_id: str):
     session = await store.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+    from html import escape
     return HTMLResponse(f"""
     <html><head><title>LitScribe Review</title>
     <style>body{{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.7}}
     pre{{white-space:pre-wrap}}</style></head>
-    <body><h1>{session['research_question']}</h1>
-    <p>Domain: {session['domain']} | Papers: {session['papers_count']} | Score: {session['score']:.2f}</p>
-    <hr><pre>{session['review_text']}</pre></body></html>
+    <body><h1>{escape(session['research_question'])}</h1>
+    <p>Domain: {escape(session.get('domain',''))} | Papers: {session['papers_count']} | Score: {session['score']:.2f}</p>
+    <hr><pre>{escape(session['review_text'])}</pre></body></html>
     """)
 
 
