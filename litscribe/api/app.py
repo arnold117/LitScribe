@@ -264,6 +264,78 @@ async def get_session(session_id: str):
     return session
 
 
+class CommentRequest(BaseModel):
+    session_id: str
+    text: str
+    section: str = ""
+    author: str = "anonymous"
+
+
+@app.post("/api/sessions/{session_id}/comments")
+async def add_comment(session_id: str, req: CommentRequest):
+    config, _ = _get_config()
+    import aiosqlite
+    db = await aiosqlite.connect(config.db_path)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            author TEXT DEFAULT 'anonymous',
+            section TEXT DEFAULT '',
+            text TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    await db.execute(
+        "INSERT INTO comments (session_id, author, section, text) VALUES (?, ?, ?, ?)",
+        (session_id, req.author, req.section, req.text),
+    )
+    await db.commit()
+    await db.close()
+    return {"status": "ok"}
+
+
+@app.get("/api/sessions/{session_id}/comments")
+async def get_comments(session_id: str):
+    config, _ = _get_config()
+    import aiosqlite
+    db = await aiosqlite.connect(config.db_path)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            author TEXT DEFAULT 'anonymous',
+            section TEXT DEFAULT '',
+            text TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    rows = await db.execute_fetchall(
+        "SELECT author, section, text, created_at FROM comments WHERE session_id = ? ORDER BY created_at",
+        (session_id,),
+    )
+    await db.close()
+    return [{"author": r[0], "section": r[1], "text": r[2], "created_at": r[3]} for r in rows]
+
+
+@app.get("/api/share/{session_id}")
+async def share_session(session_id: str):
+    config, _ = _get_config()
+    from litscribe.store.sessions import SessionStore
+    store = SessionStore(config.db_path)
+    session = await store.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    return HTMLResponse(f"""
+    <html><head><title>LitScribe Review</title>
+    <style>body{{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.7}}
+    pre{{white-space:pre-wrap}}</style></head>
+    <body><h1>{session['research_question']}</h1>
+    <p>Domain: {session['domain']} | Papers: {session['papers_count']} | Score: {session['score']:.2f}</p>
+    <hr><pre>{session['review_text']}</pre></body></html>
+    """)
+
+
 @app.get("/api/claims")
 async def get_claims():
     if _state is None or _state.synthesis is None:

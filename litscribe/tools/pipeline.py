@@ -385,6 +385,17 @@ async def run_review(
     # 1. Plan
     await step_plan(model, state)
 
+    # Inject prior knowledge from past reviews
+    try:
+        from litscribe.store.knowledge import KnowledgeStore
+        kb = KnowledgeStore(config.db_path)
+        prior = await kb.get_context_for_review(state.research_question, state.domain)
+        if prior:
+            user_instructions = f"{prior}\n\n{user_instructions}" if user_instructions else prior
+            logger.info(f"  Injected prior knowledge ({len(prior)} chars)")
+    except Exception:
+        pass
+
     for iteration in range(state.max_iterations):
         # 2. Search
         await step_search(model, state, config, max_papers)
@@ -447,15 +458,29 @@ async def run_review(
                 loop_back_count=max(0, state.iteration - 1),
                 source_count=len({s for p in state.papers for s in p.sources}),
             )
-            memory.evolver.post_task_evaluate(
+            themes = [t.name for t in state.synthesis.themes] if state.synthesis else []
+            await memory.evolver.post_task_evaluate(
                 session_id=f"review-{int(total_start)}",
-                domain=state.domain,
+                question=state.research_question,
                 score=state.assessment.score,
                 metrics=metrics,
+                domain=state.domain,
+                trace_summary=f"Pipeline: {len(state.papers)} papers, {len(state.analyses)} analyzed, themes: {themes}",
             )
-            logger.info(f"Evolution: post_task_evaluate done (score={state.assessment.score:.2f})")
+            logger.info(f"Evolution: skill evaluated (score={state.assessment.score:.2f})")
         except Exception as e:
             logger.warning(f"Evolution post_task_evaluate failed: {e}")
+
+    # Save knowledge for future reviews
+    if state.analyses:
+        try:
+            from litscribe.store.knowledge import KnowledgeStore
+            from litscribe.tools.cite_keys import assign_cite_keys
+            kb = KnowledgeStore(config.db_path)
+            km = assign_cite_keys(state.papers) if state.papers else {}
+            await kb.save_findings(state.domain, state.research_question, state.analyses, km)
+        except Exception as e:
+            logger.debug(f"Knowledge save failed: {e}")
 
     # Save session
     session_id = ""

@@ -353,10 +353,19 @@ async def synthesize_parallel(
     key_map = assign_cite_keys(paper_list) if paper_list else {}
 
     # Enrich with cite keys
+    cite_counts = {p.paper_id: p.citations or 0 for p in paper_list} if paper_list else {}
     for e in enriched:
         pid = e.get("paper_id", "")
         if pid in key_map:
             e["cite_key"] = key_map[pid]
+        cites = cite_counts.get(pid, 0)
+        if cites > 0:
+            e["impact_note"] = f"(cited {cites} times)"
+
+    # Sort analyses by citation count (high-impact papers first)
+    if papers:
+        cite_map = {p.paper_id: p.citations or 0 for p in papers if hasattr(p, 'paper_id')}
+        analyses = sorted(analyses, key=lambda a: cite_map.get(a.paper_id, 0), reverse=True)
 
     # Step 1: themes + gaps in parallel
     themes_coro = identify_themes(router, analyses, research_question)
