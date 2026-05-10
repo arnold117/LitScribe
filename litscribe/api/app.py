@@ -74,7 +74,8 @@ async def run_review(req: ReviewRequest):
 
     async def stream():
         from litscribe.tools.pipeline import (
-            step_plan, step_search, step_read, step_synthesize, step_review,
+            step_plan, step_search, step_read, step_synthesize,
+            step_ground, step_review,
         )
         t0 = time.time()
 
@@ -103,12 +104,24 @@ async def run_review(req: ReviewRequest):
             "themes": [t.name for t in _state.synthesis.themes],
         })
 
+        yield _sse("status", {"step": "ground", "message": "Verifying citations..."})
+        await step_ground(model, _state)
+
         yield _sse("status", {"step": "review", "message": "Evaluating quality..."})
         await step_review(model, _state)
         yield _sse("review", {
             "score": _state.assessment.score,
             "passed": _state.assessment.passed,
         })
+
+        # Save session
+        try:
+            from litscribe.store.sessions import SessionStore
+            store = SessionStore(config.db_path)
+            sid = await store.save_session(_state)
+            logger.info(f"Session saved: {sid}")
+        except Exception as e:
+            logger.warning(f"Session save failed: {e}")
 
         elapsed = time.time() - t0
         yield _sse("complete", {
@@ -125,6 +138,7 @@ async def run_review(req: ReviewRequest):
 @app.post("/api/refine")
 async def refine(req: RefineRequest):
     global _state
+    logger.info(f"Refine request: '{req.instruction[:50]}', state={'has synthesis' if _state and _state.synthesis else 'NO synthesis'}")
     if _state is None or _state.synthesis is None:
         raise HTTPException(400, "No review to refine. Run a review first.")
 
@@ -138,11 +152,13 @@ async def refine(req: RefineRequest):
         enriched = _enrich_analyses_with_papers(_state.analyses, _state.papers)
         papers_ctx = format_summaries_for_prompt(enriched, max_chars=5000)
 
+    logger.info(f"Refine: current review {_state.synthesis.word_count} words, calling LLM...")
     new_review = await refine_review(
         model, _state.synthesis, req.instruction,
         _state.research_question, papers_ctx, _state.language,
     )
     _state.synthesis = new_review
+    logger.info(f"Refine done: {new_review.word_count} words")
 
     return {
         "text": new_review.text,
@@ -189,7 +205,9 @@ async def list_sessions():
     config, _ = _get_config()
     from litscribe.store.sessions import SessionStore
     store = SessionStore(config.db_path)
-    return await store.list_sessions()
+    sessions = await store.list_sessions()
+    logger.info(f"Sessions list: {len(sessions)} sessions, db={config.db_path}")
+    return sessions
 
 
 @app.get("/api/sessions/{session_id}")
