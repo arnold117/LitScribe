@@ -40,9 +40,10 @@ litscribe serve             # Web UI at http://localhost:8000
 ### Literature Review Pipeline
 - **Plan** — LLM decomposes research question into sub-topics with domain-specific search queries
 - **Search** — Parallel multi-source search across arXiv, OpenAlex, Europe PMC, PubMed, Semantic Scholar
-- **Read** — Batch paper analysis (abstract + PDF full-text when available)
+- **Read** — Batch paper analysis (PDF full-text via Unpaywall OA lookup, falls back to abstract)
 - **GraphRAG** — Knowledge graph with entity extraction, community detection (Leiden), summarization
 - **Synthesize** — Parallel section generation: intro + themes + conclusion generated concurrently
+- **Contradictions** — Pairwise comparison of findings across papers, auto-detects opposing conclusions
 - **Review** — Self-evaluation with loop-back (if score < 0.65, refines queries and re-searches)
 
 ### Domain-Aware Search
@@ -122,11 +123,14 @@ litscribe/
 ├── cli/main.py        # Typer CLI (chat, review, serve, skills)
 ├── api/               # FastAPI + SSE + Web UI
 ├── tools/
-│   ├── pipeline.py    # Deterministic 6-step pipeline
+│   ├── pipeline.py    # Deterministic 9-step pipeline
 │   ├── search.py      # Multi-source academic search
+│   ├── contradictions.py  # Pairwise contradiction detection
+│   ├── grounding.py   # Citation verification against source papers
 │   ├── synthesis.py   # Parallel section generation
+│   ├── cite_keys.py   # Pandoc [@key] + BibTeX generation
 │   ├── review.py      # Self-evaluation
-│   ├── refinement.py  # Natural language review modification
+│   ├── refinement.py  # Search-augmented review modification
 │   └── status.py      # PipelineState + routing
 ├── services/          # arXiv, PubMed, S2, OpenAlex, Europe PMC, Zotero, PDF
 ├── models/            # Pydantic v2: Paper, ResearchPlan, PaperAnalysis, ReviewOutput

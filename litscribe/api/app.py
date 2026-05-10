@@ -74,8 +74,8 @@ async def run_review(req: ReviewRequest):
 
     async def stream():
         from litscribe.tools.pipeline import (
-            step_plan, step_search, step_read, step_synthesize,
-            step_ground, step_review,
+            step_plan, step_search, step_read, step_contradictions,
+            step_synthesize, step_ground, step_review,
         )
         t0 = time.time()
 
@@ -97,8 +97,23 @@ async def run_review(req: ReviewRequest):
         await step_read(model, _state)
         yield _sse("read", {"analyzed": len(_state.analyses)})
 
+        yield _sse("status", {"step": "contradictions", "message": "Detecting contradictions..."})
+        await step_contradictions(model, _state)
+        contra_count = _state.contradiction_report.count if _state.contradiction_report else 0
+        if contra_count:
+            yield _sse("contradictions", {"count": contra_count})
+
+        # Build synthesis instructions with contradictions
+        synth_instructions = req.instructions
+        if contra_count > 0:
+            from litscribe.tools.contradictions import format_contradictions_for_synthesis
+            from litscribe.tools.cite_keys import assign_cite_keys
+            key_map = assign_cite_keys(_state.papers)
+            contra_text = format_contradictions_for_synthesis(_state.contradiction_report, key_map)
+            synth_instructions += f"\n\nInclude a section discussing these contradictions:\n{contra_text}"
+
         yield _sse("status", {"step": "synthesize", "message": "Writing review..."})
-        await step_synthesize(model, _state, req.instructions)
+        await step_synthesize(model, _state, synth_instructions)
         yield _sse("synthesis", {
             "word_count": _state.synthesis.word_count,
             "themes": [t.name for t in _state.synthesis.themes],

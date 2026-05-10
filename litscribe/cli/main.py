@@ -134,8 +134,8 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
     from litscribe.agents import _build_model
     from litscribe.tools.status import PipelineState
     from litscribe.tools.pipeline import (
-        step_plan, step_search, step_read, step_graphrag,
-        step_synthesize, step_ground, step_review, run_review,
+        step_plan, step_search, step_read, step_contradictions,
+        step_graphrag, step_synthesize, step_ground, step_review,
     )
     from dotenv import load_dotenv
     load_dotenv()
@@ -170,6 +170,11 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
     print(f"Analyzing papers...")
     await step_read(model, state)
     print(f"  Analyzed {len(state.analyses)} papers")
+
+    print(f"Detecting contradictions...")
+    await step_contradictions(model, state)
+    if state.contradiction_report and state.contradiction_report.count:
+        print(f"  Found {state.contradiction_report.count} contradictions")
 
     print(f"Building knowledge graph...")
     await step_graphrag(model, state)

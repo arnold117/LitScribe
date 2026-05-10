@@ -146,6 +146,7 @@ function handleEvent(event, data) {
       `<span>Score: ${data.score.toFixed(2)}</span>` +
       `<span>${data.time}s</span>`;
     document.getElementById('reviewText').textContent = data.text;
+    loadSessions(); // Refresh session list to show the new review
   }
 }
 
