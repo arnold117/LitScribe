@@ -62,11 +62,9 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
 
         # Auto-save to file
         if state.synthesis:
-            from pathlib import Path
-            filename = f"review_{research_question[:30].replace(' ', '_')}.md"
-            filename = "".join(c for c in filename if c.isalnum() or c in "._-")
-            Path(filename).write_text(state.synthesis.text, encoding="utf-8")
-            result += f"\n\n📄 Saved to: {filename}"
+            from litscribe.tools.output import save_review
+            filepath = save_review(state.synthesis.text, research_question)
+            result += f"\n\n📄 Saved to: {filepath}"
 
         return result
 
@@ -120,16 +118,13 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         from litscribe.tools.diff import diff_stats
         stats = diff_stats(old_text, new_review.text)
 
-        # Auto-save updated file
-        from pathlib import Path
-        filename = f"review_{state.research_question[:30].replace(' ', '_')}.md"
-        filename = "".join(c for c in filename if c.isalnum() or c in "._-")
-        Path(filename).write_text(new_review.text, encoding="utf-8")
+        from litscribe.tools.output import save_review
+        filepath = save_review(new_review.text, state.research_question)
 
         return (
             f"Review refined: {new_review.word_count} words (was {old_words}).\n"
             f"Changes: +{stats['added']} lines, -{stats['removed']} lines\n"
-            f"📄 Updated: {filename}"
+            f"📄 Updated: {filepath}"
         )
 
     @tool

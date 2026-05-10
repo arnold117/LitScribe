@@ -254,11 +254,9 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
         print(f"  Contradictions: {state.contradiction_report.count}")
     if session_id:
         print(f"  Session: {session_id}")
-    # Auto-save to file
-    filename = f"review_{question[:30].replace(' ', '_')}.md"
-    filename = "".join(c for c in filename if c.isalnum() or c in "._-")
-    Path(filename).write_text(state.synthesis.text, encoding="utf-8")
-    print(f"  📄 File: {filename}")
+    from litscribe.tools.output import save_review
+    filepath = save_review(state.synthesis.text, question)
+    print(f"  📄 File: {filepath}")
     print(f"{'='*60}\n")
     print(state.synthesis.text[:3000])
     if len(state.synthesis.text) > 3000:
