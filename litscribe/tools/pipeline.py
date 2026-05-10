@@ -312,6 +312,7 @@ async def step_ground(model: ChatOpenAI, state: PipelineState) -> None:
     report = await ground_citations(
         model, state.synthesis.text, state.papers, state.analyses,
     )
+    state.grounding_report = report
 
     if report.unsupported > 0:
         fixed_text = apply_fixes(state.synthesis.text, report)

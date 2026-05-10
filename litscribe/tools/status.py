@@ -31,6 +31,7 @@ class PipelineState:
     domain: str = "General"
     extra_queries: list[str] = field(default_factory=list)
     contradiction_report: Any = None
+    grounding_report: Any = None
 
 
 def determine_recommendation(state: PipelineState) -> str:

@@ -137,6 +137,10 @@ function handleEvent(event, data) {
     status.textContent = `Found ${data.papers_found} papers`;
   } else if (event === 'read') {
     status.textContent = `Analyzed ${data.analyzed} papers`;
+  } else if (event === 'contradictions' && data.count > 0) {
+    status.textContent = `Found ${data.count} contradictions between papers`;
+  } else if (event === 'grounding') {
+    status.textContent = `Citations: ${data.verified}/${data.total} verified (${data.accuracy}% accuracy), ${data.unsupported} auto-fixed`;
   } else if (event === 'complete') {
     document.getElementById('progressCard').classList.add('hidden');
     document.getElementById('resultCard').classList.remove('hidden');
@@ -146,7 +150,7 @@ function handleEvent(event, data) {
       `<span>Score: ${data.score.toFixed(2)}</span>` +
       `<span>${data.time}s</span>`;
     document.getElementById('reviewText').textContent = data.text;
-    loadSessions(); // Refresh session list to show the new review
+    loadSessions();
   }
 }
 

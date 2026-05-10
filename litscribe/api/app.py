@@ -121,6 +121,15 @@ async def run_review(req: ReviewRequest):
 
         yield _sse("status", {"step": "ground", "message": "Verifying citations..."})
         await step_ground(model, _state)
+        # Send grounding report to frontend
+        if hasattr(_state, 'grounding_report') and _state.grounding_report:
+            gr = _state.grounding_report
+            yield _sse("grounding", {
+                "total": gr.total_citations,
+                "verified": gr.verified,
+                "unsupported": gr.unsupported,
+                "accuracy": round(gr.accuracy * 100),
+            })
 
         yield _sse("status", {"step": "review", "message": "Evaluating quality..."})
         await step_review(model, _state)
@@ -228,12 +237,30 @@ async def list_sessions():
 
 @app.get("/api/sessions/{session_id}")
 async def get_session(session_id: str):
+    global _state
     config, _ = _get_config()
     from litscribe.store.sessions import SessionStore
     store = SessionStore(config.db_path)
     session = await store.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+
+    # Load session into _state so refine works on it
+    from litscribe.models.review import ReviewOutput
+    if _state is None:
+        _state = PipelineState()
+    _state.research_question = session.get("research_question", "")
+    _state.language = session.get("language", "en")
+    _state.domain = session.get("domain", "")
+    if session.get("review_text"):
+        _state.synthesis = ReviewOutput(
+            text=session["review_text"],
+            citations=[], themes=[],
+            word_count=session.get("word_count", 0),
+            language=session.get("language", "en"),
+        )
+    logger.info(f"Session {session_id} loaded into state for refine")
+
     return session
 
 
