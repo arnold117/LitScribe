@@ -74,11 +74,6 @@ After a review is generated, modify it with natural language:
 - Review display with refine + export
 - Export to Markdown or BibTeX
 
-### Self-Evolution
-- Three-tier memory: episodic (session recall), semantic (paper knowledge), procedural (learned skills)
-- SkillEvolver: extracts research skills from successful reviews (EMA success rate)
-- Skills injected into future review prompts via middleware
-
 ### Multi-Language
 - English and Chinese review generation
 - Chinese queries auto-expanded with jieba segmentation
@@ -135,7 +130,7 @@ litscribe/
 │   └── status.py      # PipelineState + routing
 ├── services/          # arXiv, PubMed, S2, OpenAlex, Europe PMC, Zotero, PDF
 ├── models/            # Pydantic v2: Paper, ResearchPlan, PaperAnalysis, ReviewOutput
-├── evolution/         # 3-tier memory + SkillEvolver
+├── evolution/         # Memory system (episodic/semantic/procedural) — experimental
 ├── plugins/graphrag/  # Entity extraction, Leiden communities, summarization
 ├── exporters/         # BibTeX, citation formatter (APA/MLA/IEEE/Chicago/GB_T), Pandoc
 ├── middleware/        # Evolution skill injection, token tracking, DeepSeek compat
