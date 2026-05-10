@@ -322,6 +322,29 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
         word_count=review.word_count,
         language=review.language,
     )
+    # Generate comparison table + timeline
+    try:
+        from litscribe.tools.comparison import generate_comparison_table, generate_timeline
+        comp_table = await generate_comparison_table(model, state.papers, state.analyses, key_map)
+        timeline = await generate_timeline(model, state.papers, state.analyses, key_map)
+
+        appendix = ""
+        if comp_table:
+            appendix += f"\n\n## Methodology Comparison\n\n{comp_table}"
+        if timeline:
+            appendix += f"\n\n## Research Timeline\n\n{timeline}"
+
+        if appendix:
+            review_with_refs = ReviewOutput(
+                text=review_with_refs.text + appendix,
+                citations=review_with_refs.citations,
+                themes=review_with_refs.themes,
+                word_count=review_with_refs.word_count,
+                language=review_with_refs.language,
+            )
+    except Exception as e:
+        logger.debug(f"Comparison/timeline generation failed: {e}")
+
     state.synthesis = review_with_refs
     logger.info(f"  SYNTHESIZE done: {review.word_count} words, {len(review.themes)} themes ({time.time()-t:.1f}s)")
 
@@ -459,14 +482,48 @@ async def run_review(
         # 8. Citation grounding
         await step_ground(model, state)
 
-        # 9. Review
+        # 9. Claim-level contradiction check (post-synthesis)
+        if state.synthesis:
+            try:
+                from litscribe.tools.contradictions import detect_claim_contradictions
+                claim_contras = await detect_claim_contradictions(model, state.synthesis.text, state.analyses)
+                if claim_contras:
+                    logger.info(f"  Claim-level contradictions: {len(claim_contras)} found")
+            except Exception:
+                pass
+
+        # 10. Review
         await step_review(model, state)
+
+        # 11. Metacognitive evaluation
+        if state.assessment and state.assessment.score < 0.8:
+            try:
+                from litscribe.tools.metacognition import metacognitive_evaluate, save_strategy
+                meta = await metacognitive_evaluate(model, state)
+                if meta.get("strategy_adjustment"):
+                    await save_strategy(config, state.domain, meta["strategy_adjustment"])
+
+                if meta.get("should_rerun") and iteration < state.max_iterations - 1:
+                    steps = meta.get("steps_to_rerun", [])
+                    logger.info(f"Metacognition: re-running {steps}")
+                    if "SEARCH" in steps:
+                        state.extra_queries = getattr(state.assessment, "refined_queries", []) or []
+                        state.synthesis = None
+                        state.assessment = None
+                        state.graph = None
+                        continue
+                    if "SYNTHESIZE" in steps:
+                        state.synthesis = None
+                        state.assessment = None
+                        continue
+            except Exception as e:
+                logger.debug(f"Metacognition failed: {e}")
 
         # Check if good enough
         if state.assessment.passed or state.assessment.score >= 0.65:
             break
 
-        # Loop-back
+        # Standard loop-back
         if iteration < state.max_iterations - 1:
             logger.info(f"Loop-back: score={state.assessment.score:.2f}, refining queries")
             state.extra_queries = getattr(state.assessment, "refined_queries", []) or []

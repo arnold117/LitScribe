@@ -68,6 +68,57 @@ Output JSON:
 If no contradiction, return {{"has_contradiction": false, "contradictions": []}}"""
 
 
+async def detect_claim_contradictions(
+    model: ChatOpenAI,
+    review_text: str,
+    analyses: list[PaperAnalysis],
+    max_claims: int = 15,
+) -> list[Contradiction]:
+    import re
+    claims = re.findall(r'([^.!?\n]{20,200})\[@(\w+)\]', review_text)
+    claims = claims[:max_claims]
+
+    if len(claims) < 2:
+        return []
+
+    claims_text = "\n".join(f"{i+1}. [{key}]: {claim.strip()}" for i, (claim, key) in enumerate(claims))
+
+    prompt = (
+        f"Check these claims from a literature review for contradictions:\n\n"
+        f"{claims_text}\n\n"
+        f"Are any claims contradicting each other? Output JSON:\n"
+        f'{{"contradictions": [{{"claim_a_num": 1, "claim_b_num": 3, '
+        f'"claim_a": "...", "claim_b": "...", '
+        f'"type": "opposing_conclusions", "explanation": "...", "severity": "major"}}]}}'
+    )
+
+    try:
+        result = await model.ainvoke(prompt)
+        raw = result.content.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        data = json.loads(raw)
+
+        contras = []
+        for c in data.get("contradictions", []):
+            a_idx = c.get("claim_a_num", 1) - 1
+            b_idx = c.get("claim_b_num", 2) - 1
+            a_key = claims[a_idx][1] if a_idx < len(claims) else ""
+            b_key = claims[b_idx][1] if b_idx < len(claims) else ""
+            contras.append(Contradiction(
+                paper_a_id=a_key, paper_b_id=b_key,
+                claim_a=c.get("claim_a", ""), claim_b=c.get("claim_b", ""),
+                contradiction_type=c.get("type", "opposing_conclusions"),
+                explanation=c.get("explanation", ""),
+                severity=c.get("severity", "moderate"),
+            ))
+        return contras
+    except Exception as e:
+        logger.debug(f"Claim-level contradiction check failed: {e}")
+        return []
+
+
 async def _check_pair(
     model: ChatOpenAI,
     a: PaperAnalysis,

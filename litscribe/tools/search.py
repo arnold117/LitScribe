@@ -40,6 +40,13 @@ async def search_all_sources(
     except Exception:
         pass
 
+    # CrossRef for broader coverage (especially Chinese literature)
+    try:
+        from litscribe.services.cnki import CNKIService
+        services.append(CNKIService())
+    except Exception:
+        pass
+
     try:
         from litscribe.services.pubmed import PubMedService
         svc_cfg = getattr(config, "services", None)
