@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from litscribe.config import Config
 from litscribe.models.paper import Paper
 from litscribe.models.plan import ResearchPlan, SubTopic
+from litscribe.models.review import ReviewOutput
 from litscribe.tools.status import PipelineState
 
 logger = logging.getLogger(__name__)
@@ -250,15 +251,19 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
         user_instructions=user_instructions, papers=state.papers,
         model=model,
     )
-    # Append reference list
+    # Append reference list with citation keys
+    from litscribe.tools.cite_keys import assign_cite_keys
+    key_map = assign_cite_keys(state.papers)
+
     ref_lines = ["\n\n## References\n"]
-    for i, p in enumerate(state.papers, 1):
+    for p in state.papers:
+        key = key_map.get(p.paper_id, "unknown")
         authors = ", ".join(p.authors[:3]) if p.authors else "Unknown"
         if len(p.authors) > 3:
             authors += " et al."
         venue = f" *{p.venue}*." if p.venue else ""
         doi = f" doi:{p.doi}" if p.doi else ""
-        ref_lines.append(f"{i}. {authors} ({p.year}). {p.title}.{venue}{doi}")
+        ref_lines.append(f"[{key}]: {authors} ({p.year}). {p.title}.{venue}{doi}")
 
     review_with_refs = ReviewOutput(
         text=review.text + "\n".join(ref_lines),

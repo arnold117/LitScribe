@@ -259,7 +259,11 @@ async def write_review_sectioned(
             theme_enriched = enriched[start:end] if start < end else enriched[:3]
 
         theme_summaries = format_summaries_for_prompt(theme_enriched)
-        theme_checklist = build_citation_checklist(theme_enriched)
+        theme_key_list = "\n".join(
+            f"- `@{e.get('cite_key', '?')}` → {e.get('title', '')[:60]}"
+            for e in theme_enriched if e.get("cite_key")
+        )
+        theme_checklist = theme_key_list or build_citation_checklist(theme_enriched)
         key_points = "\n".join(f"- {p}" for p in theme.get("key_points", [])[:5]) or "N/A"
 
         theme_prompt = REVIEW_THEME_SECTION_PROMPT.format(
@@ -343,6 +347,17 @@ async def synthesize_parallel(
     lang_instruction = get_language_instruction(language)
     num_papers = len(analyses)
 
+    # Assign citation keys
+    from litscribe.tools.cite_keys import assign_cite_keys, build_cite_key_table
+    paper_list = papers if papers else []
+    key_map = assign_cite_keys(paper_list) if paper_list else {}
+
+    # Enrich with cite keys
+    for e in enriched:
+        pid = e.get("paper_id", "")
+        if pid in key_map:
+            e["cite_key"] = key_map[pid]
+
     # Step 1: themes + gaps in parallel
     themes_coro = identify_themes(router, analyses, research_question)
     gaps_coro = identify_gaps(router, analyses, [], research_question)
@@ -353,7 +368,8 @@ async def synthesize_parallel(
 
     # Step 2: build section prompts
     summaries_text = format_summaries_for_prompt(enriched, max_chars=15000)
-    checklist = build_citation_checklist(enriched)
+    cite_table = build_cite_key_table(paper_list, key_map) if key_map else ""
+    checklist = cite_table or build_citation_checklist(enriched)
     theme_names = "\n".join(f"{i+1}. {t.get('theme','')}" for i, t in enumerate(themes))
     gaps_text = "\n".join(f"- {g}" for g in gaps.get("gaps", []))
 
@@ -364,9 +380,12 @@ async def synthesize_parallel(
     user_suffix = f"\n\nADDITIONAL INSTRUCTIONS: {user_instructions}" if user_instructions else ""
 
     citation_rule = (
-        "\n\nCITATION FORMAT (STRICT): Use [LastName et al., Year] for EVERY factual claim. "
-        "Copy author surnames EXACTLY from the paper list. NEVER write [Year] alone — always include the author name. "
-        "NEVER omit the year. Example: [Smith et al., 2023], [Zhang, 2020]."
+        "\n\nCITATION FORMAT (STRICT): Use Pandoc-style citations: [@key] for single, "
+        "[@key1; @key2] for multiple. Use EXACTLY the citation keys from the list below. "
+        "EVERY factual claim must have at least one citation.\n"
+        f"\nAvailable citation keys:\n{cite_table}"
+    ) if cite_table else (
+        "\n\nCITATION FORMAT: Use [LastName et al., Year] for every factual claim."
     )
 
     # Intro prompt
@@ -391,7 +410,11 @@ async def synthesize_parallel(
             theme_enriched = enriched[start:end] if start < end else enriched[:3]
 
         theme_summaries = format_summaries_for_prompt(theme_enriched)
-        theme_checklist = build_citation_checklist(theme_enriched)
+        theme_key_list = "\n".join(
+            f"- `@{e.get('cite_key', '?')}` → {e.get('title', '')[:60]}"
+            for e in theme_enriched if e.get("cite_key")
+        )
+        theme_checklist = theme_key_list or build_citation_checklist(theme_enriched)
 
         other_themes = [t.get("theme", "") for j, t in enumerate(themes) if j != i]
         context = f"Other themes in this review: {', '.join(other_themes)}. " if other_themes else ""

@@ -10,8 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def export_bibtex(papers: list[Paper]) -> str:
-    from litscribe.exporters.bibtex import papers_to_bibtex
-    return papers_to_bibtex([p.model_dump() for p in papers])
+    from litscribe.tools.cite_keys import assign_cite_keys, build_bibtex
+    key_map = assign_cite_keys(papers)
+    return build_bibtex(papers, key_map)
 
 
 def export_citations(papers: list[Paper], style: str = "apa") -> str:

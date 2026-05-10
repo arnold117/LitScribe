@@ -42,6 +42,28 @@ class GroundingReport:
 
 
 def extract_citations(review_text: str) -> list[CitationClaim]:
+    # Try pandoc-style [@key] first
+    pandoc_pattern = re.compile(r'([^.!?\n]{10,300}?)\[@([\w]+?)(?:;\s*@[\w]+)*\]')
+    pandoc_matches = list(pandoc_pattern.finditer(review_text))
+
+    if pandoc_matches:
+        claims = []
+        seen = set()
+        for match in pandoc_matches:
+            claim_text = match.group(1).strip().strip(",; ")
+            key = match.group(2).strip()
+            if len(claim_text) < 15 or key in seen:
+                continue
+            seen.add(f"{key}:{claim_text[:50]}")
+            # Extract year from key (e.g., "cho2025" → "2025")
+            year_match = re.search(r'(\d{4})', key)
+            year = year_match.group(1) if year_match else ""
+            author = re.sub(r'\d+[a-z]?$', '', key)
+            claims.append(CitationClaim(author=author, year=year, claim=claim_text, paper_id=key))
+        if claims:
+            return claims
+
+    # Fallback: [Author, Year] format
     pattern = re.compile(
         r'([^.!?\n]{10,300}?)'
         r'\[([A-Za-zÀ-ÿ一-鿿][\w\s]*?(?:\s+et\s+al\.)?),\s*(\d{4})\]'
@@ -184,8 +206,19 @@ async def ground_citations(
             findings = "\n".join(f"- {f}" for f in a.key_findings)
             paper_text_map[a.paper_id] += f"\nKey findings:\n{findings}"
 
-    matched = [c for c in claims if c.paper_id]
-    unmatched = [c for c in claims if not c.paper_id]
+    # For pandoc-style keys, paper_id IS the cite key — map to real paper_id
+    from litscribe.tools.cite_keys import assign_cite_keys
+    key_map = assign_cite_keys(papers)
+    reverse_map = {v: k for k, v in key_map.items()}
+
+    for c in claims:
+        if c.paper_id and c.paper_id in reverse_map:
+            c.paper_id = reverse_map[c.paper_id]
+        elif not c.paper_id:
+            pass  # already None
+
+    matched = [c for c in claims if c.paper_id and c.paper_id in paper_text_map]
+    unmatched = [c for c in claims if not c.paper_id or c.paper_id not in paper_text_map]
 
     to_verify = matched[:max_verify]
     if to_verify:
