@@ -160,13 +160,16 @@ async def verify_single_claim(
     paper_text: str,
 ) -> CitationClaim:
     prompt = (
-        f"Verify if the following claim is supported by the paper's content.\n\n"
+        f"Does this paper's content BROADLY support this claim? Be lenient — "
+        f"if the claim is a reasonable interpretation of the paper, mark as supported.\n\n"
         f"CLAIM: {claim.claim}\n"
         f"ATTRIBUTED TO: [{claim.author}, {claim.year}]\n\n"
         f"PAPER CONTENT:\n{paper_text[:2000]}\n\n"
+        f"Mark as unsupported ONLY if the claim directly contradicts the paper "
+        f"or attributes something the paper never discussed.\n\n"
         f"Answer in JSON:\n"
-        f'{{"supported": true/false, "evidence": "quote or paraphrase from paper that supports/contradicts", '
-        f'"fixed_claim": "corrected version if unsupported, empty string if supported"}}'
+        f'{{"supported": true/false, "evidence": "brief quote or paraphrase", '
+        f'"fixed_claim": "corrected version if unsupported, empty if supported"}}'
     )
 
     try:

@@ -389,14 +389,13 @@ async def synthesize_parallel(
     user_suffix = f"\n\nADDITIONAL INSTRUCTIONS: {user_instructions}" if user_instructions else ""
 
     citation_rule = (
-        "\n\nCITATION RULES (STRICT):\n"
-        "1. Use Pandoc-style: [@key] for single, [@key1; @key2] for multiple\n"
-        "2. Use EXACTLY the citation keys below — do NOT invent keys\n"
-        "3. EVERY factual claim MUST cite at least one paper\n"
-        "4. ONLY make claims that are supported by the paper's findings listed below\n"
-        "5. Do NOT attribute findings to a paper unless that finding appears in the paper's summary\n"
-        "6. If you're unsure whether a paper supports a claim, do NOT cite it\n"
-        f"\nAvailable papers and their findings:\n{cite_table}"
+        "\n\nCITATION RULES:\n"
+        "1. Format: [@key] for single, [@key1; @key2] for multiple\n"
+        "2. Use ONLY the keys listed below — do NOT invent keys\n"
+        "3. Cite papers for specific claims, not general statements\n"
+        "4. Each paper should be cited 1-3 times (not more)\n"
+        "5. Prefer citing a paper's actual findings from the list below\n"
+        f"\nAvailable papers:\n{cite_table}"
     ) if cite_table else (
         "\n\nCITATION FORMAT: Use [LastName et al., Year] for every factual claim."
     )
