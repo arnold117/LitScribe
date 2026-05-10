@@ -264,6 +264,17 @@ async def get_session(session_id: str):
     return session
 
 
+@app.get("/api/claims")
+async def get_claims():
+    if _state is None or _state.synthesis is None:
+        raise HTTPException(400, "No review available")
+    from litscribe.tools.claim_chain import build_claim_chain
+    from litscribe.tools.cite_keys import assign_cite_keys
+    key_map = assign_cite_keys(_state.papers) if _state.papers else {}
+    report = getattr(_state, "grounding_report", None)
+    return build_claim_chain(_state.synthesis.text, report, key_map)
+
+
 @app.get("/api/export/{format}")
 async def export(format: str, style: str = "apa"):
     if _state is None or _state.synthesis is None:

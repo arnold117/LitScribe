@@ -102,6 +102,12 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
     if state.extra_queries:
         queries.extend(state.extra_queries)
 
+    # Cross-lingual: if question is non-English, keep original + English queries
+    # If question is English, check if domain benefits from CJK queries
+    has_cjk = any('一' <= c <= '鿿' for c in state.research_question)
+    if has_cjk:
+        queries.insert(0, state.research_question)  # ensure original CJK is first
+
     seen: set[str] = set()
     unique = []
     for q in queries:
@@ -300,6 +306,24 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
     logger.info(f"  SYNTHESIZE done: {review.word_count} words, {len(review.themes)} themes ({time.time()-t:.1f}s)")
 
 
+async def step_debate(model: ChatOpenAI, state: PipelineState) -> None:
+    if state.synthesis is None:
+        return
+
+    from litscribe.tools.debate import multi_round_debate
+
+    logger.info("Pipeline step: DEBATE (reviewer ↔ synthesizer)")
+    t = time.time()
+
+    revised, critiques = await multi_round_debate(
+        model, state.synthesis, state.research_question,
+        state.analyses, state.papers, max_rounds=2,
+    )
+    state.synthesis = revised
+    total_issues = sum(len(c.get("issues", [])) for c in critiques)
+    logger.info(f"  DEBATE done: {len(critiques)} rounds, {total_issues} issues addressed ({time.time()-t:.1f}s)")
+
+
 async def step_ground(model: ChatOpenAI, state: PipelineState) -> None:
     from litscribe.tools.grounding import ground_citations, apply_fixes
 
@@ -391,10 +415,13 @@ async def run_review(
         full_instructions = (user_instructions + contra_instructions).strip()
         await step_synthesize(model, state, full_instructions)
 
-        # 6. Citation grounding
+        # 7. Debate (reviewer ↔ synthesizer)
+        await step_debate(model, state)
+
+        # 8. Citation grounding
         await step_ground(model, state)
 
-        # 7. Review
+        # 9. Review
         await step_review(model, state)
 
         # Check if good enough

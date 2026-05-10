@@ -49,6 +49,15 @@ def export(
 
 
 @app.command()
+def evaluate(
+    max_papers: int = typer.Option(8, "--max-papers", "-n"),
+    output: str = typer.Option(None, "--output", "-o", help="Save report to file"),
+):
+    """Run benchmark evaluation across multiple domains."""
+    asyncio.run(_run_benchmark(max_papers, output))
+
+
+@app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),
@@ -223,6 +232,30 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
 
     if memory:
         await memory.close()
+
+
+async def _run_benchmark(max_papers: int, output: str | None):
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.basicConfig(level=logging.INFO)
+    from litscribe.config import Config
+    from litscribe.agents import _build_model
+    from litscribe.tools.benchmark import run_benchmark, format_benchmark_report
+
+    config = Config()
+    config.ensure_directories()
+    model = _build_model(config)
+
+    print("Running benchmark (5 domains)...\n")
+    results = await run_benchmark(config, model, max_papers=max_papers)
+
+    report = format_benchmark_report(results)
+    print(report)
+
+    if output:
+        from pathlib import Path
+        Path(output).write_text(report, encoding="utf-8")
+        print(f"\nReport saved to {output}")
 
 
 async def _manage_sessions(session_id: str | None):
