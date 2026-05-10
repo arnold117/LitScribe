@@ -70,11 +70,11 @@ def skills(action: str = typer.Argument("list", help="list | show <slug> | delet
 @app.command()
 def export(
     format: str = typer.Argument("markdown", help="markdown | bibtex | citations"),
-    style: str = typer.Option("apa", "--style", "-s", help="Citation style: apa, mla, ieee, chicago"),
+    session_id: str = typer.Option(None, "--session", "-s", help="Session ID (default: latest)"),
     output: str = typer.Option(None, "--output", "-o", help="Output file path"),
 ):
-    """Export the last review."""
-    asyncio.run(_export_review(format, style, output))
+    """Export a review to file."""
+    asyncio.run(_export_review(format, session_id, output))
 
 
 @app.command()
@@ -221,43 +221,41 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
     await step_synthesize(model, state)
     print(f"  {state.synthesis.word_count} words, {len(state.synthesis.themes)} themes")
 
+    print(f"Debating (reviewer ↔ synthesizer)...")
+    from litscribe.tools.pipeline import step_debate
+    await step_debate(model, state)
+
     print(f"Verifying citations...")
     await step_ground(model, state)
+    if hasattr(state, "grounding_report") and state.grounding_report:
+        gr = state.grounding_report
+        print(f"  {gr.verified}/{gr.total_citations} verified ({gr.accuracy:.0%} accuracy), {gr.unsupported} auto-fixed")
 
     print(f"Evaluating quality...")
     await step_review(model, state)
-    print(f"  Score: {state.assessment.score:.2f}")
+    print(f"  Score: {state.assessment.score:.2f}, Coverage: {state.assessment.coverage_score:.2f}")
 
     # Save session
+    session_id = ""
     try:
         from litscribe.store.sessions import SessionStore
         store = SessionStore(config.db_path)
         session_id = await store.save_session(state)
-        print(f"\nSession saved: {session_id}")
     except Exception:
         pass
 
-    # Evolution
-    if memory and state.assessment:
-        try:
-            from litscribe.evolution.skill_evolver import TaskMetrics
-            metrics = TaskMetrics(
-                sub_topic_count=len(state.plan.sub_topics) if state.plan else 0,
-                papers_found=len(state.papers),
-                papers_relevant=len(state.analyses),
-                loop_back_count=max(0, state.iteration - 1),
-                source_count=len({s for p in state.papers for s in p.sources}),
-            )
-            memory.evolver.post_task_evaluate(
-                session_id=f"cli-{int(t)}", domain=state.domain,
-                score=state.assessment.score, metrics=metrics,
-            )
-        except Exception:
-            pass
-
     elapsed = time.time() - t
-    print(f"\nDone in {elapsed:.0f}s")
-    print(f"\n{state.synthesis.text[:2000]}")
+    print(f"\n{'='*60}")
+    print(f"Review complete in {elapsed:.0f}s")
+    print(f"  Papers: {len(state.papers)} | Analyzed: {len(state.analyses)}")
+    print(f"  Words: {state.synthesis.word_count} | Themes: {len(state.synthesis.themes)}")
+    print(f"  Score: {state.assessment.score:.2f} | Coverage: {state.assessment.coverage_score:.2f}")
+    if state.contradiction_report and state.contradiction_report.count:
+        print(f"  Contradictions: {state.contradiction_report.count}")
+    if session_id:
+        print(f"  Session: {session_id}")
+    print(f"{'='*60}\n")
+    print(state.synthesis.text)
 
     if memory:
         await memory.close()
@@ -465,7 +463,7 @@ async def _manage_skills(action: str):
         print(f"Skills error: {e}")
 
 
-async def _export_review(format: str, style: str, output: str | None):
+async def _export_review(format: str, session_id: str | None, output: str | None):
     from dotenv import load_dotenv
     load_dotenv()
     from litscribe.config import Config
@@ -475,25 +473,35 @@ async def _export_review(format: str, style: str, output: str | None):
     config.ensure_directories()
     store = SessionStore(config.db_path)
 
-    sessions = await store.list_sessions()
-    if not sessions:
-        print("No sessions to export. Run 'litscribe review <question>' first.")
-        return
-
-    latest = sessions[0]
-    session = await store.get_session(latest["session_id"])
-
-    if format == "bibtex":
-        print("BibTeX export requires paper data (not stored in session). Use 'litscribe chat' instead.")
-        return
+    if session_id:
+        session = await store.get_session(session_id)
+        if not session:
+            print(f"Session '{session_id}' not found.")
+            return
+    else:
+        sessions = await store.list_sessions()
+        if not sessions:
+            print("No sessions. Run 'litscribe review <question>' first.")
+            return
+        session = await store.get_session(sessions[0]["session_id"])
 
     content = session["review_text"]
+    filename = f"review_{session['session_id']}"
+
+    if format == "bibtex":
+        print("BibTeX export requires paper data. Use 'litscribe chat' or Web UI.")
+        return
+
     if output:
-        from pathlib import Path
         Path(output).write_text(content, encoding="utf-8")
         print(f"Exported to {output}")
     else:
-        print(content)
+        default_path = f"{filename}.md"
+        Path(default_path).write_text(content, encoding="utf-8")
+        print(f"Exported to {default_path}")
+        print(f"  Session: {session['session_id']}")
+        print(f"  Question: {session['research_question'][:60]}")
+        print(f"  Words: {session['word_count']}, Score: {session['score']:.2f}")
 
 
 def main():
