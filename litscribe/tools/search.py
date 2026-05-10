@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+
+import aiohttp
 
 from litscribe.models.paper import Paper
 from litscribe.services.base import dedup_papers
@@ -9,6 +12,28 @@ from litscribe.services.base import dedup_papers
 logger = logging.getLogger(__name__)
 
 _search_cache: dict[str, list[Paper]] = {}
+
+# Shared session with conservative connection limits
+_shared_session: aiohttp.ClientSession | None = None
+_shared_connector: aiohttp.TCPConnector | None = None
+
+
+async def _get_session() -> aiohttp.ClientSession:
+    global _shared_session, _shared_connector
+    if _shared_session is None or _shared_session.closed:
+        _shared_connector = aiohttp.TCPConnector(
+            limit=6,
+            limit_per_host=2,
+            ttl_dns_cache=300,
+            enable_cleanup_closed=True,
+        )
+        _shared_session = aiohttp.ClientSession(connector=_shared_connector)
+    return _shared_session
+
+
+def _patch_service_session(svc, session: aiohttp.ClientSession):
+    """Monkey-patch a service to use the shared session instead of creating its own."""
+    svc._shared_session = session
 
 
 async def search_all_sources(
@@ -50,33 +75,45 @@ async def search_all_sources(
     except Exception:
         pass
 
-    queries_to_use = queries[:12]
+    queries_to_use = queries[:8]
     max_per_query = max(max_per_source // max(len(queries_to_use), 1), 5)
 
-    # Limit concurrent connections to avoid DNS/TCP exhaustion
-    sem = asyncio.Semaphore(3)
-
-    async def _search_one(svc, query: str) -> list[Paper]:
-        cache_key = f"{svc.source_name}:{query}"
-        if cache_key in _search_cache:
-            return _search_cache[cache_key]
-        async with sem:
+    # Search sources in parallel, but queries within each source are sequential.
+    # This avoids multiple sessions per source while still searching sources concurrently.
+    async def _search_source(svc) -> list[Paper]:
+        svc_papers: list[Paper] = []
+        for query in queries_to_use:
+            cache_key = f"{svc.source_name}:{query}"
+            if cache_key in _search_cache:
+                svc_papers.extend(_search_cache[cache_key])
+                continue
             try:
                 papers = await asyncio.wait_for(
                     svc.search(query, max_results=max_per_query),
                     timeout=15.0,
                 )
                 _search_cache[cache_key] = papers
-                return papers
+                svc_papers.extend(papers)
             except asyncio.TimeoutError:
                 logger.warning(f"{svc.source_name} timed out for '{query[:40]}'")
-                return []
             except Exception as e:
                 logger.warning(f"{svc.source_name} failed for '{query[:40]}': {e}")
-                return []
+                break
+        return svc_papers
 
-    tasks = [_search_one(svc, q) for svc in services for q in queries_to_use]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Run sources in parallel (max 3 concurrent sources, each with sequential queries)
+    sem = asyncio.Semaphore(3)
+
+    async def _guarded_search(svc) -> list[Paper]:
+        async with sem:
+            papers = await _search_source(svc)
+            logger.info(f"  {svc.source_name}: {len(papers)} papers")
+            return papers
+
+    results = await asyncio.gather(
+        *[_guarded_search(svc) for svc in services],
+        return_exceptions=True,
+    )
 
     all_papers: list[Paper] = []
     for r in results:
