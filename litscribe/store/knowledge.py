@@ -25,6 +25,7 @@ class KnowledgeStore:
                 paper_id TEXT DEFAULT '',
                 cite_key TEXT DEFAULT '',
                 confidence REAL DEFAULT 0.5,
+                signature TEXT DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
@@ -50,10 +51,12 @@ class KnowledgeStore:
             cite_key = key_map.get(pid, "") if key_map else ""
 
             for finding in findings[:3]:
+                from litscribe.tools.integrity import sign_finding
+                sig = sign_finding(domain, topic, finding)
                 await db.execute(
-                    """INSERT INTO knowledge (domain, topic, finding, paper_id, cite_key, confidence)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (domain, topic, finding, pid, cite_key, relevance),
+                    """INSERT INTO knowledge (domain, topic, finding, paper_id, cite_key, confidence, signature)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (domain, topic, finding, pid, cite_key, relevance, sig),
                 )
                 count += 1
 
@@ -81,14 +84,30 @@ class KnowledgeStore:
         query += " ORDER BY confidence DESC, created_at DESC LIMIT ?"
         params.append(limit)
 
-        rows = await db.execute_fetchall(query, params)
+        rows = await db.execute_fetchall(
+            query.replace("SELECT domain, topic, finding, cite_key, confidence, created_at",
+                          "SELECT domain, topic, finding, cite_key, confidence, created_at, signature"),
+            params,
+        )
         await db.close()
 
-        return [
-            {"domain": r[0], "topic": r[1], "finding": r[2],
-             "cite_key": r[3], "confidence": r[4], "created_at": r[5]}
-            for r in rows
-        ]
+        from litscribe.tools.integrity import verify_finding
+        verified = []
+        tampered = 0
+        for r in rows:
+            sig = r[6] if len(r) > 6 else ""
+            if sig and not verify_finding(r[0], r[1], r[2], sig):
+                tampered += 1
+                logger.warning(f"Tampered knowledge entry detected: {r[2][:50]}")
+                continue
+            verified.append(
+                {"domain": r[0], "topic": r[1], "finding": r[2],
+                 "cite_key": r[3], "confidence": r[4], "created_at": r[5]}
+            )
+
+        if tampered:
+            logger.warning(f"Knowledge integrity: {tampered} tampered entries rejected")
+        return verified
 
     async def get_context_for_review(self, research_question: str, domain: str) -> str:
         findings = await self.query(domain=domain, topic=research_question[:50], limit=10)

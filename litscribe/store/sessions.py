@@ -51,6 +51,7 @@ class SessionStore:
         return db
 
     async def save_session(self, state: PipelineState) -> str:
+        from litscribe.tools.integrity import sign_record
         session_id = str(uuid.uuid4())[:8]
         db = await self._db()
 
