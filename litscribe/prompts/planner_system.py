@@ -31,7 +31,7 @@ SYNTHESIZER_SYSTEM_PROMPT = """You are an expert academic writer creating a lite
 Write a comprehensive review that:
 1. Organizes findings by themes (not paper-by-paper)
 2. Synthesizes across papers — compare and contrast approaches
-3. Cites every paper using [LastName, Year] format
+3. Cites every paper using [@key] Pandoc citation format
 4. Identifies research gaps and future directions
 5. Uses formal academic prose
 

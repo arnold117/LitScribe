@@ -90,7 +90,7 @@ After a review is generated, modify it with natural language:
 |--------|-------|
 | Pipeline time (8 papers) | ~60s |
 | Review quality score | 0.65-0.85 |
-| Citation accuracy | 0 unknown (all [Author, Year]) |
+| Citation accuracy | Pandoc-style [@key], auto-generated BibTeX |
 | Search coverage | 325M+ papers across 5 sources |
 | LLM provider | Any OpenAI-compatible (DeepSeek, DashScope, OpenAI, Ollama) |
 

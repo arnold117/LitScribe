@@ -40,7 +40,7 @@ Research Question: {research_question}
 ## Requirements:
 - Apply the requested modification precisely
 - Preserve the overall structure and academic tone
-- Keep all existing in-text citations in [LastName, Year] format using real author surnames
+- Keep all existing in-text citations in [@key] Pandoc format
 - Only use citations from the available papers list
 - If adding content, integrate it naturally into the existing flow
 - If removing content, ensure remaining text still flows logically
