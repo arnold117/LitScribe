@@ -1,18 +1,22 @@
 # LitScribe
 
-AI-powered multi-agent literature review engine. Input a research question, get a comprehensive review with citations — in under 2 minutes.
+AI-powered multi-agent literature review engine. Input a research question, get a comprehensive, citation-grounded review — in under 2 minutes.
 
-**Architecture**: DeepAgents supervisor + deterministic pipeline + parallel synthesis
+**Architecture**: DeepAgents supervisor + deterministic 11-step pipeline + parallel synthesis
 
 ```
 User → Supervisor (DeepAgents)
-         └→ run_review tool (deterministic pipeline)
-              ├─ Plan    (LLM: decompose into sub-topics)
-              ├─ Search  (API: 5 academic sources, parallel)
-              ├─ Read    (LLM: analyze each paper)
-              ├─ GraphRAG (LLM: knowledge graph)
-              ├─ Synthesize (LLM: parallel section generation)
-              └─ Review  (LLM: quality evaluation + loop-back)
+         └→ run_review (deterministic pipeline)
+              ├─ Plan           (LLM: decompose into sub-topics)
+              ├─ Search         (API: 5 academic sources + Unpaywall OA)
+              ├─ Read           (LLM: full-text or abstract analysis)
+              ├─ Contradictions (LLM: pairwise finding comparison)
+              ├─ GraphRAG       (LLM: knowledge graph extraction)
+              ├─ Synthesize     (LLM: parallel section generation)
+              ├─ Debate         (LLM: reviewer ↔ synthesizer, 2 rounds)
+              ├─ Ground         (LLM: verify citations against sources)
+              ├─ Review         (LLM: quality evaluation + loop-back)
+              └─ Save           (SQLite: session + knowledge base)
 ```
 
 ## Quick Start
@@ -30,124 +34,193 @@ cp .env.example .env
 # Edit .env: set llm-key, llm-location, llm-model
 
 # 3. Run
-litscribe chat              # Interactive chat
-litscribe review "CRISPR CHO knockout productivity"  # Direct review
-litscribe serve             # Web UI at http://localhost:8000
+litscribe chat                          # Interactive chat
+litscribe review "CRISPR CHO knockout"  # Direct review
+litscribe serve                         # Web UI at localhost:8000
+litscribe evaluate                      # Benchmark across 5 domains
+litscribe sessions                      # View past reviews
 ```
 
 ## Features
 
-### Literature Review Pipeline
+### 11-Step Literature Review Pipeline
 - **Plan** — LLM decomposes research question into sub-topics with domain-specific search queries
-- **Search** — Parallel multi-source search across arXiv, OpenAlex, Europe PMC, PubMed, Semantic Scholar
-- **Read** — Batch paper analysis (PDF full-text via Unpaywall OA lookup, falls back to abstract)
-- **GraphRAG** — Knowledge graph with entity extraction, community detection (Leiden), summarization
-- **Synthesize** — Parallel section generation: intro + themes + conclusion generated concurrently
+- **Search** — Parallel multi-source search with connection retry and in-memory cache
+- **Unpaywall** — OA PDF lookup by DOI (26% → 68% full-text coverage)
+- **Read** — PDF full-text analysis when available, abstract fallback
 - **Contradictions** — Pairwise comparison of findings across papers, auto-detects opposing conclusions
-- **Review** — Self-evaluation with loop-back (if score < 0.65, refines queries and re-searches)
+- **GraphRAG** — Knowledge graph with entity extraction, Leiden community detection, summarization
+- **Synthesize** — Parallel section generation (intro + themes + conclusion concurrent)
+- **Debate** — Reviewer critiques → Synthesizer revises → up to 2 rounds
+- **Ground** — Citation verification: each [@key] claim checked against source paper, auto-fix hallucinations
+- **Review** — Self-evaluation with loop-back (score < 0.65 → refine queries and re-search)
+- **Save** — Session + knowledge base persisted to SQLite
 
-### Domain-Aware Search
-- 5 sources: arXiv (CS/physics/math), OpenAlex (250M+ all domains), Europe PMC (40M+ life science), PubMed (35M+ biomedical), Semantic Scholar (200M+)
-- Auto-skips arXiv for biology/medicine/chemistry queries
-- Keyword relevance filter removes off-topic papers
-- In-memory search cache (same query → instant)
+### Academic Search (5 sources, 325M+ papers)
+- OpenAlex (250M+), Europe PMC (40M+), PubMed (35M+), Semantic Scholar (200M+), arXiv (2M+)
+- Domain-aware: auto-skips arXiv for biology/medicine/chemistry
+- DOI deduplication across sources
+- Keyword relevance filter
+- Connection retry with backoff (2 consecutive failures → skip source)
+- Cross-lingual: CJK queries preserved alongside English expanded queries
 
-### Natural Language Control
-```
-# The supervisor extracts preferences from your message:
-"Review transformer attention, 10 papers, focus on efficiency"
-"帮我写一个关于CRISPR递送方法的综述，中文，20篇论文"
-"Quick review on single-cell RNA-seq in tumor microenvironment"
-```
+### Citation System
+- Pandoc-style `[@key]` citations (deterministic: author+year)
+- Auto-generated BibTeX with matching keys
+- `## References` section at review end
+- Citation grounding: verified ✓ / unsupported ✗ / unverified ?
+- Claim chain API: each claim linked to source evidence
 
 ### Review Refinement
-After a review is generated, modify it with natural language:
+Search-augmented modification — when adding new content, searches for papers first:
 ```
 "Add a section about delivery methods"
-"Expand the methodology discussion"
-"Rewrite the conclusion in Chinese"
-"Remove the part about glycosylation"
+→ searches 5 papers on delivery methods
+→ writes new ## section citing [@newkey1; @newkey2]
+→ appends new references
 ```
+
+Also supports: modify, remove, rewrite existing sections.
+
+### Contradiction Detection
+Pairwise comparison of paper findings:
+```
+[@cho2025] reports: "FUT8 knockout had no negative effect on cell growth"
+[@lin2020] finds: "FUT8 knockout reduced cell viability by 40%"
+→ Classified as "opposing_conclusions" (major severity)
+→ Injected into review as critical analysis section
+```
+
+### Multi-Agent Debate
+After synthesis, reviewer and synthesizer debate:
+1. Reviewer identifies unsupported claims, missing perspectives, weak synthesis
+2. Synthesizer revises addressing all issues
+3. Up to 2 rounds, stops when quality is "good/excellent"
 
 ### Web UI
 `litscribe serve` starts a web interface with:
-- Real-time progress bar (SSE streaming)
-- Review display with refine + export
-- Export to Markdown or BibTeX
+- Real-time SSE progress (plan → search → read → contradictions → synthesize → debate → ground → review)
+- Grounding report: "12 citations verified, 2 auto-fixed (85% accuracy)"
+- Contradiction count in progress bar
+- Past reviews list with click-to-load
+- Refine input + Export (Markdown / BibTeX)
+- Shareable review link: `/api/share/{session_id}`
+- Comments API for collaborative review
+
+### Knowledge Base
+Cross-session knowledge accumulation:
+- Key findings from each review saved to SQLite with HMAC integrity signatures
+- New reviews automatically query past findings in the same domain
+- Injected as "Prior Knowledge" context into synthesis
+- Tampered entries automatically detected and rejected
+
+### Source Credibility Weighting
+- Papers sorted by citation count (high-impact first in LLM context)
+- Impact note "(cited N times)" in paper summaries
+
+### Benchmark Framework
+```bash
+litscribe evaluate --max-papers 8 --output report.md
+```
+Runs 5 queries across Biology, CS, Medicine, Chemistry. Generates markdown report with score/papers/words/time per domain.
+
+### Security
+- HMAC-SHA256 integrity on knowledge base entries (detect data poisoning)
+- Prompt injection filter (regex patterns for common injection attempts)
+- HTML escaping on all user-generated content (XSS prevention)
+- Rate limiting (10 req/min per endpoint)
+- PDF URL domain whitelist (SSRF prevention)
+- Parameterized SQL queries throughout
 
 ### Multi-Language
 - English and Chinese review generation
 - Chinese queries auto-expanded with jieba segmentation
-- Search queries always in English for maximum coverage
+- Cross-lingual search: both CJK original + English expanded queries
 
 ## Performance
 
 | Metric | Value |
 |--------|-------|
-| Pipeline time (8 papers) | ~60s |
+| Pipeline time (8 papers) | ~60-90s |
 | Review quality score | 0.65-0.85 |
-| Citation accuracy | Pandoc-style [@key], auto-generated BibTeX |
+| Citation format | Pandoc [@key], auto BibTeX |
+| Full-text coverage | 68% (via Unpaywall) |
 | Search coverage | 325M+ papers across 5 sources |
-| LLM provider | Any OpenAI-compatible (DeepSeek, DashScope, OpenAI, Ollama) |
-
-### Benchmark by Domain
-
-| Domain | Score | Papers | Words | Time |
-|--------|-------|--------|-------|------|
-| Biology (CHO CRISPR) | 0.85 | 8 | 1796 | 77s |
-| Computer Science (transformer) | 0.65 | 8 | 1873 | 91s |
-| Chemistry (sesquiterpene coumarin) | 0.55 | 8 | 1548 | 90s |
+| LLM provider | Any OpenAI-compatible |
 
 ## Configuration
 
 ```bash
-# .env — only 3 required vars
-llm-key=sk-your-key          # API key
-llm-location=https://api.deepseek.com/  # Endpoint
-llm-model=deepseek-v4-flash  # Model name
+# .env — 3 required vars
+llm-key=sk-your-key
+llm-location=https://api.deepseek.com/
+llm-model=deepseek-v4-flash
 
-# Optional search APIs (improve coverage)
+# Optional
 NCBI_EMAIL=your@email.com
 NCBI_API_KEY=your-key
-S2_API_KEY=your-key
+SEMANTIC_SCHOLAR_API_KEY=your-key
 ```
 
-Works with any OpenAI-compatible endpoint: DeepSeek, DashScope (百炼), OpenAI, Ollama, vLLM, etc.
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/review | Run review (SSE streaming) |
+| POST | /api/refine | Modify existing review |
+| POST | /api/chat | Conversational endpoint |
+| GET | /api/state | Current pipeline state |
+| GET | /api/sessions | List past reviews |
+| GET | /api/sessions/{id} | Get session details |
+| POST | /api/sessions/{id}/comments | Add comment |
+| GET | /api/sessions/{id}/comments | List comments |
+| GET | /api/share/{id} | Shareable HTML page |
+| GET | /api/claims | Citation verification data |
+| GET | /api/export/{format} | Export (markdown/bibtex) |
 
 ## Project Structure
 
 ```
-litscribe/
-├── agents.py          # DeepAgents supervisor + tool factory
-├── config.py          # 3 env vars: llm-key/location/model
-├── cli/main.py        # Typer CLI (chat, review, serve, skills)
-├── api/               # FastAPI + SSE + Web UI
+litscribe/                    # 79 files, 8741 lines
+├── agents.py                 # DeepAgents supervisor + tool factory
+├── config.py                 # 3 env vars: llm-key/location/model
+├── errors.py                 # Error types + retry decorators
+├── cli/main.py               # Typer CLI (8 commands)
+├── api/                      # FastAPI + SSE + Web UI
+│   ├── app.py                # 11 API endpoints + rate limiting
+│   └── static/index.html     # Single-page frontend
 ├── tools/
-│   ├── pipeline.py    # Deterministic 9-step pipeline
-│   ├── search.py      # Multi-source academic search
-│   ├── contradictions.py  # Pairwise contradiction detection
-│   ├── grounding.py   # Citation verification against source papers
-│   ├── synthesis.py   # Parallel section generation
-│   ├── cite_keys.py   # Pandoc [@key] + BibTeX generation
-│   ├── review.py      # Self-evaluation
-│   ├── refinement.py  # Search-augmented review modification
-│   └── status.py      # PipelineState + routing
-├── services/          # arXiv, PubMed, S2, OpenAlex, Europe PMC, Zotero, PDF
-├── models/            # Pydantic v2: Paper, ResearchPlan, PaperAnalysis, ReviewOutput
-├── evolution/         # Memory system (episodic/semantic/procedural) — experimental
-├── plugins/graphrag/  # Entity extraction, Leiden communities, summarization
-├── exporters/         # BibTeX, citation formatter (APA/MLA/IEEE/Chicago/GB_T), Pandoc
-├── middleware/        # Evolution skill injection, token tracking, DeepSeek compat
-├── prompts/           # All LLM prompts (planning, reading, synthesis, review, etc.)
-└── llm/adapter.py     # ChatOpenAI → router interface adapter
+│   ├── pipeline.py           # 11-step deterministic pipeline
+│   ├── search.py             # Multi-source search (parallel sources, sequential queries)
+│   ├── contradictions.py     # Pairwise contradiction detection
+│   ├── debate.py             # Multi-round reviewer ↔ synthesizer
+│   ├── grounding.py          # Citation verification against sources
+│   ├── claim_chain.py        # Claim → evidence tracing
+│   ├── synthesis.py          # Parallel section generation
+│   ├── cite_keys.py          # Pandoc [@key] + BibTeX generation
+│   ├── refinement.py         # Search-augmented review modification
+│   ├── benchmark.py          # Multi-domain evaluation framework
+│   ├── sanitize.py           # Prompt injection filter
+│   ├── integrity.py          # HMAC data integrity
+│   ├── export.py             # Markdown/BibTeX export
+│   └── status.py             # PipelineState + routing
+├── services/                 # arXiv, PubMed, S2, OpenAlex, Europe PMC, Zotero, PDF, Unpaywall
+├── models/                   # Pydantic v2: Paper, ResearchPlan, PaperAnalysis, ReviewOutput
+├── store/                    # SQLite sessions, knowledge base, vectors
+├── evolution/                # 3-tier memory + SkillEvolver (experimental)
+├── plugins/graphrag/         # Entity extraction, Leiden communities, summarization
+├── exporters/                # BibTeX, citation formatter, Pandoc
+├── prompts/                  # All LLM prompts
+└── llm/adapter.py            # ChatOpenAI adapter
 ```
 
 ## Development
 
 ```bash
 conda activate litscribe
-pytest tests/                    # 37 tests
-litscribe --help                 # CLI commands
+pytest tests/                 # 37 tests
+litscribe evaluate            # Benchmark (requires API key)
+litscribe --help
 ```
 
 ## License
