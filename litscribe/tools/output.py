@@ -13,11 +13,29 @@ _DEFAULT_DIR = "~/.litscribe/output"
 def get_output_dir() -> Path:
     custom = os.getenv("LITSCRIBE_OUTPUT_DIR", "")
     if custom:
-        d = Path(custom).expanduser()
+        d = Path(custom).expanduser().resolve()
     else:
-        d = Path(_DEFAULT_DIR).expanduser()
+        d = Path(_DEFAULT_DIR).expanduser().resolve()
 
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        fallback = Path.home() / ".litscribe" / "output"
+        logger.warning(f"No write permission to {d}, falling back to {fallback}")
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+    # Verify writable
+    test_file = d / ".write_test"
+    try:
+        test_file.write_text("test")
+        test_file.unlink()
+    except (PermissionError, OSError):
+        fallback = Path.home() / ".litscribe" / "output"
+        logger.warning(f"Directory {d} is not writable, falling back to {fallback}")
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
     return d
 
 
