@@ -101,6 +101,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
             research_question=state.research_question,
             papers_context=papers_ctx,
             language=state.language,
+            config=config,
         )
         state.synthesis = new_review
         return (

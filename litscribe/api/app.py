@@ -156,6 +156,7 @@ async def refine(req: RefineRequest):
     new_review = await refine_review(
         model, _state.synthesis, req.instruction,
         _state.research_question, papers_ctx, _state.language,
+        config=config,
     )
     _state.synthesis = new_review
     logger.info(f"Refine done: {new_review.word_count} words")

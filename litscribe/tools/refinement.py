@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 
+from litscribe.models.paper import Paper
 from litscribe.models.review import ReviewOutput
 from litscribe.prompts.refinement import REFINEMENT_CLASSIFY_PROMPT, REFINEMENT_EXECUTE_PROMPT
 
@@ -39,6 +40,74 @@ async def classify_instruction(
         }
 
 
+async def _search_for_new_content(
+    model: ChatOpenAI,
+    topic: str,
+    config,
+    max_papers: int = 5,
+) -> tuple[list[Paper], str]:
+    from litscribe.tools.search import search_all_sources
+    from litscribe.tools.cite_keys import assign_cite_keys
+    from litscribe.models.analysis import PaperAnalysis
+    from litscribe.prompts.reading import ABSTRACT_ONLY_ANALYSIS_PROMPT
+
+    logger.info(f"  Searching for new papers on: {topic}")
+    papers = await search_all_sources([topic], config, max_per_source=max_papers, domain="")
+    papers = papers[:max_papers]
+
+    if not papers:
+        return [], ""
+
+    key_map = assign_cite_keys(papers)
+
+    # Quick analysis of each paper
+    analyses = []
+    for p in papers:
+        prompt = ABSTRACT_ONLY_ANALYSIS_PROMPT.format(
+            research_question=topic,
+            title=p.title,
+            authors=", ".join(p.authors[:3]) if p.authors else "Unknown",
+            year=p.year or "N/A",
+            venue=p.venue or "",
+            abstract=p.abstract or "(no abstract)",
+            metadata_section=f"Citations: {p.citations or 0}",
+        )
+        try:
+            raw = await model.ainvoke(prompt)
+            content = raw.content.strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```\w*\n?", "", content)
+                content = re.sub(r"\n?```$", "", content)
+            data = json.loads(content)
+            findings = data.get("key_findings", [])
+        except Exception:
+            findings = [f"Abstract: {(p.abstract or '')[:200]}"]
+
+        key = key_map.get(p.paper_id, "unknown")
+        authors = ", ".join(p.authors[:2]) if p.authors else "Unknown"
+        if len(p.authors) > 2:
+            authors += " et al."
+        analyses.append(
+            f"[@{key}] {authors} ({p.year}). {p.title}\n"
+            f"  Findings: {'; '.join(findings[:3])}"
+        )
+
+    context = "\n\n".join(analyses)
+
+    # Build reference entries for new papers
+    ref_entries = []
+    for p in papers:
+        key = key_map.get(p.paper_id, "unknown")
+        authors = ", ".join(p.authors[:3]) if p.authors else "Unknown"
+        if len(p.authors) > 3:
+            authors += " et al."
+        venue = f" *{p.venue}*." if p.venue else ""
+        ref_entries.append(f"[{key}]: {authors} ({p.year}). {p.title}.{venue}")
+
+    refs_text = "\n".join(ref_entries)
+    return papers, context, refs_text, key_map
+
+
 async def execute_refinement(
     model: ChatOpenAI,
     instruction: dict,
@@ -46,14 +115,24 @@ async def execute_refinement(
     research_question: str,
     papers_context: str = "",
     language: str = "en",
+    new_papers_context: str = "",
 ) -> str:
     from litscribe.prompts.utils import get_language_instruction
     lang = get_language_instruction(language)
 
+    extra = ""
+    if new_papers_context:
+        extra = (
+            f"\n\n## NEW PAPERS for the added section (use [@key] citations):\n"
+            f"{new_papers_context}\n\n"
+            f"IMPORTANT: The new section MUST cite these new papers using their [@key]. "
+            f"Do NOT make claims without citing a paper from this list."
+        )
+
     prompt = REFINEMENT_EXECUTE_PROMPT.format(
         research_question=research_question,
         current_review=current_review,
-        papers_context=papers_context[:5000],
+        papers_context=papers_context[:5000] + extra,
         action_type=instruction.get("action_type", "modify_content"),
         target_section=instruction.get("target_section", "entire review"),
         details=instruction.get("details", ""),
@@ -76,18 +155,39 @@ async def refine_review(
     research_question: str,
     papers_context: str = "",
     language: str = "en",
+    config=None,
 ) -> ReviewOutput:
     logger.info(f"Refining review: {instruction_text[:50]}")
 
     classified = await classify_instruction(
         model, instruction_text, current_review.text
     )
-    logger.info(f"  Action: {classified.get('action_type')}, target: {classified.get('target_section')}")
+    action = classified.get("action_type", "modify_content")
+    logger.info(f"  Action: {action}, target: {classified.get('target_section')}")
+
+    new_papers_ctx = ""
+    new_refs = ""
+
+    # For add_content: search for new papers first
+    if action == "add_content" and config:
+        topic = classified.get("details", instruction_text)
+        papers, new_papers_ctx, new_refs, _ = await _search_for_new_content(
+            model, topic, config, max_papers=5,
+        )
+        logger.info(f"  Found {len(papers)} new papers for '{topic[:30]}'")
 
     new_text = await execute_refinement(
         model, classified, current_review.text,
         research_question, papers_context, language,
+        new_papers_context=new_papers_ctx,
     )
+
+    # Append new references if any
+    if new_refs:
+        if "## References" in new_text:
+            new_text = new_text.rstrip() + "\n" + new_refs
+        else:
+            new_text += f"\n\n## References\n{new_refs}"
 
     return ReviewOutput(
         text=new_text,
