@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from litscribe.models.plan import ResearchPlan
 from litscribe.models.analysis import PaperAnalysis
@@ -29,6 +30,7 @@ class PipelineState:
     circuit_breaker_used: bool = False
     domain: str = "General"
     extra_queries: list[str] = field(default_factory=list)
+    contradiction_report: Any = None
 
 
 def determine_recommendation(state: PipelineState) -> str:

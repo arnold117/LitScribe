@@ -134,6 +134,16 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
     state.papers = papers[:max_papers]
     state.iteration += 1
 
+    # Enrich PDF URLs via Unpaywall (for full-text analysis)
+    try:
+        from litscribe.services.unpaywall import enrich_pdf_urls
+        email = getattr(getattr(config, "services", None), "ncbi_email", "") or ""
+        n = await enrich_pdf_urls(state.papers, email=email)
+        if n:
+            logger.info(f"  Unpaywall: {n} papers enriched with OA PDF URLs")
+    except Exception as e:
+        logger.debug(f"  Unpaywall enrichment skipped: {e}")
+
     logger.info(f"  SEARCH done: {len(papers)} found → {len(state.papers)} kept ({time.time()-t:.1f}s)")
 
 
@@ -214,6 +224,20 @@ async def step_read(model: ChatOpenAI, state: PipelineState) -> None:
 
     state.analyses = analyses
     logger.info(f"  READ done: {len(analyses)} analyzed ({time.time()-t:.1f}s)")
+
+
+async def step_contradictions(model: ChatOpenAI, state: PipelineState) -> None:
+    if len(state.analyses) < 2:
+        return
+
+    from litscribe.tools.contradictions import detect_contradictions
+
+    logger.info(f"Pipeline step: CONTRADICTIONS ({len(state.analyses)} papers)")
+    t = time.time()
+
+    report = await detect_contradictions(model, state.analyses)
+    state.contradiction_report = report
+    logger.info(f"  CONTRADICTIONS done: {report.count} found ({time.time()-t:.1f}s)")
 
 
 async def step_graphrag(model: ChatOpenAI, state: PipelineState) -> None:
@@ -346,11 +370,25 @@ async def run_review(
         # 3. Read
         await step_read(model, state)
 
-        # 4. GraphRAG
+        # 4. Contradiction detection
+        await step_contradictions(model, state)
+
+        # 5. GraphRAG
         await step_graphrag(model, state)
 
-        # 5. Synthesize
-        await step_synthesize(model, state, user_instructions)
+        # 6. Synthesize (inject contradictions if found)
+        contra_instructions = ""
+        if state.contradiction_report and state.contradiction_report.count > 0:
+            from litscribe.tools.contradictions import format_contradictions_for_synthesis
+            from litscribe.tools.cite_keys import assign_cite_keys
+            key_map = assign_cite_keys(state.papers)
+            contra_text = format_contradictions_for_synthesis(state.contradiction_report, key_map)
+            contra_instructions = (
+                f"\n\nIMPORTANT: The following contradictions were detected between papers. "
+                f"Include a 'Critical Analysis' or 'Contradictions' section discussing these:\n{contra_text}"
+            )
+        full_instructions = (user_instructions + contra_instructions).strip()
+        await step_synthesize(model, state, full_instructions)
 
         # 6. Citation grounding
         await step_ground(model, state)
