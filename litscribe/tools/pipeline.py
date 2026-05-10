@@ -322,28 +322,32 @@ async def step_synthesize(model: ChatOpenAI, state: PipelineState, user_instruct
         word_count=review.word_count,
         language=review.language,
     )
-    # Generate comparison table + timeline
+    # Generate appendix sections in parallel
     try:
+        import asyncio as _aio
         from litscribe.tools.comparison import generate_comparison_table, generate_timeline
-        comp_table = await generate_comparison_table(model, state.papers, state.analyses, key_map)
-        timeline = await generate_timeline(model, state.papers, state.analyses, key_map)
+        from litscribe.tools.analytics import extract_statistics, stats_to_markdown_table, suggest_figures
+
+        themes_list = [t.name for t in review.themes] if review.themes else []
+
+        comp_task = generate_comparison_table(model, state.papers, state.analyses, key_map)
+        timeline_task = generate_timeline(model, state.papers, state.analyses, key_map)
+        stats_task = extract_statistics(model, state.papers, state.analyses, key_map)
+        figures_task = suggest_figures(model, review.text[:2000], themes_list, len(state.papers))
+
+        comp_table, timeline, stats, figures = await _aio.gather(
+            comp_task, timeline_task, stats_task, figures_task,
+            return_exceptions=True,
+        )
 
         appendix = ""
-        if comp_table:
+        if isinstance(comp_table, str) and comp_table:
             appendix += f"\n\n## Methodology Comparison\n\n{comp_table}"
-        if timeline:
+        if isinstance(timeline, str) and timeline:
             appendix += f"\n\n## Research Timeline\n\n{timeline}"
-
-        # Statistics table
-        from litscribe.tools.analytics import extract_statistics, stats_to_markdown_table
-        stats = await extract_statistics(model, state.papers, state.analyses, key_map)
-        if stats:
+        if isinstance(stats, list) and stats:
             appendix += f"\n\n## Statistical Summary\n\n{stats_to_markdown_table(stats)}"
-
-        # Figure suggestions
-        from litscribe.tools.analytics import suggest_figures
-        themes = [t.name for t in review.themes] if review.themes else []
-        figures = await suggest_figures(model, review.text[:2000], themes, len(state.papers))
+        figures = figures if isinstance(figures, list) else []
         if figures:
             appendix += "\n\n## Suggested Figures\n"
             for f in figures:

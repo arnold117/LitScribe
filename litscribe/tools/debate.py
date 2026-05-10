@@ -63,7 +63,7 @@ async def debate_round(
     # Reviewer critiques
     critique_prompt = CRITIQUE_PROMPT.format(
         research_question=research_question,
-        review_text=review.text[:4000],
+        review_text=review.text[:2000],
         num_papers=num_papers,
     )
     critique_result = await model.ainvoke(critique_prompt)
