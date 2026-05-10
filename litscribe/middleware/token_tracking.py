@@ -33,8 +33,8 @@ class TokenTrackingMiddleware(AgentMiddleware):
                 usage = msg.usage_metadata
                 self.total_prompt_tokens += usage.get("input_tokens", 0)
                 self.total_completion_tokens += usage.get("output_tokens", 0)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug(f"Silent error: {_e}")
 
     def summary(self) -> dict:
         return {

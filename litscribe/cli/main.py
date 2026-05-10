@@ -191,8 +191,8 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
         from litscribe.evolution.memory_manager import MemoryManager
         memory = MemoryManager(config.db_path, config.chroma_path, config.skills_dir)
         await memory.initialize()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
 
     import time
     t = time.time()
@@ -241,8 +241,8 @@ async def _run_review(question: str, max_papers: int, language: str, verbose: bo
         from litscribe.store.sessions import SessionStore
         store = SessionStore(config.db_path)
         session_id = await store.save_session(state)
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
 
     elapsed = time.time() - t
     print(f"\n{'='*60}")

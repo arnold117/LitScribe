@@ -93,8 +93,8 @@ async def identify_gaps(
             raw = await router.call(_msg(prompt), task_type="synthesis", max_tokens=800)
             lines = [l.strip("- ").strip() for l in raw.strip().split("\n") if l.strip()]
             return {"gaps": lines[:5], "future_directions": []}
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug(f"Silent error: {_e}")
     return {"gaps": [], "future_directions": []}
 
 

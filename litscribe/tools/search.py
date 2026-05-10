@@ -29,23 +29,23 @@ async def search_all_sources(
         try:
             from litscribe.services.arxiv import ArxivService
             services.append(ArxivService())
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug(f"Silent error: {_e}")
 
     try:
         from litscribe.services.semantic_scholar import SemanticScholarService
         svc_cfg = getattr(config, "services", None)
         s2_key = getattr(svc_cfg, "semantic_scholar_api_key", None) if svc_cfg else None
         services.append(SemanticScholarService(api_key=s2_key))
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
 
     # CrossRef for broader coverage (especially Chinese literature)
     try:
         from litscribe.services.cnki import CNKIService
         services.append(CNKIService())
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
 
     try:
         from litscribe.services.pubmed import PubMedService
@@ -54,8 +54,8 @@ async def search_all_sources(
         ncbi_key = getattr(svc_cfg, "ncbi_api_key", None) if svc_cfg else None
         if ncbi_email:
             services.append(PubMedService(ncbi_email=ncbi_email, ncbi_api_key=ncbi_key))
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
 
     queries_to_use = queries[:8]
     max_per_query = max(max_per_source // max(len(queries_to_use), 1), 5)

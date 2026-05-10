@@ -182,8 +182,8 @@ async def _try_get_full_text(paper: Paper) -> str | None:
         parsed = await pdf_svc.parse(url)
         if parsed and parsed.markdown and len(parsed.markdown) > 200:
             return parsed.markdown[:8000]
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
     return None
 
 
@@ -424,8 +424,8 @@ async def step_ground(model: ChatOpenAI, state: PipelineState) -> None:
             try:
                 fix_result = await model.ainvoke(fix_prompt)
                 fixed_text = fix_result.content.strip()
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug(f"Silent error: {_e}")
 
         if fixed_text != state.synthesis.text:
             state.synthesis = ReviewOutput(
@@ -486,8 +486,8 @@ async def run_review(
         if prior:
             user_instructions = f"{prior}\n\n{user_instructions}" if user_instructions else prior
             logger.info(f"  Injected prior knowledge ({len(prior)} chars)")
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.debug(f"Silent error: {_e}")
 
     for iteration in range(state.max_iterations):
         # 2. Search
@@ -532,8 +532,8 @@ async def run_review(
                 claim_contras = await detect_claim_contradictions(model, state.synthesis.text, state.analyses)
                 if claim_contras:
                     logger.info(f"  Claim-level contradictions: {len(claim_contras)} found")
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.debug(f"Silent error: {_e}")
 
         # 10. Review
         await step_review(model, state)

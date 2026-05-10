@@ -404,8 +404,8 @@ async def api_draft_review(req: DraftRequest):
                 methodology=d.get("methodology", ""), strengths=d.get("strengths", []),
                 limitations=d.get("limitations", []), relevance_score=0.5, themes=[],
             ))
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug(f"Silent error: {_e}")
 
     return await review_draft(model, req.draft_text, papers, analyses)
 
