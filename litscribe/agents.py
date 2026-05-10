@@ -110,6 +110,67 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         )
 
     @tool
+    async def analyze_draft(draft_text: str, paper_abstracts: str = "") -> str:
+        """Analyze a user's draft review and suggest improvements. Pass the draft text and optionally paper abstracts (comma-separated)."""
+        from litscribe.tools.local_review import review_draft
+        from litscribe.models.paper import Paper
+        from litscribe.models.analysis import PaperAnalysis
+
+        papers = []
+        analyses = []
+        if paper_abstracts:
+            for i, abstract in enumerate(paper_abstracts.split("|||")):
+                p = Paper(paper_id=f"local:{i}", title=f"Paper {i+1}", authors=[], abstract=abstract.strip(), year=2024, sources={"local": str(i)})
+                papers.append(p)
+                analyses.append(PaperAnalysis(paper_id=p.paper_id, key_findings=[abstract.strip()[:200]], methodology="", strengths=[], limitations=[], relevance_score=0.5, themes=[]))
+
+        result = await review_draft(model, draft_text, papers, analyses)
+        if "error" in result:
+            return f"Error: {result['error']}"
+
+        lines = ["**Draft Review Analysis:**\n"]
+        for s in result.get("strengths", []):
+            lines.append(f"✅ {s}")
+        for w in result.get("weaknesses", []):
+            lines.append(f"❌ {w.get('issue','')}: {w.get('suggestion','')}")
+        for m in result.get("missing_topics", []):
+            lines.append(f"❓ Missing: {m}")
+        if result.get("revised_outline"):
+            lines.append("\n**Suggested outline:** " + " → ".join(result["revised_outline"]))
+        return "\n".join(lines)
+
+    @tool
+    async def suggest_review_outline(paper_abstracts: str) -> str:
+        """Given paper abstracts (separated by |||), suggest what review to write and what's missing."""
+        from litscribe.tools.local_review import suggest_outline
+        from litscribe.models.paper import Paper
+        from litscribe.models.analysis import PaperAnalysis
+
+        papers = []
+        analyses = []
+        for i, abstract in enumerate(paper_abstracts.split("|||")):
+            abstract = abstract.strip()
+            if not abstract:
+                continue
+            p = Paper(paper_id=f"local:{i}", title=f"Paper {i+1}", authors=[], abstract=abstract, year=2024, sources={"local": str(i)})
+            papers.append(p)
+            analyses.append(PaperAnalysis(paper_id=p.paper_id, key_findings=[abstract[:200]], methodology="", strengths=[], limitations=[], relevance_score=0.5, themes=[]))
+
+        result = await suggest_outline(model, papers, analyses)
+        if "error" in result:
+            return f"Error: {result['error']}"
+
+        lines = [f"**Suggested question:** {result.get('suggested_question', '?')}\n"]
+        for t in result.get("themes", []):
+            lines.append(f"📚 {t.get('name','')}: {t.get('description','')[:60]}")
+        lines.append(f"\n**Outline:** {' → '.join(result.get('proposed_outline', []))}")
+        if result.get("gaps"):
+            lines.append(f"\n**Missing:** {', '.join(result.get('gaps', []))}")
+        if result.get("search_queries"):
+            lines.append(f"\n**Search for:** {', '.join(result.get('search_queries', []))}")
+        return "\n".join(lines)
+
+    @tool
     async def export_results(format: str = "markdown", style: str = "apa") -> str:
         """Export the review. Formats: markdown, bibtex, citations."""
         from litscribe.tools.export import export_review
@@ -120,7 +181,7 @@ def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenA
         result = await export_review(state.synthesis, state.papers, format, style)
         return result.get("content", "Export failed")[:3000]
 
-    return [run_review, search_papers, refine_review, export_results]
+    return [run_review, search_papers, refine_review, analyze_draft, suggest_review_outline, export_results]
 
 
 def create_litscribe_agent(
