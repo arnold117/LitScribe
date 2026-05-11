@@ -8,6 +8,10 @@
 \usepackage{enumitem}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{natbib}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, fit, backgrounds}
 \usepackage{authblk}
 
 \title{LitScribe: A Multi-Agent Literature Review Engine with \\Citation Grounding and Contradiction-Aware Synthesis}
@@ -47,6 +51,55 @@ Our contributions are:
     \item \textbf{Metacognitive quality loops}: The system evaluates its own output across multiple dimensions and autonomously decides which pipeline steps to re-run with adjusted strategies.
     \item \textbf{Search-augmented refinement}: When users request new content, the system searches for relevant papers before writing, preventing hallucination in iterative review modification.
 \end{enumerate}
+
+Figure~\ref{fig:pipeline} illustrates the complete pipeline architecture.
+
+\begin{figure*}[ht]
+\centering
+\begin{tikzpicture}[
+    node distance=0.4cm and 0.6cm,
+    pstep/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.7cm, font=\small, fill=blue!8},
+    novel/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.7cm, font=\small, fill=orange!15, thick},
+    io/.style={draw, rounded corners, minimum width=2.0cm, minimum height=0.7cm, font=\small, fill=green!10},
+    arr/.style={-{Stealth[length=2mm]}, thick},
+    darr/.style={-{Stealth[length=2mm]}, thick, dashed},
+]
+    % Row 1
+    \node[io] (user) {User Query};
+    \node[pstep, right=of user] (plan) {1. Plan};
+    \node[pstep, right=of plan] (search) {2. Search};
+    \node[pstep, right=of search] (read) {3. Read};
+    \node[novel, right=of read] (contra) {4. Contradict.};
+    \node[pstep, right=of contra] (graph) {5. GraphRAG};
+
+    % Row 2
+    \node[pstep, below=0.8cm of graph] (synth) {6. Synthesize};
+    \node[novel, left=of synth] (debate) {7. Debate};
+    \node[pstep, left=of debate] (ground) {8. Ground};
+    \node[pstep, left=of ground] (review) {9. Review};
+    \node[novel, left=of review] (meta) {10. Metacog.};
+    \node[io, left=of meta] (output) {Review + BibTeX};
+
+    % Arrows
+    \draw[arr] (user) -- (plan);
+    \draw[arr] (plan) -- (search);
+    \draw[arr] (search) -- (read);
+    \draw[arr] (read) -- (contra);
+    \draw[arr] (contra) -- (graph);
+    \draw[arr] (graph) -- (synth);
+    \draw[arr] (synth) -- (debate);
+    \draw[arr] (debate) -- (ground);
+    \draw[arr] (ground) -- (review);
+    \draw[arr] (review) -- (meta);
+    \draw[arr] (meta) -- (output);
+
+    % Loop-back
+    \draw[darr, red!60] (meta.south) -- ++(0,-0.5) -| node[below, font=\tiny, pos=0.25] {score $<$ 0.65} (search.south);
+
+\end{tikzpicture}
+\caption{LitScribe pipeline architecture. Orange nodes indicate novel contributions. Dashed arrow shows the metacognitive loop-back when review quality is below threshold.}
+\label{fig:pipeline}
+\end{figure*}
 
 \section{Related Work}
 
@@ -94,6 +147,47 @@ The system comprises 86 Python source files (10,300 lines of code in the \texttt
 \subsection{Search Layer}
 
 LitScribe searches up to six academic databases in parallel: OpenAlex (250M+ works), Europe PMC (40M+, including bioRxiv/medRxiv preprints), PubMed (35M+, when configured with NCBI credentials), Semantic Scholar (200M+), arXiv (2M+), and CrossRef (140M+). Search is domain-aware: arXiv is automatically skipped for biology, medicine, and chemistry queries, as its corpus skews heavily toward computer science and physics, causing keyword-matching false positives in other domains.
+
+Figure~\ref{fig:search} illustrates the search and filtering pipeline.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+    node distance=0.3cm,
+    db/.style={draw, rounded corners, minimum width=1.5cm, minimum height=0.5cm, font=\scriptsize, fill=green!10},
+    proc/.style={draw, rounded corners, minimum width=2.5cm, minimum height=0.5cm, font=\scriptsize, fill=blue!8},
+    arr/.style={-{Stealth[length=1.5mm]}, thick},
+]
+    \node[db] (oa) {OpenAlex};
+    \node[db, below=0.15cm of oa] (epm) {Europe PMC};
+    \node[db, below=0.15cm of epm] (pm) {PubMed};
+    \node[db, below=0.15cm of pm] (s2) {Sem. Scholar};
+    \node[db, below=0.15cm of s2] (ar) {arXiv};
+    \node[db, below=0.15cm of ar] (cr) {CrossRef};
+
+    \node[proc, right=1.2cm of pm] (dedup) {DOI Dedup};
+    \node[proc, right=0.5cm of dedup] (kw) {Keyword Filter};
+    \node[proc, right=0.5cm of kw] (llm) {LLM Selection};
+    \node[proc, right=0.5cm of llm] (upw) {Unpaywall};
+
+    \draw[arr] (oa.east) -- (dedup.west |- oa);
+    \draw[arr] (epm.east) -- (dedup.west |- epm);
+    \draw[arr] (pm.east) -- (dedup.west);
+    \draw[arr] (s2.east) -- (dedup.west |- s2);
+    \draw[arr] (ar.east) -- (dedup.west |- ar);
+    \draw[arr] (cr.east) -- (dedup.west |- cr);
+    \draw[arr] (dedup) -- (kw);
+    \draw[arr] (kw) -- (llm);
+    \draw[arr] (llm) -- (upw);
+
+    \node[font=\tiny, above=0.15cm of dedup] {50+ papers};
+    \node[font=\tiny, above=0.15cm of kw] {30+};
+    \node[font=\tiny, above=0.15cm of llm] {12};
+    \node[font=\tiny, above=0.15cm of upw] {68\% OA};
+\end{tikzpicture}
+\caption{Search and filtering pipeline. Six databases are queried in parallel (with domain-aware source selection), followed by three filtering stages and open-access enrichment.}
+\label{fig:search}
+\end{figure}
 
 After search, papers undergo three filtering stages: (1)~DOI-based deduplication across sources, (2)~keyword relevance filtering requiring at least two core terms from the research question, and (3)~LLM-based selection where the model chooses the most relevant papers from the candidate set. Papers are then enriched with open-access PDF URLs via the Unpaywall API, which provides open-access coverage for approximately 68\% of academic papers with DOIs.
 
@@ -166,7 +260,34 @@ CHEM-1 & Chemistry & 3 & 1,338 & 0.55 & 100\% & 103s \\
 \end{tabular}
 \end{table}
 
-Biology achieves the highest score (0.82), benefiting from strong coverage in PubMed and Europe PMC. Chemistry scores lower (0.55) due to the niche nature of the query (sesquiterpene coumarin biosynthesis), which returns only 3 relevant papers after filtering. Computer Science scores are affected by arXiv rate-limiting (HTTP 429), which reduces the paper pool quality for CS-specific topics.
+Biology achieves the highest score (0.82), benefiting from strong coverage in PubMed and Europe PMC. Chemistry scores lower (0.55) due to the niche nature of the query (sesquiterpene coumarin biosynthesis), which returns only 3 relevant papers after filtering. Computer Science scores are affected by arXiv rate-limiting (HTTP 429), which reduces the paper pool quality for CS-specific topics. Figure~\ref{fig:benchmark} visualizes the score and grounding accuracy across domains.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    ybar,
+    width=\columnwidth,
+    height=5.5cm,
+    bar width=8pt,
+    ylabel={Score / Accuracy},
+    ymin=0, ymax=1.1,
+    xtick=data,
+    symbolic x coords={BIO-1, CS-2, MED-1, CS-1, CHEM-1},
+    x tick label style={font=\small},
+    legend style={at={(0.5,1.05)}, anchor=south, legend columns=2, font=\small},
+    nodes near coords,
+    every node near coord/.append style={font=\tiny},
+    enlarge x limits=0.15,
+]
+\addplot[fill=blue!50] coordinates {(BIO-1,0.82) (CS-2,0.72) (MED-1,0.65) (CS-1,0.55) (CHEM-1,0.55)};
+\addplot[fill=orange!50] coordinates {(BIO-1,0.83) (CS-2,0.63) (MED-1,0.68) (CS-1,0.62) (CHEM-1,1.00)};
+\legend{Review Score, Grounding Accuracy}
+\end{axis}
+\end{tikzpicture}
+\caption{Review quality score and citation grounding accuracy across five benchmark queries. CHEM-1 achieves 100\% grounding but lower review score due to limited paper availability.}
+\label{fig:benchmark}
+\end{figure}
 
 \subsection{Grounding Accuracy}
 
