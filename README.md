@@ -42,34 +42,98 @@ litscribe serve             # Web UI at localhost:8000
 
 ## Architecture
 
+### Pipeline Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant S as Supervisor<br/>(DeepAgents)
+    participant P as Pipeline
+
+    User->>S: "写个关于CRISPR的综述"
+    S->>S: Understand intent + confirm
+    S->>P: run_review(question, 12 papers)
+
+    rect rgb(240, 248, 255)
+        Note over P: Deterministic Pipeline
+        P->>P: 1. Plan (decompose sub-topics)
+        P->>P: 2. Search (6 academic databases)
+        P->>P: 3. Unpaywall (OA full-text lookup)
+        P->>P: 4. Read (analyze each paper)
+        P->>P: 5. Contradictions (pairwise)
+        P->>P: 6. GraphRAG (knowledge graph)
+        P->>P: 7. Synthesize (parallel sections)
+        P->>P: 8. Debate (reviewer ↔ synthesizer)
+        P->>P: 9. Ground (verify citations)
+        P->>P: 10. Review (self-evaluate)
+    end
+
+    alt Score < 0.65
+        P->>P: Metacognition → re-run steps
+    end
+
+    P->>P: Save (session + knowledge base)
+    P-->>S: Review + References + BibTeX
+    S-->>User: 1,500 word review, score 0.82
 ```
-User ─── "写个关于CRISPR的综述" ───→ DeepAgents Supervisor
-                                          │
-         understands intent               │  7 tools:
-         confirms parameters              │  run_review, search_papers,
-         matches language                 │  refine_review, analyze_draft,
-                                          │  suggest_outline, assess_reading_level,
-                                          │  export_results
-                                          ↓
-                                    run_review (deterministic pipeline)
-                                          │
-    ┌─────────────────────────────────────┤
-    │  Plan ──→ Search ──→ Read ──→ Contradictions ──→ GraphRAG
-    │                                                      │
-    │  Synthesize (parallel) ──→ Debate ──→ Ground ──→ Review
-    │       │                                              │
-    │       ├── Intro            2 rounds              verify each
-    │       ├── Theme 1          critique ↔ revise     [@key] claim
-    │       ├── Theme 2                                against source
-    │       ├── Conclusion
-    │       ├── Comparison Table
-    │       ├── Timeline
-    │       ├── Statistical Summary
-    │       └── Figure Suggestions
-    │                                                      │
-    │  Score ≥ 0.65 → Save ──→ Done                       │
-    │  Score < 0.65 → Metacognition ──→ Re-run steps      │
-    └─────────────────────────────────────────────────────┘
+
+### Synthesis Detail
+
+```mermaid
+graph LR
+    subgraph "Parallel Section Generation"
+        A[Intro] --> F[Assemble]
+        B[Theme 1] --> F
+        C[Theme 2] --> F
+        D[Conclusion] --> F
+    end
+
+    F --> G[+ Comparison Table]
+    G --> H[+ Research Timeline]
+    H --> I[+ Statistical Summary]
+    I --> J[+ Figure Suggestions]
+    J --> K[+ References]
+
+    subgraph "Quality Assurance"
+        K --> L[Debate<br/>2 rounds]
+        L --> M[Ground<br/>verify citations]
+        M --> N{Score ≥ 0.65?}
+    end
+
+    N -->|Yes| O[Done ✓]
+    N -->|No| P[Metacognition<br/>→ re-run]
+```
+
+### Search Architecture
+
+```mermaid
+graph TB
+    Q[Research Question] --> PLAN[LLM Plan<br/>sub-topics + queries]
+    PLAN --> |parallel| OA[OpenAlex<br/>250M+]
+    PLAN --> |parallel| EPM[Europe PMC<br/>40M+]
+    PLAN --> |parallel| PM[PubMed<br/>35M+]
+    PLAN --> |parallel| S2[Semantic Scholar<br/>200M+]
+    PLAN --> |parallel| AR[arXiv<br/>2M+]
+    PLAN --> |parallel| CR[CrossRef<br/>140M+]
+
+    OA --> DEDUP[DOI Dedup]
+    EPM --> DEDUP
+    PM --> DEDUP
+    S2 --> DEDUP
+    AR --> DEDUP
+    CR --> DEDUP
+
+    DEDUP --> KW[Keyword Filter]
+    KW --> LLM[LLM Selection<br/>top N relevant]
+    LLM --> UPW[Unpaywall<br/>OA PDF lookup]
+    UPW --> OUT[Papers<br/>ready for analysis]
+
+    style OA fill:#e8f5e9
+    style EPM fill:#e8f5e9
+    style PM fill:#e3f2fd
+    style S2 fill:#e8f5e9
+    style AR fill:#fff3e0
+    style CR fill:#e8f5e9
 ```
 
 ## Key Features
