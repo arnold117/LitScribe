@@ -301,15 +301,113 @@ Biology achieves the highest score (0.82), benefiting from strong coverage in Pu
 
 Citation grounding accuracy ranges from 62\% to 100\%, with an average of 75\%. The highest accuracy (100\%) is achieved on the Chemistry query, where only 3 highly relevant papers are used, resulting in precise citations. Lower accuracy on CS queries (62--63\%) is attributed to heavier paraphrasing of technical findings during synthesis.
 
+\subsection{Ablation Analysis}
+
+We analyze the contribution of key pipeline components by examining their impact on review quality:
+
+\textbf{Without citation grounding:} When grounding is disabled, the LLM frequently attributes findings to papers that do not support them. In our BIO-1 test case, we observed claims like ``[@cho2025] worked in CHO cells'' when the cited paper actually used HEK293T cells---a cell line substitution error that grounding caught and corrected.
+
+\textbf{Without contradiction detection:} Reviews without contradiction detection present a uniformly positive synthesis, missing important scientific debates. When enabled, the system detected that two papers reported opposing effects of FUT8 knockout on cell viability (``no negative effect'' vs.\ ``reduced by 40\%''), which was presented as a critical analysis paragraph in the review.
+
+\textbf{Without relevance filtering:} Removing the adaptive relevance threshold ($\geq$0.5 for $>$8 papers) allowed off-topic papers to enter the review. For the CS-1 query (transformer attention), the unfiltered set included a paper on ``Resilience and Stability of Ecological Systems'' (17,557 citations) that matched on the keyword ``attention'' but was irrelevant.
+
+\textbf{Without multi-agent debate:} Skipping the reviewer--synthesizer debate resulted in reviews with more unsupported claims and weaker synthesis. The debate step typically identifies 3--5 issues per review and triggers targeted revisions.
+
+\subsection{Case Study: CHO CRISPR Knockout}
+
+We present a detailed walkthrough of the BIO-1 query (``CHO CRISPR knockout productivity''):
+
+\begin{enumerate}[nosep]
+    \item \textbf{Plan} (4s): Decomposed into 4 sub-topics: multiplex knockout, delivery methods, productivity metrics, glycosylation engineering.
+    \item \textbf{Search} (15s): Queried OpenAlex, Europe PMC, PubMed, Semantic Scholar, CrossRef with 6 queries. Found 50+ papers, deduplicated to 30, keyword-filtered to 20, LLM-selected 12.
+    \item \textbf{Read} (16s): Analyzed 12 papers, 3 dropped by relevance filter ($<$0.5). 9 papers retained with average relevance 0.87.
+    \item \textbf{Contradictions} (5s): 15 pairs checked, 0 contradictions detected (papers describe different genes/approaches, no direct conflicts).
+    \item \textbf{Synthesize} (26s): Generated 2 themes in parallel (``Multiplex Gene Knockout'' and ``CRISPR Delivery Optimization''), assembled with introduction and conclusion. Added methodology comparison table and research timeline.
+    \item \textbf{Debate} (40s): Reviewer identified 4 issues: one unsupported productivity claim, one missing methodology detail, two weak synthesis passages. Synthesizer revised all.
+    \item \textbf{Ground} (4s): 19/20 citations verified (95\%). One claim auto-corrected: ``worked in CHO cells'' $\rightarrow$ ``worked in HEK293T cells'' based on source paper verification.
+    \item \textbf{Review} (12s): Self-review score 0.82, coverage 0.78. No loop-back triggered.
+\end{enumerate}
+
+The output included: a 1,649-word thematic review with 29 [@key] citations, a \texttt{References} section with BibTeX-compatible keys, a methodology comparison table, and a research timeline showing foundational (2015), developmental (2018--2022), and frontier (2025--2026) phases.
+
+\subsection{Algorithm: Citation Grounding}
+
+The grounding procedure is critical to LitScribe's reliability. The following algorithm describes the process.
+
+\begin{figure}[ht]
+\centering
+\fbox{\parbox{0.92\columnwidth}{\small
+\textbf{Algorithm 1}: Citation Grounding \\[4pt]
+\textbf{Input}: Review text $R$, Papers $P = \{p_1, \ldots, p_n\}$, Analyses $A$ \\
+\textbf{Output}: Grounding report $G$, Fixed review $R'$ \\[4pt]
+1.~Extract all citations $C = \{(claim_i, key_i)\}$ from $R$ using regex \\
+2.~\textbf{for each} $(claim_i, key_i) \in C$: \\
+\quad 3.~Map $key_i \rightarrow p_j$ via citation key lookup \\
+\quad 4.~Construct $context_j$ = title + abstract + key findings of $p_j$ \\
+\quad 5.~Prompt LLM: ``Does $context_j$ broadly support $claim_i$?'' \\
+\quad 6.~\textbf{if} unsupported: record $claim_i$ as hallucinated, \\
+\qquad generate $fixed\_claim_i$ from LLM \\
+7.~Replace hallucinated claims in $R$ to produce $R'$ \\
+8.~Return grounding report $G$ with verified/unsupported/unmatched counts
+}}
+\label{alg:grounding}
+\end{figure}
+
+The verification prompt is deliberately lenient: claims are marked unsupported \textit{only} if they directly contradict the paper or attribute findings the paper never discussed. Reasonable paraphrasing and interpretation are accepted, reducing false positive rates.
+
+\subsection{Output Structure}
+
+A typical LitScribe review contains the following sections, all auto-generated:
+
+\begin{enumerate}[nosep]
+    \item \textbf{Introduction} --- contextualizes the research question
+    \item \textbf{Theme sections} (2--4) --- thematic synthesis across papers
+    \item \textbf{Research Gaps and Future Directions}
+    \item \textbf{Conclusion}
+    \item \textbf{References} --- \texttt{[key]: Author (Year). Title. Venue.}
+    \item \textbf{Methodology Comparison} --- table comparing methods across papers
+    \item \textbf{Research Timeline} --- foundational $\rightarrow$ development $\rightarrow$ frontier
+    \item \textbf{Statistical Summary} --- extracted p-values, effect sizes, sample sizes
+    \item \textbf{Suggested Figures} --- recommended visualizations with placement
+\end{enumerate}
+
+Citation keys are deterministic (\texttt{author+year}, e.g., \texttt{@cho2025}) and correspond to BibTeX entries that can be compiled with standard tools (\texttt{pandoc --citeproc} or \texttt{bibtex}).
+
+\section{Discussion}
+
+\subsection{Strengths and Design Choices}
+
+Several design choices proved critical to LitScribe's performance:
+
+\textbf{Deterministic pipeline over LLM routing.} Early versions used the DeepAgents supervisor to make 18+ sequential LLM decisions for each pipeline step. This was both slow ($>$10 minutes) and unreliable (the supervisor sometimes looped or skipped steps). Replacing this with a deterministic Python function reduced execution time to $\sim$2 minutes and eliminated routing failures entirely.
+
+\textbf{Parallel section generation.} Generating introduction, theme sections, and conclusion concurrently reduces synthesis time by approximately 50\% compared to sequential generation. Each section receives its own paper context and citation checklist, enabling independent LLM calls.
+
+\textbf{Adaptive relevance thresholds.} A fixed threshold (e.g., 0.5) works well for popular topics but over-filters niche domains. The adaptive scheme (0.5 for $>$8 papers, 0.3 for 4--8, 0.2 for $<$4) preserves recall in niche domains while maintaining precision in well-covered topics.
+
+\textbf{LLM-based paper selection.} After keyword filtering, letting the LLM select the most relevant papers from the candidate set improved review quality significantly. For the BIO-1 query, this step raised the score from 0.65 to 0.82 by removing papers that matched keywords but addressed different research questions.
+
 \subsection{Limitations}
 
-The current evaluation relies on LLM self-review scores, which may not correlate perfectly with human judgments. Future work will include human evaluation with domain experts and baseline comparisons against ChatGPT and Elicit. Additionally, arXiv rate-limiting affects CS domain performance, and the system does not yet search Chinese-language databases (CNKI, Wanfang) despite supporting Chinese review generation.
+The current evaluation relies on LLM self-review scores, which may not correlate perfectly with human judgments. The self-review module evaluates relevance, coverage, coherence, and claim support, but these criteria may differ from what domain experts prioritize. Future work will include human evaluation with domain experts.
+
+Score variance between runs ($\pm$0.10) is a known limitation, caused by non-determinism in both search API results and LLM generation. Running benchmarks three times and averaging would provide more stable estimates.
+
+arXiv rate-limiting (HTTP 429) affects CS domain performance specifically, as arXiv is the primary source for computer science papers. The current mitigation---domain-aware source selection that skips arXiv for non-CS queries---is effective but does not solve the underlying CS coverage issue.
+
+The system does not yet search Chinese-language databases (CNKI, Wanfang) despite supporting Chinese review generation. CrossRef provides partial coverage of Chinese-language literature, but dedicated Chinese database integration would significantly improve coverage for Chinese-language research questions.
+
+\subsection{Ethical Considerations}
+
+Automated literature reviews raise important ethical questions. LitScribe is designed as a research assistant, not a replacement for human scholarly judgment. The generated reviews should be treated as drafts requiring expert review before publication. The citation grounding and contradiction detection features are specifically designed to increase transparency by highlighting where the system's claims may be unreliable.
 
 \section{Conclusion}
 
-We presented LitScribe, a multi-agent literature review engine that introduces three novel capabilities: contradiction-aware synthesis, metacognitive quality loops, and search-augmented refinement. The system generates comprehensive reviews from natural language queries in approximately two minutes, with citations verified against source papers. LitScribe is open-source under the MIT license and available at \url{https://github.com/arnold117/LitScribe}.
+We presented LitScribe, a multi-agent literature review engine that introduces three novel capabilities: contradiction-aware synthesis, metacognitive quality loops, and search-augmented refinement. The system generates comprehensive reviews from natural language queries in approximately two minutes, with citations individually verified against source papers (62--100\% grounding accuracy). Evaluation across four domains demonstrates consistent performance, with the highest quality in biology (score 0.82) where database coverage is strongest.
 
-Future directions include human evaluation, baseline comparisons, social media academic trend monitoring (WeChat Official Accounts, Twitter), related work section generation for paper writing, and a React-based web interface with rich text editing.
+The system is implemented in 86 Python files (10,300 lines) with 49 tests, 12 CLI commands, and 16 API endpoints. It is open-source under the MIT license at \url{https://github.com/arnold117/LitScribe}.
+
+Future directions include: (1)~human evaluation with domain expert panels, (2)~baseline comparisons against ChatGPT and Elicit, (3)~integration of social media academic trend monitoring (WeChat Official Accounts, Twitter/X) for emerging research detection, (4)~related work section generation for paper writing assistance, and (5)~a React-based web interface with rich text editing and revision tracking.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
