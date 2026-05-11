@@ -65,7 +65,16 @@ async def run_single_benchmark(
         await step_search(model, state, config, max_papers)
         await step_read(model, state)
         await step_contradictions(model, state)
-        await step_synthesize(model, state)
+
+        # Lightweight synthesize for benchmark (skip comparison/timeline/stats/figures)
+        from litscribe.tools.synthesis import synthesize
+        review = await synthesize(
+            router=None, analyses=state.analyses,
+            research_question=state.research_question,
+            language="en", papers=state.papers, model=model,
+        )
+        state.synthesis = review
+
         await step_ground(model, state)
         await step_review(model, state)
 
