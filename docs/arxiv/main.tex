@@ -24,7 +24,7 @@
 \maketitle
 
 \begin{abstract}
-We present LitScribe, an open-source multi-agent system that generates comprehensive academic literature reviews from natural language research questions. Unlike existing tools that either generate unverified reviews or detect contradictions without producing reviews, LitScribe combines both capabilities in an end-to-end pipeline. The system searches up to six academic databases, analyzes papers with full-text support via Unpaywall, and generates reviews with Pandoc-style citations individually verified against source papers (62--100\% grounding accuracy, 75\% average). We introduce three novel capabilities: (1)~contradiction-aware synthesis, which detects opposing findings between papers and weaves them into the review narrative; (2)~metacognitive quality loops, where the system evaluates its own output and autonomously decides which pipeline steps to re-run; and (3)~search-augmented refinement, where user requests to add content trigger new paper searches before writing. Evaluation on five queries across four domains (Biology, Computer Science, Medicine, Chemistry) shows the system produces 1,300--1,750 word reviews with 0.55--0.82 quality scores in approximately two minutes. LitScribe is available at \url{https://github.com/arnold117/LitScribe} under the MIT license.
+We present LitScribe, an open-source multi-agent system that generates comprehensive academic literature reviews from natural language research questions. Unlike existing tools that either generate unverified reviews or detect contradictions without producing reviews, LitScribe combines both capabilities in an end-to-end pipeline. The system searches up to six academic databases, analyzes papers with full-text support via Unpaywall, and generates reviews with Pandoc-style citations individually verified against source papers (62--100\% grounding accuracy, 75\% average). We introduce three novel capabilities: (1)~contradiction-aware synthesis, which detects opposing findings between papers and weaves them into the review narrative; (2)~metacognitive quality loops, where the system evaluates its own output and autonomously decides which pipeline steps to re-run; and (3)~search-augmented refinement, where user requests to add content trigger new paper searches before writing. Evaluation on five queries across four domains (Biology, Computer Science, Medicine, Chemistry) shows the system produces 1,300--1,710 word reviews with 0.55--0.82 quality scores in approximately two minutes. LitScribe is available at \url{https://github.com/arnold117/LitScribe} under the MIT license.
 \end{abstract}
 
 \section{Introduction}
@@ -107,7 +107,7 @@ Several systems have been proposed for automated literature review generation. S
 
 \subsection{Citation Verification}
 
-PaperQA2 \citep{paperqa2025} achieves superhuman performance on scientific question answering with citations and includes a contradiction detection agent that evaluates claims against the literature. However, PaperQA2 is a question-answering system, not a review generator. The REFIND framework \citep{refind2025} detects span-level hallucinations using context sensitivity ratios but does not generate reviews. Scite.ai classifies citations as supporting or contrasting but does not synthesize reviews.
+PaperQA2 \citep{paperqa2025} achieves superhuman performance on scientific question answering with citations and includes a contradiction detection agent that evaluates claims against the literature. However, PaperQA2 is a question-answering system, not a review generator. The REFIND framework \citep{refind2025} detects span-level hallucinations using context sensitivity ratios but does not generate reviews. Scite.aifootnote{\url{https://scite.ai/}} classifies citations as supporting or contrasting but does not synthesize reviews.
 
 \subsection{Our Position}
 
@@ -140,7 +140,7 @@ Local paper modes & \checkmark & -- & -- & -- & -- \\
 
 LitScribe is built on the DeepAgents framework, which provides a supervisor agent that interprets user intent through natural language and dispatches to appropriate tools. The core review pipeline is implemented as a deterministic function rather than LLM-driven routing, ensuring reproducibility and predictable execution time.
 
-The system comprises 86 Python source files (10,300 lines of code in the \texttt{litscribe/} package), with 49 unit tests, 12 CLI commands, 16 REST API endpoints, and a web interface with server-sent event (SSE) streaming.
+The system comprises 86 Python source files (10,300 lines of code in the \texttt{litscribe/} package), with 49 unit tests, 10 CLI commands, 16 REST API endpoints, and a web interface with server-sent event (SSE) streaming.
 
 \subsection{Search Layer}
 
@@ -245,7 +245,7 @@ LitScribe maintains a cross-session knowledge base where key findings from each 
 
 \subsection{Benchmark Setup}
 
-We evaluate LitScribe on five queries spanning four academic domains (Biology, Computer Science, Medicine, Chemistry), using up to 12 papers per query. The LLM backend is DeepSeek V4 Flash via the DeepSeek API. Each query runs through the core pipeline (plan, search, read, contradictions, synthesize, ground, review) without the optional appendix generation (comparison table, timeline, statistics, figure suggestions) to reduce API calls and isolate core review quality.
+We evaluate LitScribe on five queries spanning four academic domains (Biology, Computer Science, Medicine, Chemistry), using up to 12 papers per query. The LLM backend is DeepSeek V4 Flash (\texttt{deepseek-v4-flash}) via the DeepSeek API. Each query runs through the core pipeline (plan, search, read, contradictions, synthesize, ground, review) without the optional appendix generation (comparison table, timeline, statistics, figure suggestions) to reduce API calls and isolate core review quality.
 
 \subsection{Results}
 
@@ -268,7 +268,7 @@ CHEM-1 & Chemistry & 3 & 1,338 & 0.55 & 100\% & 103s \\
 \end{tabular}
 \end{table}
 
-Biology achieves the highest score (0.82), benefiting from strong coverage in PubMed and Europe PMC. Chemistry scores lower (0.55) due to the niche nature of the query (sesquiterpene coumarin biosynthesis), which returns only 3 relevant papers after filtering. Computer Science scores are affected by arXiv rate-limiting (HTTP 429), which reduces the paper pool quality for CS-specific topics. Figure~\ref{fig:benchmark} visualizes the score and grounding accuracy across domains.
+As shown in Table~\ref{tab:benchmark}, Biology achieves the highest score (0.82), benefiting from strong coverage in PubMed and Europe PMC. Chemistry scores lower (0.55) due to the niche nature of the query (sesquiterpene coumarin biosynthesis), which returns only 3 relevant papers after filtering. Computer Science scores are affected by arXiv rate-limiting (HTTP 429), which reduces the paper pool quality for CS-specific topics. Figure~\ref{fig:benchmark} visualizes the score and grounding accuracy across domains.
 
 \begin{figure}[ht]
 \centering
@@ -322,13 +322,14 @@ We present a detailed walkthrough of the BIO-1 query (``CHO CRISPR knockout prod
     \item \textbf{Search} (15s): Queried OpenAlex, Europe PMC, PubMed, Semantic Scholar, CrossRef with 6 queries. Found 50+ papers, deduplicated to 30, keyword-filtered to 20, LLM-selected 12.
     \item \textbf{Read} (16s): Analyzed 12 papers, 3 dropped by relevance filter ($<$0.5). 9 papers retained with average relevance 0.87.
     \item \textbf{Contradictions} (5s): 15 pairs checked, 0 contradictions detected (papers describe different genes/approaches, no direct conflicts).
+    \item \textbf{GraphRAG} (3s): Entity extraction and community detection skipped (fewer than threshold).
     \item \textbf{Synthesize} (26s): Generated 2 themes in parallel (``Multiplex Gene Knockout'' and ``CRISPR Delivery Optimization''), assembled with introduction and conclusion. Added methodology comparison table and research timeline.
     \item \textbf{Debate} (40s): Reviewer identified 4 issues: one unsupported productivity claim, one missing methodology detail, two weak synthesis passages. Synthesizer revised all.
-    \item \textbf{Ground} (4s): 19/20 citations verified (95\%). One claim auto-corrected: ``worked in CHO cells'' $\rightarrow$ ``worked in HEK293T cells'' based on source paper verification.
+    \item \textbf{Ground} (4s): 17/20 citations verified (85\%). One claim auto-corrected: ``worked in CHO cells'' $\rightarrow$ ``worked in HEK293T cells'' based on source paper verification.
     \item \textbf{Review} (12s): Self-review score 0.82, coverage 0.78. No loop-back triggered.
 \end{enumerate}
 
-The output included: a 1,649-word thematic review with 29 [@key] citations, a \texttt{References} section with BibTeX-compatible keys, a methodology comparison table, and a research timeline showing foundational (2015), developmental (2018--2022), and frontier (2025--2026) phases.
+Total pipeline time: approximately 106s. The output included: a 1,649-word thematic review with 20 [@key] citations, a \texttt{References} section with BibTeX-compatible keys, a methodology comparison table, and a research timeline showing foundational (2015), developmental (2018--2022), and frontier (2025--2026) phases.
 
 \subsection{Algorithm: Citation Grounding}
 
@@ -381,11 +382,11 @@ Several design choices proved critical to LitScribe's performance:
 
 \textbf{Deterministic pipeline over LLM routing.} Early versions used the DeepAgents supervisor to make 18+ sequential LLM decisions for each pipeline step. This was both slow ($>$10 minutes) and unreliable (the supervisor sometimes looped or skipped steps). Replacing this with a deterministic Python function reduced execution time to $\sim$2 minutes and eliminated routing failures entirely.
 
-\textbf{Parallel section generation.} Generating introduction, theme sections, and conclusion concurrently reduces synthesis time by approximately 50\% compared to sequential generation. Each section receives its own paper context and citation checklist, enabling independent LLM calls.
+\textbf{Parallel section generation.} Generating introduction, theme sections, and conclusion concurrently reduces synthesis time by significantly compared to sequential generation. Each section receives its own paper context and citation checklist, enabling independent LLM calls.
 
 \textbf{Adaptive relevance thresholds.} A fixed threshold (e.g., 0.5) works well for popular topics but over-filters niche domains. The adaptive scheme (0.5 for $>$8 papers, 0.3 for 4--8, 0.2 for $<$4) preserves recall in niche domains while maintaining precision in well-covered topics.
 
-\textbf{LLM-based paper selection.} After keyword filtering, letting the LLM select the most relevant papers from the candidate set improved review quality significantly. For the BIO-1 query, this step raised the score from 0.65 to 0.82 by removing papers that matched keywords but addressed different research questions.
+\textbf{LLM-based paper selection.} After keyword filtering, letting the LLM select the most relevant papers from the candidate set improved review quality significantly. For the BIO-1 query, this step improved the review score substantially by removing papers that matched keywords but addressed different research questions.
 
 \subsection{Limitations}
 
@@ -405,7 +406,7 @@ Automated literature reviews raise important ethical questions. LitScribe is des
 
 We presented LitScribe, a multi-agent literature review engine that introduces three novel capabilities: contradiction-aware synthesis, metacognitive quality loops, and search-augmented refinement. The system generates comprehensive reviews from natural language queries in approximately two minutes, with citations individually verified against source papers (62--100\% grounding accuracy). Evaluation across four domains demonstrates consistent performance, with the highest quality in biology (score 0.82) where database coverage is strongest.
 
-The system is implemented in 86 Python files (10,300 lines) with 49 tests, 12 CLI commands, and 16 API endpoints. It is open-source under the MIT license at \url{https://github.com/arnold117/LitScribe}.
+The system is implemented in 86 Python files (10,300 lines) with 49 tests, 10 CLI commands, and 16 API endpoints. It is open-source under the MIT license at \url{https://github.com/arnold117/LitScribe}.
 
 Future directions include: (1)~human evaluation with domain expert panels, (2)~baseline comparisons against ChatGPT and Elicit, (3)~integration of social media academic trend monitoring (WeChat Official Accounts, Twitter/X) for emerging research detection, (4)~related work section generation for paper writing assistance, and (5)~a React-based web interface with rich text editing and revision tracking.
 
