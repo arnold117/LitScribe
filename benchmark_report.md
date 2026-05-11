@@ -2,10 +2,10 @@
 
 | Label | Domain | Papers | Words | Score | Citations | Contradictions | Grounding | Time |
 |-------|--------|--------|-------|-------|-----------|---------------|-----------|------|
-| BIO-1 | Biology | 9 | 1649 | 0.75 | 29 | 0 | 91% | 106s |
-| CS-1 | Computer Science | 12 | 1716 | 0.65 | 4 | 0 | 46% | 153s |
-| MED-1 | Medicine | 12 | 1709 | 0.65 | 4 | 0 | 68% | 115s |
-| CHEM-1 | Chemistry | 2 | 1337 | 0.35 | 15 | 0 | 100% | 103s |
-| CS-2 | Computer Science | 12 | 1700 | 0.72 | 8 | 0 | 59% | 211s |
+| BIO-1 | Biology | 9 | 1507 | 0.75 | 6 | 0 | 86% | 137s |
+| CS-1 | Computer Science | 12 | 1643 | 0.55 | 8 | 0 | 62% | 176s |
+| MED-1 | Medicine | 12 | 1714 | 0.55 | 3 | 0 | 50% | 119s |
+| CHEM-1 | Chemistry | 2 | 1277 | 0.35 | 12 | 0 | 100% | 96s |
+| CS-2 | Computer Science | 12 | 1535 | 0.65 | 6 | 0 | 73% | 121s |
 
-**Average**: score=0.62, time=138s
+**Average**: score=0.57, time=130s
