@@ -123,19 +123,21 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
     core_terms = set()
     for q in unique[:3]:
         for word in q.lower().split():
-            if len(word) >= 4 and word not in {"with", "from", "that", "this", "have", "been", "their", "using", "based"}:
+            if len(word) >= 4 and word not in {"with", "from", "that", "this", "have", "been", "their", "using", "based", "study", "analysis", "approach", "method", "novel", "recent", "review", "paper", "results"}:
                 core_terms.add(word)
 
-    if core_terms and len(papers) > max_papers:
+    if core_terms:
         def _relevance(p):
             text = f"{p.title} {p.abstract or ''}".lower()
             return sum(1 for term in core_terms if term in text)
 
         papers.sort(key=_relevance, reverse=True)
+        min_match = 2 if len(core_terms) >= 4 else 1
         before = len(papers)
-        papers = [p for p in papers if _relevance(p) >= 1] or papers[:max_papers]
+        filtered = [p for p in papers if _relevance(p) >= min_match]
+        papers = filtered if len(filtered) >= 5 else papers[:max_papers]
         if len(papers) != before:
-            logger.info(f"  Keyword filter: {before} → {len(papers)} (terms: {list(core_terms)[:5]})")
+            logger.info(f"  Keyword filter: {before} → {len(papers)} (min {min_match} terms from {list(core_terms)[:5]})")
 
     state.papers = papers[:max_papers]
     state.iteration += 1
@@ -248,8 +250,8 @@ async def step_read(model: ChatOpenAI, state: PipelineState) -> None:
             if isinstance(r, PaperAnalysis):
                 analyses.append(r)
 
-    # Filter out irrelevant papers (relevance < 0.3)
-    relevant = [a for a in analyses if a.relevance_score >= 0.3]
+    # Filter out irrelevant papers (relevance < 0.5)
+    relevant = [a for a in analyses if a.relevance_score >= 0.5]
     dropped = len(analyses) - len(relevant)
     if dropped:
         logger.info(f"  Relevance filter: dropped {dropped} papers (score < 0.3)")

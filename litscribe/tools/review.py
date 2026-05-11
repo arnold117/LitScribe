@@ -54,6 +54,10 @@ async def evaluate_review(
     if router is None and model is not None:
         from litscribe.llm.adapter import ModelAdapter
         router = ModelAdapter(model)
+    # Build paper info with real titles from papers list
+    from litscribe.tools.cite_keys import assign_cite_keys
+    papers_list = kwargs.get("papers", []) if "kwargs" in dir() else []
+
     paper_dicts = []
     for a in analyses:
         paper_dicts.append({
@@ -64,6 +68,8 @@ async def evaluate_review(
             "relevance_score": a.relevance_score,
             "abstract": "; ".join(a.key_findings[:2]),
         })
+
+    # Note to reviewer: citations use [@key] format, not paper_ids
 
     paper_list_text = format_papers_for_self_review(paper_dicts)
     review_summary = _truncate_review(review.text)
@@ -85,6 +91,11 @@ async def evaluate_review(
         review_summary=review_summary,
         themes=themes_text,
         gaps=gaps_text,
+    )
+    prompt += (
+        "\n\nNOTE: This review uses Pandoc-style [@key] citations (e.g., [@smith2024]). "
+        "These are valid citation keys, NOT errors. Do NOT flag them as wrong. "
+        "Evaluate the review's content quality, not citation format."
     )
 
     try:

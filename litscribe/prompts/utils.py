@@ -111,15 +111,17 @@ def format_summaries_for_prompt(summaries: list, max_chars: int = 20000) -> str:
             author_str += " et al."
         findings = summary.get("key_findings", [])
         cite_name = _extract_cite_name(authors[0]) if authors else "Unknown"
+        cite_key = summary.get("cite_key", "")
+        cite_label = f"[@{cite_key}]" if cite_key else f"[{cite_name} et al., {year}]"
+        impact = summary.get("impact_note", "")
 
         section = f"""
-### {title} ({year}) [ID: {paper_id}]
+### {title} ({year}) {cite_label} {impact}
 Authors: {author_str}
-Cite as: [{cite_name} et al., {year}]
 Key Findings:
-{chr(10).join(f"- {f}" for f in findings[:5])}
+{chr(10).join(f"- {f}" for f in findings[:8])}
 
-Methodology: {summary.get("methodology", "Not analyzed")[:300]}
+Methodology: {summary.get("methodology", "Not analyzed")[:400]}
 
 Strengths: {", ".join(summary.get("strengths", [])[:3])}
 Limitations: {", ".join(summary.get("limitations", [])[:3])}
