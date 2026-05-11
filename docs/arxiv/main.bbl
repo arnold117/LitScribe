@@ -1,0 +1,69 @@
+\begin{thebibliography}{8}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[{aiming-lab}(2026)]{autoresearchclaw2025}
+{aiming-lab}.
+\newblock {AutoResearchClaw}: Fully autonomous and self-evolving research from
+  idea to paper.
+\newblock \url{https://github.com/aiming-lab/AutoResearchClaw}, 2026.
+
+\bibitem[Chao et~al.(2025)Chao, Lin, Wang, Zhang, Zhou, Wang, Wang, Zhou, Liu,
+  and Sun]{llmmapreduce2025}
+Yu~Chao, Siyu Lin, Xiaorong Wang, Zhu Zhang, Zihan Zhou, Haoyu Wang, Shuo Wang,
+  Jie Zhou, Zhiyuan Liu, and Maosong Sun.
+\newblock {LLM}$\times${MapReduce-V3}: Enabling interactive in-depth survey
+  generation through a {MCP}-driven hierarchically modular agent system.
+\newblock In \emph{Proceedings of the 2025 Conference on Empirical Methods in
+  Natural Language Processing: System Demonstrations}, 2025.
+\newblock arXiv:2510.10890.
+
+\bibitem[{LangChain}(2025)]{deepagents2025}
+{LangChain}.
+\newblock Deep agents: Agent harness built with {LangChain} and {LangGraph}.
+\newblock \url{https://github.com/langchain-ai/deepagents}, 2025.
+
+\bibitem[Lee and Yu(2025)]{refind2025}
+DongGeon Lee and Hwanjo Yu.
+\newblock {REFIND} at {SemEval-2025} task 3: Retrieval-augmented factuality
+  hallucination detection in large language models.
+\newblock In \emph{Proceedings of the 19th International Workshop on Semantic
+  Evaluation ({SemEval-2025})}, 2025.
+\newblock arXiv:2502.13622.
+
+\bibitem[Naddaf and Quill(2026)]{hallucination2026}
+Miryam Naddaf and Elizabeth Quill.
+\newblock Hallucinated citations are polluting the scientific literature. what
+  can be done?
+\newblock \emph{Nature}, 652, 2026.
+\newblock \doi{10.1038/d41586-026-00969-z}.
+\newblock Published 1 April 2026.
+
+\bibitem[Nguyen et~al.(2025)Nguyen, Nguyen, N.T., Dang, Dong, and
+  Le]{surveyg2025}
+Minh-Anh Nguyen, Minh-Duc Nguyen, Ha~Lan N.T., Kieu~Hai Dang, Nguyen~Tien Dong,
+  and Dung~D. Le.
+\newblock {SurveyG}: A multi-agent {LLM} framework with hierarchical citation
+  graph for automated survey generation.
+\newblock \emph{arXiv preprint arXiv:2510.07733}, 2025.
+
+\bibitem[Skarlinski et~al.(2024)Skarlinski, Cox, Laurent, Braza, Hinks,
+  Hammerling, Ponnapati, Rodriques, and White]{paperqa2025}
+Michael~D. Skarlinski, Sam Cox, Jon~M. Laurent, James~D. Braza, Michaela Hinks,
+  Michael~J. Hammerling, Manvitha Ponnapati, Samuel~G. Rodriques, and Andrew~D.
+  White.
+\newblock Language agents achieve superhuman synthesis of scientific knowledge.
+\newblock \emph{arXiv preprint arXiv:2409.13740}, 2024.
+
+\bibitem[Wen et~al.(2025)Wen, Cao, Wang, Guo, Yang, and
+  Liu]{interactivesurvey2025}
+Zhiyuan Wen, Jiannong Cao, Zian Wang, Beichen Guo, Ruosong Yang, and Shuaiqi
+  Liu.
+\newblock {InteractiveSurvey}: An {LLM}-based personalized and interactive
+  survey paper generation system.
+\newblock \emph{arXiv preprint arXiv:2504.08762}, 2025.
+
+\end{thebibliography}
