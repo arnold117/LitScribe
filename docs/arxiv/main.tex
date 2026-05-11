@@ -153,39 +153,49 @@ Figure~\ref{fig:search} illustrates the search and filtering pipeline.
 \begin{figure}[ht]
 \centering
 \begin{tikzpicture}[
-    node distance=0.3cm,
-    db/.style={draw, rounded corners, minimum width=1.5cm, minimum height=0.5cm, font=\scriptsize, fill=green!10},
-    proc/.style={draw, rounded corners, minimum width=2.5cm, minimum height=0.5cm, font=\scriptsize, fill=blue!8},
+    node distance=0.6cm,
+    db/.style={draw, rounded corners, minimum width=1.8cm, minimum height=0.45cm, font=\scriptsize, fill=green!10, align=center},
+    proc/.style={draw, rounded corners, minimum width=1.6cm, minimum height=0.45cm, font=\scriptsize, fill=blue!8, align=center},
     arr/.style={-{Stealth[length=1.5mm]}, thick},
+    every node/.style={font=\scriptsize},
 ]
+    % Databases column
     \node[db] (oa) {OpenAlex};
-    \node[db, below=0.15cm of oa] (epm) {Europe PMC};
-    \node[db, below=0.15cm of epm] (pm) {PubMed};
-    \node[db, below=0.15cm of pm] (s2) {Sem. Scholar};
-    \node[db, below=0.15cm of s2] (ar) {arXiv};
-    \node[db, below=0.15cm of ar] (cr) {CrossRef};
+    \node[db, below=2pt of oa] (epm) {Europe PMC};
+    \node[db, below=2pt of epm] (pm) {PubMed};
+    \node[db, below=2pt of pm] (s2) {Sem.\ Scholar};
+    \node[db, below=2pt of s2] (ar) {arXiv};
+    \node[db, below=2pt of ar] (cr) {CrossRef};
 
-    \node[proc, right=1.2cm of pm] (dedup) {DOI Dedup};
-    \node[proc, right=0.5cm of dedup] (kw) {Keyword Filter};
-    \node[proc, right=0.5cm of kw] (llm) {LLM Selection};
-    \node[proc, right=0.5cm of llm] (upw) {Unpaywall};
+    % Merge point
+    \coordinate[right=0.8cm of s2] (merge);
 
-    \draw[arr] (oa.east) -- (dedup.west |- oa);
-    \draw[arr] (epm.east) -- (dedup.west |- epm);
-    \draw[arr] (pm.east) -- (dedup.west);
-    \draw[arr] (s2.east) -- (dedup.west |- s2);
-    \draw[arr] (ar.east) -- (dedup.west |- ar);
-    \draw[arr] (cr.east) -- (dedup.west |- cr);
+    % Processing stages
+    \node[proc, right=1.6cm of s2] (dedup) {DOI Dedup};
+    \node[proc, right=0.4cm of dedup] (kw) {Keyword\\Filter};
+    \node[proc, right=0.4cm of kw] (llm) {LLM\\Selection};
+    \node[proc, right=0.4cm of llm] (upw) {Unpaywall\\OA PDF};
+
+    % Arrows from DBs to merge point to dedup
+    \foreach \db in {oa,epm,pm,s2,ar,cr} {
+        \draw[arr, gray] (\db.east) -- (merge |- \db.east) -- (merge);
+    }
+    \draw[arr] (merge) -- (dedup.west);
     \draw[arr] (dedup) -- (kw);
     \draw[arr] (kw) -- (llm);
     \draw[arr] (llm) -- (upw);
 
-    \node[font=\tiny, above=0.15cm of dedup] {50+ papers};
-    \node[font=\tiny, above=0.15cm of kw] {30+};
-    \node[font=\tiny, above=0.15cm of llm] {12};
-    \node[font=\tiny, above=0.15cm of upw] {68\% OA};
+    % Labels
+    \node[above=3pt of dedup, font=\tiny, color=gray] {50+ papers};
+    \node[above=3pt of kw, font=\tiny, color=gray] {30+};
+    \node[above=3pt of llm, font=\tiny, color=gray] {12};
+    \node[above=3pt of upw, font=\tiny, color=gray] {68\% OA};
+
+    % Bounding labels
+    \node[above=6pt of oa, font=\footnotesize\bfseries] {Sources};
+    \node[above=10pt of kw, font=\footnotesize\bfseries] {Filtering Pipeline};
 \end{tikzpicture}
-\caption{Search and filtering pipeline. Six databases are queried in parallel (with domain-aware source selection), followed by three filtering stages and open-access enrichment.}
+\caption{Search and filtering pipeline. Six databases are queried in parallel (with domain-aware source selection), results converge through three filtering stages, and papers are enriched with open-access full text via Unpaywall.}
 \label{fig:search}
 \end{figure}
 
