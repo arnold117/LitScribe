@@ -139,6 +139,26 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
         if len(papers) != before:
             logger.info(f"  Keyword filter: {before} → {len(papers)} (min {min_match} terms from {list(core_terms)[:5]})")
 
+    # LLM-based paper selection: if too many papers, let LLM pick the most relevant
+    if len(papers) > max_papers and len(papers) > 10:
+        from litscribe.prompts.utils import format_papers_for_prompt
+        papers_text = format_papers_for_prompt([p.model_dump() for p in papers[:30]], max_chars=10000)
+        select_prompt = (
+            f"Select the {max_papers} most relevant papers for a literature review on: {state.research_question}\n\n"
+            f"Papers:\n{papers_text}\n\n"
+            f"Return ONLY a JSON array of paper IDs (the [ID] values): [\"id1\", \"id2\", ...]"
+        )
+        try:
+            result = await _call_llm_json(model, select_prompt)
+            if isinstance(result, list) and result:
+                id_set = set(str(s) for s in result)
+                selected = [p for p in papers if p.paper_id in id_set]
+                if len(selected) >= 3:
+                    papers = selected
+                    logger.info(f"  LLM selection: {len(papers)} papers chosen")
+        except Exception as e:
+            logger.debug(f"  LLM selection failed: {e}")
+
     state.papers = papers[:max_papers]
     state.iteration += 1
 

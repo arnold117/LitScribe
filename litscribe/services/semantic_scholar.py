@@ -97,7 +97,7 @@ class SemanticScholarService:
             if min_citations is not None and paper.citations < min_citations:
                 continue
             papers.append(paper)
-            if len(papers) >= max_results:
-                break
 
-        return papers
+        # Sort by citation count (most impactful first)
+        papers.sort(key=lambda p: p.citations, reverse=True)
+        return papers[:max_results]
