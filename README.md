@@ -24,6 +24,38 @@ LitScribe:
 → Score: 0.65-0.82 | Grounding: 83-100% | Time: ~2 minutes
 ```
 
+## What makes LitScribe different
+
+### 🔬 No other tool does all of these:
+
+| Capability | LitScribe | ChatGPT | Elicit | PaperQA2 | SurveyG |
+|-----------|:---------:|:-------:|:------:|:--------:|:-------:|
+| Multi-source search (6 databases, 325M+ papers) | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Citation grounding (verify every claim) | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Contradiction detection (opposing findings) | ✅ | ❌ | ❌ | ✅* | ❌ |
+| Multi-agent debate (reviewer ↔ synthesizer) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Metacognitive quality loop | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Cross-lingual (Chinese ↔ English) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Local paper modes (draft/outline/augment) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Full-text via Unpaywall (68% OA coverage) | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Auto methodology comparison table | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Research timeline (foundation→frontier) | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Pandoc [@key] + BibTeX export | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Session persistence + knowledge base | ✅ | ❌ | ✅ | ❌ | ❌ |
+
+*PaperQA2/ContraCrow detects contradictions but doesn't generate reviews.*
+
+### 🏆 Three novel contributions (not in any existing tool):
+
+**1. Contradiction-Aware Synthesis**
+Existing tools either generate reviews (ignoring contradictions) or detect contradictions (without writing reviews). LitScribe is the first to do both end-to-end: detect → inject into narrative → present as critical analysis.
+
+**2. Metacognitive Quality Loop**
+After self-review, the system evaluates which pipeline steps failed and autonomously re-runs them with adjusted strategy. Not just "loop back and try again" — it reasons about *what* to fix and *how*.
+
+**3. Search-Augmented Refinement**
+When users say "add a section about X", LitScribe doesn't hallucinate — it searches for new papers on X first, analyzes them, then writes the section with real citations from newly found papers.
+
 ## Quick Start
 
 ```bash
