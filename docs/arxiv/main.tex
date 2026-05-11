@@ -5,8 +5,6 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{hyperref}
-\usepackage{xcolor}
-\usepackage{listings}
 \usepackage{enumitem}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{natbib}
@@ -17,14 +15,14 @@
 \author[1]{Arnold Zhou}
 \affil[1]{Independent Researcher}
 
-\date{\today}
+\date{May 2026}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-We present LitScribe, an open-source multi-agent system that generates comprehensive academic literature reviews from natural language research questions. Unlike existing tools that either generate unverified reviews or detect contradictions without producing reviews, LitScribe combines both capabilities in an end-to-end pipeline. The system searches six academic databases (325M+ papers), analyzes papers with full-text support via Unpaywall, and generates reviews with Pandoc-style citations that are individually verified against source papers (83--100\% grounding accuracy). We introduce three novel capabilities not found in existing tools: (1) contradiction-aware synthesis, which detects opposing findings between papers and weaves them into the review narrative; (2) metacognitive quality loops, where the system evaluates its own output and autonomously decides which pipeline steps to re-run; and (3) search-augmented refinement, where user requests to add content trigger new paper searches before writing. Evaluation across five domains (Biology, Computer Science, Medicine, Chemistry) shows the system produces 1,500--2,000 word reviews with 0.55--0.82 quality scores in approximately two minutes. LitScribe is available at \url{https://github.com/arnold117/LitScribe} under the MIT license.
+We present LitScribe, an open-source multi-agent system that generates comprehensive academic literature reviews from natural language research questions. Unlike existing tools that either generate unverified reviews or detect contradictions without producing reviews, LitScribe combines both capabilities in an end-to-end pipeline. The system searches up to six academic databases, analyzes papers with full-text support via Unpaywall, and generates reviews with Pandoc-style citations individually verified against source papers (62--100\% grounding accuracy, 75\% average). We introduce three novel capabilities: (1)~contradiction-aware synthesis, which detects opposing findings between papers and weaves them into the review narrative; (2)~metacognitive quality loops, where the system evaluates its own output and autonomously decides which pipeline steps to re-run; and (3)~search-augmented refinement, where user requests to add content trigger new paper searches before writing. Evaluation on five queries across four domains (Biology, Computer Science, Medicine, Chemistry) shows the system produces 1,300--1,750 word reviews with 0.55--0.82 quality scores in approximately two minutes. LitScribe is available at \url{https://github.com/arnold117/LitScribe} under the MIT license.
 \end{abstract}
 
 \section{Introduction}
@@ -33,7 +31,15 @@ Literature reviews are foundational to scientific progress, yet they remain one 
 
 First, most LLM-based review tools rely on the model's training data rather than searching academic databases, leading to outdated or fabricated references. Second, tools that do search databases typically generate reviews without verifying whether their citations actually support the claims being made---a problem that leads to citation hallucination rates of 15--20\% even in state-of-the-art models \citep{hallucination2026}. Third, no existing system automatically identifies contradictions between papers and presents them as part of the review narrative.
 
-LitScribe addresses these limitations through an 11-step deterministic pipeline built on the DeepAgents framework \citep{deepagents2025}. The system operates as follows: given a research question, it (1) decomposes the question into sub-topics, (2) searches six academic databases in parallel, (3) enriches papers with open-access full text via Unpaywall, (4) analyzes each paper, (5) detects contradictions, (6) builds a knowledge graph, (7) generates review sections in parallel, (8) conducts a multi-agent debate between reviewer and synthesizer agents, (9) verifies every citation against its source paper, (10) self-evaluates quality with loop-back, and (11) saves results to a persistent knowledge base.
+LitScribe addresses these limitations through a deterministic pipeline built on the DeepAgents framework \citep{deepagents2025}. Given a research question, the system:
+\begin{enumerate}[nosep]
+    \item[\textbf{1--2.}] Decomposes the question into sub-topics and searches up to six academic databases in parallel;
+    \item[\textbf{3--4.}] Enriches papers with open-access full text via Unpaywall, then analyzes each paper for key findings;
+    \item[\textbf{5--6.}] Detects contradictions between papers and builds a knowledge graph (GraphRAG);
+    \item[\textbf{7--8.}] Generates review sections in parallel and conducts a multi-agent debate (reviewer vs.\ synthesizer);
+    \item[\textbf{9--10.}] Verifies every citation against its source paper, then self-evaluates quality with loop-back;
+    \item[\textbf{11.}] Applies metacognitive evaluation and saves results to a persistent knowledge base.
+\end{enumerate}
 
 Our contributions are:
 \begin{enumerate}[nosep]
@@ -50,7 +56,7 @@ Several systems have been proposed for automated literature review generation. S
 
 \subsection{Citation Verification}
 
-PaperQA2 \citep{paperqa2025} achieves superhuman performance on scientific question answering with citations. Its ContraCrow agent evaluates claims against the literature, finding 2.34 contradictions per paper on average. However, PaperQA2 is a question-answering system, not a review generator. The REFIND framework \citep{refind2025} detects span-level hallucinations using context sensitivity ratios but does not generate reviews. Scite.ai classifies citations as supporting or contrasting but does not synthesize reviews.
+PaperQA2 \citep{paperqa2025} achieves superhuman performance on scientific question answering with citations and includes a contradiction detection agent that evaluates claims against the literature. However, PaperQA2 is a question-answering system, not a review generator. The REFIND framework \citep{refind2025} detects span-level hallucinations using context sensitivity ratios but does not generate reviews. Scite.ai classifies citations as supporting or contrasting but does not synthesize reviews.
 
 \subsection{Our Position}
 
@@ -81,15 +87,15 @@ Local paper modes & \checkmark & -- & -- & -- & -- \\
 
 \subsection{Overview}
 
-LitScribe is built on the DeepAgents framework, which provides a supervisor agent that interprets user intent through natural language and dispatches to appropriate tools. The core review pipeline is implemented as a deterministic 11-step function (not LLM-driven routing), ensuring reproducibility and predictable execution time.
+LitScribe is built on the DeepAgents framework, which provides a supervisor agent that interprets user intent through natural language and dispatches to appropriate tools. The core review pipeline is implemented as a deterministic function rather than LLM-driven routing, ensuring reproducibility and predictable execution time.
 
-The system comprises 86 Python files (10,300 lines), with 49 unit tests, 12 CLI commands, 16 REST API endpoints, and a web interface with server-sent event (SSE) streaming.
+The system comprises 86 Python source files (10,300 lines of code in the \texttt{litscribe/} package), with 49 unit tests, 12 CLI commands, 16 REST API endpoints, and a web interface with server-sent event (SSE) streaming.
 
 \subsection{Search Layer}
 
-LitScribe searches six academic databases in parallel: OpenAlex (250M+ works), Europe PMC (40M+, including bioRxiv/medRxiv preprints), PubMed (35M+), Semantic Scholar (200M+), arXiv (2M+), and CrossRef (140M+). Search is domain-aware: arXiv is automatically skipped for biology, medicine, and chemistry queries to avoid retrieving irrelevant computer science papers that share keywords.
+LitScribe searches up to six academic databases in parallel: OpenAlex (250M+ works), Europe PMC (40M+, including bioRxiv/medRxiv preprints), PubMed (35M+, when configured with NCBI credentials), Semantic Scholar (200M+), arXiv (2M+), and CrossRef (140M+). Search is domain-aware: arXiv is automatically skipped for biology, medicine, and chemistry queries, as its corpus skews heavily toward computer science and physics, causing keyword-matching false positives in other domains.
 
-After search, papers undergo three filtering stages: (1) DOI-based deduplication across sources, (2) keyword relevance filtering requiring at least two core terms from the research question, and (3) LLM-based selection where the model chooses the most relevant papers from the candidate set. Papers are then enriched with open-access PDF URLs via the Unpaywall API, achieving 68\% full-text coverage.
+After search, papers undergo three filtering stages: (1)~DOI-based deduplication across sources, (2)~keyword relevance filtering requiring at least two core terms from the research question, and (3)~LLM-based selection where the model chooses the most relevant papers from the candidate set. Papers are then enriched with open-access PDF URLs via the Unpaywall API, which provides open-access coverage for approximately 68\% of academic papers with DOIs.
 
 \subsection{Analysis Pipeline}
 
@@ -137,7 +143,7 @@ LitScribe maintains a cross-session knowledge base where key findings from each 
 
 \subsection{Benchmark Setup}
 
-We evaluate LitScribe on five queries spanning four academic domains, using 12 papers per query. The LLM backend is DeepSeek V4 Flash. Each query runs through the lightweight benchmark pipeline (without comparison table, timeline, statistics, or figure suggestions to reduce API calls).
+We evaluate LitScribe on five queries spanning four academic domains (Biology, Computer Science, Medicine, Chemistry), using up to 12 papers per query. The LLM backend is DeepSeek V4 Flash via the DeepSeek API. Each query runs through the core pipeline (plan, search, read, contradictions, synthesize, ground, review) without the optional appendix generation (comparison table, timeline, statistics, figure suggestions) to reduce API calls and isolate core review quality.
 
 \subsection{Results}
 
