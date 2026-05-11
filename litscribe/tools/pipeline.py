@@ -250,8 +250,14 @@ async def step_read(model: ChatOpenAI, state: PipelineState) -> None:
             if isinstance(r, PaperAnalysis):
                 analyses.append(r)
 
-    # Filter out irrelevant papers (relevance < 0.5)
-    relevant = [a for a in analyses if a.relevance_score >= 0.5]
+    # Adaptive relevance filter — stricter when many papers, lenient when few
+    if len(analyses) > 8:
+        threshold = 0.5
+    elif len(analyses) > 4:
+        threshold = 0.3
+    else:
+        threshold = 0.2
+    relevant = [a for a in analyses if a.relevance_score >= threshold]
     dropped = len(analyses) - len(relevant)
     if dropped:
         logger.info(f"  Relevance filter: dropped {dropped} papers (score < 0.3)")
