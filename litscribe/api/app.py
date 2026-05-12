@@ -68,12 +68,69 @@ def _get_config():
     return _config, _model
 
 
+_static_dir = Path(__file__).parent / "static"
+_dist_dir = _static_dir / "dist"
+
+if _dist_dir.exists():
+    app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="assets")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    html_path = Path(__file__).parent / "static" / "index.html"
-    if html_path.exists():
-        return html_path.read_text()
+    dist_index = _dist_dir / "index.html"
+    if dist_index.exists():
+        return dist_index.read_text()
+    legacy = _static_dir / "index.html"
+    if legacy.exists():
+        return legacy.read_text()
     return "<h1>LitScribe API</h1><p>See /docs for API documentation.</p>"
+
+
+@app.get("/api/health")
+async def health():
+    import os
+    has_key = bool(os.getenv("llm-key") or os.getenv("LLM_API_KEY"))
+    has_base = bool(os.getenv("llm-location") or os.getenv("LLM_API_BASE"))
+    has_model = bool(os.getenv("llm-model") or os.getenv("LLM_MODEL"))
+    configured = has_key and has_base and has_model
+    return {
+        "configured": configured,
+        "llm_key_set": has_key,
+        "llm_base_set": has_base,
+        "llm_model_set": has_model,
+    }
+
+
+class SetupRequest(BaseModel):
+    api_key: str
+    api_base: str
+    model: str
+    ncbi_email: str = ""
+    ncbi_api_key: str = ""
+
+
+@app.post("/api/setup")
+async def setup(req: SetupRequest):
+    import os
+    env_path = Path(__file__).parents[2] / ".env"
+    lines = [
+        f"llm-key={req.api_key}",
+        f"llm-location={req.api_base}",
+        f"llm-model={req.model}",
+    ]
+    if req.ncbi_email:
+        lines.append(f"NCBI_EMAIL={req.ncbi_email}")
+    if req.ncbi_api_key:
+        lines.append(f"NCBI_API_KEY={req.ncbi_api_key}")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Reload env vars
+    os.environ["llm-key"] = req.api_key
+    os.environ["llm-location"] = req.api_base
+    os.environ["llm-model"] = req.model
+    global _config, _model
+    _config = None
+    _model = None
+    return {"status": "ok"}
 
 
 @app.post("/api/review")
@@ -497,6 +554,61 @@ async def export(format: str, style: str = "apa"):
     from litscribe.tools.export import export_review
     result = await export_review(_state.synthesis, _state.papers, format, style)
     return {"content": result.get("content", "")}
+
+
+class OutlineReviewRequest(BaseModel):
+    outline_text: str
+    language: str = "en"
+    max_papers_per_section: int = 10
+
+
+@app.post("/api/outline-review")
+async def run_outline_review_api(req: OutlineReviewRequest):
+    await check_rate_limit("outline-review")
+    config, model = _get_config()
+
+    async def stream():
+        from litscribe.tools.outline_parser import parse_outline_text, outline_to_sections
+        from litscribe.tools.outline_review import run_outline_review
+        import tempfile, os
+
+        # Write outline to a temp .md file
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8")
+        tmp.write(req.outline_text)
+        tmp.close()
+
+        def on_progress(event: str, data: dict):
+            pass  # handled below
+
+        try:
+            roots = parse_outline_text(req.outline_text.splitlines())
+            sections = outline_to_sections(roots)
+            yield _sse("outline_parsed", {
+                "total_sections": len(sections),
+                "titles": [s["title"] for s in sections],
+            })
+
+            result = await run_outline_review(
+                model, config, tmp.name,
+                max_papers_per_section=req.max_papers_per_section,
+                language=req.language,
+                on_progress=lambda e, d: None,
+            )
+
+            yield _sse("complete", {
+                "text": result.get("text", ""),
+                "total_words": result.get("total_words", 0),
+                "total_papers": result.get("total_papers", 0),
+                "time": result.get("time", 0),
+                "sections": [
+                    {"title": s["title"], "words": s["word_count"], "papers": s["papers_count"]}
+                    for s in result.get("sections", [])
+                ],
+            })
+        finally:
+            os.unlink(tmp.name)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 def _sse(event: str, data: dict) -> str:

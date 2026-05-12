@@ -18,6 +18,8 @@ h1 { font-size: 24px; margin-bottom: 4px; }
 button { padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
 button:hover { background: #1d4ed8; }
 button:disabled { background: #93c5fd; cursor: not-allowed; }
+.btn-secondary { background: #6b7280; }
+.btn-secondary:hover { background: #4b5563; }
 .status { padding: 8px 12px; background: #f0f9ff; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #1e40af; }
 .progress-bar { height: 4px; background: #dbeafe; border-radius: 2px; overflow: hidden; margin-bottom: 12px; }
 .progress-bar .fill { height: 100%; background: #2563eb; transition: width 0.3s; }
@@ -29,8 +31,21 @@ button:disabled { background: #93c5fd; cursor: not-allowed; }
 .refine-box button { padding: 8px 16px; font-size: 13px; }
 .hidden { display: none; }
 .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
-.tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; background: #e5e7eb; font-size: 13px; }
+.tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; background: #e5e7eb; font-size: 13px; border: none; color: #333; }
 .tab.active { background: white; font-weight: 600; }
+.setup-card { border: 2px solid #f59e0b; background: #fffbeb; }
+.setup-card h3 { color: #92400e; margin-bottom: 12px; }
+.setup-field { margin-bottom: 12px; }
+.setup-field label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: #555; }
+.setup-field input, .setup-field select { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+.setup-field .hint { font-size: 12px; color: #888; margin-top: 2px; }
+.preset-row { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.preset-btn { padding: 6px 14px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 13px; }
+.preset-btn:hover, .preset-btn.active { border-color: #2563eb; background: #eff6ff; color: #2563eb; }
+.outline-upload { border: 2px dashed #ddd; border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+.outline-upload:hover { border-color: #2563eb; }
+.outline-upload.dragover { border-color: #2563eb; background: #eff6ff; }
+.outline-preview { font-size: 13px; color: #555; margin-top: 8px; max-height: 200px; overflow-y: auto; text-align: left; }
 </style>
 </head>
 <body>
@@ -38,17 +53,84 @@ button:disabled { background: #93c5fd; cursor: not-allowed; }
   <h1>LitScribe</h1>
   <p class="subtitle">AI-powered literature review engine</p>
 
-  <div class="card">
-    <div class="input-group">
-      <input type="text" id="question" placeholder="Research question (e.g., CRISPR CHO knockout productivity)">
-      <input type="number" id="maxPapers" value="15" min="5" max="50" title="Max papers">
-      <select id="language">
-        <option value="en">English</option>
-        <option value="zh">中文</option>
-      </select>
-      <button id="runBtn" onclick="runReview()">Run Review</button>
+  <!-- Setup wizard (shown when not configured) -->
+  <div id="setupCard" class="card setup-card hidden">
+    <h3>Welcome! Let's set up LitScribe</h3>
+    <p style="font-size:13px;color:#666;margin-bottom:16px;">LitScribe needs an LLM API to work. Choose a provider and enter your API key.</p>
+
+    <div style="font-size:13px;font-weight:500;margin-bottom:6px;">Provider</div>
+    <div class="preset-row">
+      <button class="preset-btn active" onclick="selectPreset('deepseek')">DeepSeek</button>
+      <button class="preset-btn" onclick="selectPreset('dashscope')">DashScope</button>
+      <button class="preset-btn" onclick="selectPreset('openai')">OpenAI</button>
+      <button class="preset-btn" onclick="selectPreset('custom')">Custom</button>
     </div>
-    <input type="text" id="instructions" placeholder="Optional: focus areas, themes, style preferences..." style="width:100%;padding:8px 14px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+
+    <div class="setup-field">
+      <label>API Key</label>
+      <input type="password" id="setupKey" placeholder="sk-...">
+    </div>
+    <div class="setup-field">
+      <label>API Base URL</label>
+      <input type="text" id="setupBase" value="https://api.deepseek.com/">
+    </div>
+    <div class="setup-field">
+      <label>Model</label>
+      <input type="text" id="setupModel" value="deepseek-chat">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:4px;margin-bottom:12px;">
+      <div class="setup-field" style="flex:1;margin-bottom:0;">
+        <label>NCBI Email <span style="color:#aaa">(optional, for PubMed)</span></label>
+        <input type="text" id="setupNcbiEmail" placeholder="your@email.com">
+      </div>
+      <div class="setup-field" style="flex:1;margin-bottom:0;">
+        <label>NCBI API Key <span style="color:#aaa">(optional)</span></label>
+        <input type="text" id="setupNcbiKey" placeholder="">
+      </div>
+    </div>
+    <button onclick="saveSetup()">Save & Start</button>
+    <span id="setupStatus" style="margin-left:12px;font-size:13px;color:#666;"></span>
+  </div>
+
+  <!-- Mode tabs -->
+  <div id="mainUI" class="hidden">
+    <div class="tab-bar">
+      <button class="tab active" onclick="switchMode('question')">Question</button>
+      <button class="tab" onclick="switchMode('outline')">From Outline</button>
+    </div>
+
+    <!-- Question mode -->
+    <div id="questionMode" class="card">
+      <div class="input-group">
+        <input type="text" id="question" placeholder="Research question (e.g., CRISPR CHO knockout productivity)">
+        <input type="number" id="maxPapers" value="15" min="5" max="50" title="Max papers">
+        <select id="language">
+          <option value="en">English</option>
+          <option value="zh">Chinese</option>
+        </select>
+        <button id="runBtn" onclick="runReview()">Run Review</button>
+      </div>
+      <input type="text" id="instructions" placeholder="Optional: focus areas, themes, style preferences..." style="width:100%;padding:8px 14px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+    </div>
+
+    <!-- Outline mode -->
+    <div id="outlineMode" class="card hidden">
+      <div class="outline-upload" id="outlineDrop" onclick="document.getElementById('outlineFile').click()">
+        <input type="file" id="outlineFile" accept=".docx,.md,.txt" style="display:none" onchange="handleOutlineFile(event)">
+        <div style="font-size:14px;color:#666;">Drop an outline file here or click to upload</div>
+        <div style="font-size:12px;color:#999;margin-top:4px;">.docx / .md / .txt</div>
+      </div>
+      <div id="outlinePreview" class="outline-preview hidden"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;align-items:center;">
+        <select id="outlineLanguage" style="padding:8px 14px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+          <option value="en">English</option>
+          <option value="zh">Chinese</option>
+        </select>
+        <span style="font-size:13px;color:#666;">Max papers/section:</span>
+        <input type="number" id="outlineMaxPapers" value="10" min="3" max="30" style="width:70px;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+        <button id="outlineRunBtn" onclick="runOutlineReview()" disabled>Generate Review</button>
+      </div>
+    </div>
   </div>
 
   <div id="progressCard" class="card hidden">
@@ -56,7 +138,7 @@ button:disabled { background: #93c5fd; cursor: not-allowed; }
     <div id="statusText" class="status">Starting...</div>
   </div>
 
-  <div id="sessionsCard" class="card">
+  <div id="sessionsCard" class="card hidden">
     <h3 style="font-size:14px;margin-bottom:8px;">Past Reviews</h3>
     <div id="sessionsList" style="font-size:13px;color:#666;">Loading...</div>
   </div>
@@ -74,8 +156,218 @@ button:disabled { background: #93c5fd; cursor: not-allowed; }
 </div>
 
 <script>
-const steps = {plan: 15, search: 35, read: 55, synthesize: 80, review: 95, complete: 100};
+const steps = {plan: 15, search: 35, read: 55, contradictions: 60, synthesize: 80, ground: 90, review: 95, complete: 100};
 
+// --- Setup ---
+const presets = {
+  deepseek: { base: 'https://api.deepseek.com/', model: 'deepseek-chat' },
+  dashscope: { base: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  openai: { base: 'https://api.openai.com/v1', model: 'gpt-4o' },
+  custom: { base: '', model: '' },
+};
+
+function selectPreset(name) {
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  const p = presets[name];
+  document.getElementById('setupBase').value = p.base;
+  document.getElementById('setupModel').value = p.model;
+}
+
+async function saveSetup() {
+  const key = document.getElementById('setupKey').value.trim();
+  const base = document.getElementById('setupBase').value.trim();
+  const model = document.getElementById('setupModel').value.trim();
+  if (!key || !base || !model) {
+    document.getElementById('setupStatus').textContent = 'Please fill in all required fields.';
+    return;
+  }
+  document.getElementById('setupStatus').textContent = 'Saving...';
+  const res = await fetch('/api/setup', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      api_key: key, api_base: base, model,
+      ncbi_email: document.getElementById('setupNcbiEmail').value.trim(),
+      ncbi_api_key: document.getElementById('setupNcbiKey').value.trim(),
+    }),
+  });
+  if (res.ok) {
+    document.getElementById('setupCard').classList.add('hidden');
+    document.getElementById('mainUI').classList.remove('hidden');
+    document.getElementById('sessionsCard').classList.remove('hidden');
+    loadSessions();
+  } else {
+    document.getElementById('setupStatus').textContent = 'Failed to save. Check server logs.';
+  }
+}
+
+async function checkHealth() {
+  try {
+    const res = await fetch('/api/health');
+    const data = await res.json();
+    if (data.configured) {
+      document.getElementById('mainUI').classList.remove('hidden');
+      document.getElementById('sessionsCard').classList.remove('hidden');
+      loadSessions();
+    } else {
+      document.getElementById('setupCard').classList.remove('hidden');
+    }
+  } catch(e) {
+    document.getElementById('mainUI').classList.remove('hidden');
+    document.getElementById('sessionsCard').classList.remove('hidden');
+    loadSessions();
+  }
+}
+
+// --- Mode switching ---
+function switchMode(mode) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('questionMode').classList.toggle('hidden', mode !== 'question');
+  document.getElementById('outlineMode').classList.toggle('hidden', mode !== 'outline');
+}
+
+// --- Outline ---
+let outlineText = '';
+
+function handleOutlineFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const drop = document.getElementById('outlineDrop');
+  const preview = document.getElementById('outlinePreview');
+
+  if (file.name.endsWith('.md') || file.name.endsWith('.txt')) {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      outlineText = ev.target.result;
+      showOutlinePreview(file.name, outlineText);
+    };
+    reader.readAsText(file);
+  } else if (file.name.endsWith('.docx')) {
+    drop.innerHTML = `<div style="font-size:14px;color:#2563eb;">${file.name}</div><div style="font-size:12px;color:#999;margin-top:4px;">docx files are parsed on the server</div>`;
+    // For docx, we'll send the raw text lines. But since we can't parse docx in browser,
+    // we'll note that and let the user know the server will handle it.
+    outlineText = '';
+    preview.classList.add('hidden');
+    document.getElementById('outlineRunBtn').disabled = false;
+    // Store file for upload
+    document.getElementById('outlineDrop')._file = file;
+  }
+}
+
+function showOutlinePreview(name, text) {
+  const lines = text.split('\n').filter(l => l.trim());
+  const preview = document.getElementById('outlinePreview');
+  preview.innerHTML = `<strong>${name}</strong> (${lines.length} lines)<br>` +
+    lines.slice(0, 20).map(l => `<div style="padding:1px 0;">${l}</div>`).join('') +
+    (lines.length > 20 ? `<div style="color:#999;">... and ${lines.length - 20} more</div>` : '');
+  preview.classList.remove('hidden');
+  document.getElementById('outlineRunBtn').disabled = false;
+}
+
+// Drag & drop
+const dropZone = document.getElementById('outlineDrop');
+if (dropZone) {
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const input = document.getElementById('outlineFile');
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      handleOutlineFile({ target: input });
+    }
+  });
+}
+
+async function runOutlineReview() {
+  if (!outlineText && !document.getElementById('outlineDrop')._file) return;
+
+  document.getElementById('outlineRunBtn').disabled = true;
+  document.getElementById('progressCard').classList.remove('hidden');
+  document.getElementById('resultCard').classList.add('hidden');
+
+  let textToSend = outlineText;
+
+  // For docx files, read as text via the server
+  if (!textToSend) {
+    document.getElementById('statusText').textContent = 'docx upload requires pasting the outline as text. Copy the outline from your document and paste below.';
+    document.getElementById('outlineRunBtn').disabled = false;
+    document.getElementById('progressCard').classList.add('hidden');
+    return;
+  }
+
+  const body = {
+    outline_text: textToSend,
+    language: document.getElementById('outlineLanguage').value,
+    max_papers_per_section: parseInt(document.getElementById('outlineMaxPapers').value),
+  };
+
+  const response = await fetch('/api/outline-review', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    let event = null;
+    for (const line of lines) {
+      if (line.startsWith('event: ')) event = line.slice(7);
+      else if (line.startsWith('data: ') && event) {
+        const data = JSON.parse(line.slice(6));
+        handleOutlineEvent(event, data);
+        event = null;
+      }
+    }
+  }
+
+  document.getElementById('outlineRunBtn').disabled = false;
+}
+
+function handleOutlineEvent(event, data) {
+  const status = document.getElementById('statusText');
+  const fill = document.getElementById('progressFill');
+
+  if (event === 'outline_parsed') {
+    status.textContent = `Parsed ${data.total_sections} sections`;
+    fill.style.width = '5%';
+  } else if (event === 'section_start') {
+    const pct = 5 + (data.index / data.total) * 90;
+    fill.style.width = pct + '%';
+    status.textContent = `[${data.index + 1}/${data.total}] ${data.title}`;
+  } else if (event === 'section_done') {
+    status.textContent = `Done: ${data.title} (${data.papers} papers, ${data.words} words)`;
+  } else if (event === 'complete') {
+    fill.style.width = '100%';
+    document.getElementById('progressCard').classList.add('hidden');
+    document.getElementById('resultCard').classList.remove('hidden');
+    document.getElementById('stats').innerHTML =
+      `<span>${data.total_papers} papers</span>` +
+      `<span>${data.total_words} words</span>` +
+      `<span>${data.sections?.length || '?'} sections</span>` +
+      `<span>${data.time}s</span>`;
+    document.getElementById('reviewText').textContent = data.text;
+  }
+}
+
+// --- Standard review ---
 async function runReview() {
   const q = document.getElementById('question').value.trim();
   if (!q) return;
@@ -109,11 +401,11 @@ async function runReview() {
     const lines = buffer.split('\n');
     buffer = lines.pop();
 
-    let event = null, data = null;
+    let event = null;
     for (const line of lines) {
       if (line.startsWith('event: ')) event = line.slice(7);
       else if (line.startsWith('data: ') && event) {
-        data = JSON.parse(line.slice(6));
+        const data = JSON.parse(line.slice(6));
         handleEvent(event, data);
         event = null;
       }
@@ -184,10 +476,9 @@ async function loadSessions() {
   } catch(e) { document.getElementById('sessionsList').textContent = 'Failed to load.'; }
 }
 
-let _currentReview = null; // stash current review before loading past session
+let _currentReview = null;
 
 async function loadSession(id) {
-  // Save current review if exists
   const currentText = document.getElementById('reviewText').textContent;
   const currentStats = document.getElementById('stats').innerHTML;
   if (currentText && currentText !== 'Refining...' && !_currentReview) {
@@ -199,7 +490,7 @@ async function loadSession(id) {
   document.getElementById('resultCard').classList.remove('hidden');
   document.getElementById('stats').innerHTML =
     `<span>${s.papers_count} papers</span><span>${s.word_count} words</span><span>Score: ${s.score.toFixed(2)}</span>` +
-    (_currentReview ? `<span style="cursor:pointer;color:#2563eb" onclick="restoreCurrent()">↩ Back to current</span>` : '');
+    (_currentReview ? `<span style="cursor:pointer;color:#2563eb" onclick="restoreCurrent()">&#8617; Back to current</span>` : '');
   document.getElementById('reviewText').textContent = s.review_text;
   document.getElementById('question').value = s.research_question;
 }
@@ -212,8 +503,6 @@ function restoreCurrent() {
   _currentReview = null;
 }
 
-loadSessions();
-
 async function exportReview(format) {
   const res = await fetch(`/api/export/${format}`);
   const data = await res.json();
@@ -223,6 +512,9 @@ async function exportReview(format) {
   a.download = `review.${format === 'bibtex' ? 'bib' : 'md'}`;
   a.click();
 }
+
+// Boot
+checkHealth();
 </script>
 </body>
 </html>
