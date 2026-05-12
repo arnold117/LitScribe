@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -161,7 +161,12 @@ async def run_review(req: ReviewRequest):
         await step_search(model, _state, config, max_papers=req.max_papers)
         yield _sse("search", {
             "papers_found": len(_state.papers),
-            "titles": [p.title for p in _state.papers[:10]],
+            "papers": [{
+                "title": p.title,
+                "authors": p.authors[:3],
+                "year": p.year,
+                "url": _paper_url(p),
+            } for p in _state.papers[:20]],
         })
 
         yield _sse("status", {"step": "read", "message": f"Analyzing {len(_state.papers)} papers..."})
@@ -556,10 +561,49 @@ async def export(format: str, style: str = "apa"):
     return {"content": result.get("content", "")}
 
 
+@app.post("/api/upload-outline")
+async def upload_outline_file(file: UploadFile = File(...)):
+    import tempfile, os
+    suffix = Path(file.filename or "outline.txt").suffix.lower()
+    if suffix not in (".docx", ".md", ".txt"):
+        raise HTTPException(400, f"Unsupported format: {suffix}. Use .docx, .md, or .txt")
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    content = await file.read()
+    tmp.write(content)
+    tmp.close()
+
+    try:
+        from litscribe.tools.outline_parser import parse_outline, outline_to_sections
+
+        roots = parse_outline(tmp.name)
+        sections = outline_to_sections(roots)
+
+        lines: list[str] = []
+        def _walk(node, indent=0):
+            prefix = f"{node.number} " if node.number else ""
+            lines.append(f"{'  ' * indent}{prefix}{node.title}")
+            for c in node.children:
+                _walk(c, indent + 1)
+        for r in roots:
+            _walk(r)
+
+        return {
+            "filename": file.filename,
+            "sections": [{"title": s["title"], "number": s["number"], "level": s["level"]} for s in sections],
+            "text": "\n".join(lines),
+            "total_sections": len(sections),
+        }
+    finally:
+        os.unlink(tmp.name)
+
+
 class OutlineReviewRequest(BaseModel):
     outline_text: str
     language: str = "en"
     max_papers_per_section: int = 10
+    constraints: str = ""
+    section_filter: str = ""
 
 
 @app.post("/api/outline-review")
@@ -609,6 +653,25 @@ async def run_outline_review_api(req: OutlineReviewRequest):
             os.unlink(tmp.name)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+def _paper_url(paper) -> str:
+    if paper.doi:
+        return f"https://doi.org/{paper.doi}"
+    for source, sid in (paper.sources or {}).items():
+        if source == "openalex":
+            return f"https://openalex.org/{sid}"
+        if source == "pubmed":
+            return f"https://pubmed.ncbi.nlm.nih.gov/{sid}"
+        if source == "europepmc":
+            return f"https://europepmc.org/article/MED/{sid}"
+        if source == "arxiv":
+            return f"https://arxiv.org/abs/{sid}"
+        if source == "s2":
+            return f"https://www.semanticscholar.org/paper/{sid}"
+        if source == "crossref" and sid.startswith("10."):
+            return f"https://doi.org/{sid}"
+    return ""
 
 
 def _sse(event: str, data: dict) -> str:
