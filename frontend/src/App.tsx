@@ -248,7 +248,7 @@ export default function App() {
           text: "What's next?",
           actions: [
             { label: "Check consistency", value: "Check cross-section consistency" },
-            { label: "Export MD", value: "Export as markdown" },
+            { label: "Export Markdown", value: "__export_md__" },
             { label: "Coverage report", value: "Show coverage report" },
           ],
         },
@@ -273,6 +273,8 @@ export default function App() {
     async (message: string, attachment?: File) => {
       if (message === "__show_plan__") { showPlanFromOutline(); return; }
       if (message === "__generate_all__") { await generateAllFromOutline(); return; }
+      if (message === "__export_md__") { await handleExport("markdown"); return; }
+      if (message === "__export_bib__") { await handleExport("bibtex"); return; }
 
       // Create conversation on first real message
       ensureConversation(message);
@@ -445,7 +447,9 @@ export default function App() {
     // Update conversation title with the question
     updateConversationTitle(question);
 
-    const res = await startReview(question, 15, "en", "");
+    const isChinese = /[一-鿿]/.test(question);
+    const language = isChinese ? "zh" : "en";
+    const res = await startReview(question, 15, language, "");
     await readSSE(res, (event, data) => {
       if (event === "status") {
         updateStep(data.step, "active");
@@ -464,10 +468,29 @@ export default function App() {
       } else if (event === "review") {
         updateStep("review", "done", `Score: ${data.score?.toFixed(2)}`);
       } else if (event === "complete") {
-        setEditorContent(data.text);
+        let reviewText = data.text || "";
+        if (!reviewText.trimStart().startsWith("# ")) {
+          reviewText = `# ${question.trim()}\n\n${reviewText}`;
+        }
+        setEditorContent(reviewText);
+
         addMsg({
           role: "assistant",
           content: `Review complete: **${data.papers} papers**, **${data.word_count} words**, score **${data.score?.toFixed(2)}** (${data.time}s)`,
+        });
+
+        addMsg({
+          role: "assistant",
+          content: "",
+          type: "actions",
+          data: {
+            text: "What would you like to do next?",
+            actions: [
+              { label: "Refine review", value: "Refine this review to improve clarity and flow" },
+              { label: "Export Markdown", value: "__export_md__" },
+              { label: "Export BibTeX", value: "__export_bib__" },
+            ],
+          },
         });
 
         setConversations((prev) => {

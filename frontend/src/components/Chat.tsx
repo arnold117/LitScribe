@@ -110,10 +110,18 @@ export default function Chat({
         {messages.length === 0 && (
           <div className="chat-empty">
             <Upload size={32} strokeWidth={1.2} />
-            <p>Drop an outline or ask a question</p>
-            <span className="chat-empty-hint">
-              "Review recent advances in CRISPR for CHO cell engineering"
-            </span>
+            <p>Drop an outline or ask a research question</p>
+            <div className="chat-empty-examples">
+              <button className="chat-example-btn" onClick={() => { setInput("Review recent advances in CRISPR for CHO cell engineering"); inputRef.current?.focus(); }}>
+                CRISPR for CHO cell engineering
+              </button>
+              <button className="chat-example-btn" onClick={() => { setInput("综述大语言模型在医学影像诊断中的应用"); inputRef.current?.focus(); }}>
+                LLM在医学影像中的应用
+              </button>
+              <button className="chat-example-btn" onClick={() => { setInput("Review transformer architectures for time series forecasting"); inputRef.current?.focus(); }}>
+                Transformers for time series
+              </button>
+            </div>
           </div>
         )}
         {messages.map((msg) => (

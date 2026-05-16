@@ -437,17 +437,38 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 60px 24px;
   color: var(--text-muted);
   text-align: center;
 }
 .chat-empty p { font-size: 13px; line-height: 1.5; }
-.chat-empty-hint {
-  font-size: 12px;
-  font-style: italic;
-  opacity: 0.5;
+
+.chat-empty-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  width: 100%;
   max-width: 280px;
+}
+
+.chat-example-btn {
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+.chat-example-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .chat-msg { margin-bottom: 16px; }

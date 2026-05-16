@@ -257,3 +257,6 @@ temp/
 /benchmarks/
 /demo.py
 /.vscode/
+
+# Copyright registration materials (private)
+/copyright/

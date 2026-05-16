@@ -55,7 +55,7 @@ export default function Editor({
     extensions: [
       StarterKit,
       Placeholder.configure({
-        placeholder: "Your review will appear here...",
+        placeholder: "Start a review from the chat panel, or drop an outline file →",
       }),
       Highlight,
       Underline,
