@@ -11,6 +11,8 @@ import {
   MessageSquare,
   Upload,
   GripVertical,
+  Copy,
+  Check,
 } from "lucide-react";
 import type { ChatMessage, PlanSection, PipelineStep, SearchPaper } from "../types";
 
@@ -163,6 +165,9 @@ export default function Chat({
                 ) : (
                   msg.content
                 )}
+                {msg.content && msg.role === "assistant" && (
+                  <CopyButton text={msg.content} />
+                )}
               </div>
             )}
           </div>
@@ -234,6 +239,22 @@ export default function Chat({
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button className="chat-copy-btn" onClick={handleCopy} title="Copy">
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+}
+
 function PlanCard({
   data,
   onUpdate,
@@ -289,6 +310,12 @@ function PlanCard({
 
   const enabledCount = sections.filter((s) => s.enabled).length;
 
+  const toggleAll = (enabled: boolean) => {
+    const updated = sections.map((s) => ({ ...s, enabled }));
+    setSections(updated);
+    onUpdate(updated, constraints);
+  };
+
   return (
     <div className="card card-plan">
       <div className="card-header" onClick={() => setExpanded(!expanded)}>
@@ -300,6 +327,10 @@ function PlanCard({
 
       {expanded && (
         <>
+          <div className="plan-bulk-actions">
+            <button onClick={() => toggleAll(true)} disabled={enabledCount === sections.length}>Select all</button>
+            <button onClick={() => toggleAll(false)} disabled={enabledCount === 0}>Deselect all</button>
+          </div>
           <div className="plan-sections">
             {sections.map((s, i) => (
               <div

@@ -525,6 +525,26 @@ body {
   text-decoration: none;
 }
 .chat-msg-assistant .chat-msg-content a:hover { text-decoration: underline; }
+
+.chat-msg-content { position: relative; }
+
+.chat-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+}
+.chat-msg-content:hover .chat-copy-btn { opacity: 1; }
+.chat-copy-btn:hover { color: var(--accent); border-color: var(--accent); }
 .chat-msg-assistant .chat-msg-content table {
   width: 100%;
   border-collapse: collapse;
@@ -688,6 +708,33 @@ body {
 .card-header:hover { background: var(--bg-hover); }
 
 /* Plan card */
+.plan-bulk-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+.plan-bulk-actions button {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--font);
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.plan-bulk-actions button:hover:not(:disabled) {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.plan-bulk-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .plan-sections {
   max-height: 280px;
   overflow-y: auto;

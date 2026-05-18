@@ -167,6 +167,8 @@ function SessionItem({
           <>
             <span>{conv.reviewMeta.papers} papers</span>
             <span className="session-dot" />
+            <span>{(conv.reviewMeta.words || 0).toLocaleString()} words</span>
+            <span className="session-dot" />
             <span>{conv.reviewMeta.score.toFixed(2)}</span>
             <span className="session-dot" />
           </>

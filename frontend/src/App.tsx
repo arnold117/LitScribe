@@ -172,6 +172,25 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === "s") {
+        e.preventDefault();
+        if (editorContent) handleExport("markdown");
+      }
+      if (mod && e.key === "l") {
+        e.preventDefault();
+        setSidebarCollapsed((v) => !v);
+      }
+      if (e.key === "Escape") {
+        if (showSetup) setShowSetup(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editorContent, showSetup]);
+
   // --- Persist conversations ---
 
   const persistConversation = useCallback((convId: string | null = activeId) => {
