@@ -35,6 +35,15 @@ export interface Session {
   created_at: string;
 }
 
+export interface ContentVersion {
+  content: string;
+  appendix: string;
+  timestamp: number;
+  label: string;
+}
+
+export type CitationFormat = "bracket" | "apa" | "vancouver";
+
 export interface Conversation {
   id: string;
   title: string;
@@ -42,6 +51,8 @@ export interface Conversation {
   messages: ChatMessage[];
   editorContent: string;
   previousContent: string;
+  appendixContent: string;
+  versions: ContentVersion[];
   plan: PlanState | null;
   pendingOutline: {
     sections: PlanSection[];
@@ -51,6 +62,15 @@ export interface Conversation {
   } | null;
   backendSessionId?: string;
   reviewMeta?: { papers: number; words: number; score: number };
+}
+
+export interface ReferenceEntry {
+  key: string;
+  authors: string;
+  year: string;
+  title: string;
+  venue: string;
+  doi: string;
 }
 
 export interface HealthStatus {

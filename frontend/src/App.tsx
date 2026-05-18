@@ -3,7 +3,7 @@ import Sidebar from "./components/Sidebar";
 import Editor from "./components/Editor";
 import Chat from "./components/Chat";
 import SetupWizard from "./components/SetupWizard";
-import type { ChatMessage, PlanSection, PlanState, Conversation, PipelineStep } from "./types";
+import type { ChatMessage, PlanSection, PlanState, Conversation, PipelineStep, ReferenceEntry, ContentVersion, CitationFormat } from "./types";
 import {
   checkHealth,
   startReview,
@@ -45,12 +45,109 @@ function extractTitle(message: string): string {
   return text.slice(0, 60) || "New conversation";
 }
 
+const APPENDIX_HEADINGS = [
+  "Methodology Comparison",
+  "Research Timeline",
+  "Statistical Summary",
+  "Suggested Figures",
+  "Comparative Analysis",
+];
+
+function splitReviewContent(text: string): { core: string; appendix: string } {
+  const lines = text.split("\n");
+  let splitIdx = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^##\s+(.+)/);
+    if (m && APPENDIX_HEADINGS.some((h) => m[1].trim().startsWith(h))) {
+      splitIdx = i;
+      break;
+    }
+  }
+  const core = lines.slice(0, splitIdx).join("\n").trimEnd();
+  const appendix = lines.slice(splitIdx).join("\n").trim();
+  return { core, appendix };
+}
+
+function parseReferences(text: string): ReferenceEntry[] {
+  const entries: ReferenceEntry[] = [];
+  const refSection = text.match(/## References\n([\s\S]*?)(?=\n##\s|\n*$)/);
+  if (!refSection) return entries;
+  const refLines = refSection[1].split("\n").filter((l) => l.trim());
+  for (const line of refLines) {
+    const m = line.match(/^\[([^\]]+)\]:\s*(.+?)\s*\((\d{4})\)\.\s*(.+)/);
+    if (m) {
+      const rest = m[4];
+      const venueMatch = rest.match(/\*(.+?)\*\./);
+      const doiMatch = rest.match(/doi:(\S+)/);
+      const title = rest.replace(/\*.*?\*\.?/, "").replace(/doi:\S+/, "").replace(/\.\s*$/, "").trim();
+      entries.push({
+        key: m[1],
+        authors: m[2].trim(),
+        year: m[3],
+        title,
+        venue: venueMatch?.[1] || "",
+        doi: doiMatch?.[1] || "",
+      });
+    }
+  }
+  return entries;
+}
+
+const CITE_PATTERN = /\[([A-Z一-鿿][^\[\]]{2,40}?,\s*\d{4}[a-z]?)\]/g;
+
+function convertCitations(text: string, format: CitationFormat, refs: ReferenceEntry[]): string {
+  if (format === "bracket") return text;
+
+  if (format === "apa") {
+    return text.replace(CITE_PATTERN, "($1)");
+  }
+
+  if (format === "vancouver") {
+    const seen = new Map<string, number>();
+    let counter = 0;
+
+    const refMap = new Map<string, ReferenceEntry>();
+    for (const r of refs) {
+      const surname = r.authors.split(",")[0].trim();
+      refMap.set(`${surname}, ${r.year}`, r);
+      refMap.set(`${surname} et al., ${r.year}`, r);
+    }
+
+    const body = text.replace(/\n## References\n[\s\S]*$/, "");
+    const numbered = body.replace(CITE_PATTERN, (_match, key: string) => {
+      if (!seen.has(key)) {
+        counter++;
+        seen.set(key, counter);
+      }
+      return `[${seen.get(key)}]`;
+    });
+
+    const refLines = ["\n\n## References\n"];
+    for (const [citeKey, num] of [...seen.entries()].sort((a, b) => a[1] - b[1])) {
+      const ref = refMap.get(citeKey);
+      if (ref) {
+        const venue = ref.venue ? ` *${ref.venue}*.` : "";
+        const doi = ref.doi ? ` doi:${ref.doi}` : "";
+        refLines.push(`[${num}] ${ref.authors} (${ref.year}). ${ref.title}.${venue}${doi}`);
+      } else {
+        refLines.push(`[${num}] ${citeKey}`);
+      }
+    }
+
+    return numbered + refLines.join("\n");
+  }
+
+  return text;
+}
+
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>(loadConversations);
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const [editorContent, setEditorContent] = useState("");
   const [previousContent, setPreviousContent] = useState("");
+  const [appendixContent, setAppendixContent] = useState("");
+  const [versions, setVersions] = useState<ContentVersion[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectionContext, setSelectionContext] = useState("");
   const [loading, setLoading] = useState(false);
@@ -66,8 +163,8 @@ export default function App() {
   const [showSetup, setShowSetup] = useState(false);
 
   // Ref to always have latest state in async callbacks
-  const stateRef = useRef({ messages, editorContent, previousContent, plan, pendingOutline });
-  stateRef.current = { messages, editorContent, previousContent, plan, pendingOutline };
+  const stateRef = useRef({ messages, editorContent, previousContent, appendixContent, versions, plan, pendingOutline });
+  stateRef.current = { messages, editorContent, previousContent, appendixContent, versions, plan, pendingOutline };
 
   useEffect(() => {
     checkHealth()
@@ -89,6 +186,8 @@ export default function App() {
         messages: s.messages,
         editorContent: s.editorContent,
         previousContent: s.previousContent,
+        appendixContent: s.appendixContent,
+        versions: s.versions,
         plan: s.plan,
         pendingOutline: s.pendingOutline,
       };
@@ -118,6 +217,8 @@ export default function App() {
       messages: [],
       editorContent: "",
       previousContent: "",
+      appendixContent: "",
+      versions: [],
       plan: null,
       pendingOutline: null,
     };
@@ -146,6 +247,8 @@ export default function App() {
     setMessages(target.messages);
     setEditorContent(target.editorContent);
     setPreviousContent(target.previousContent);
+    setAppendixContent(target.appendixContent || "");
+    setVersions(target.versions || []);
     setPlan(target.plan);
     setPendingOutline(target.pendingOutline);
     setSelectionContext("");
@@ -156,6 +259,8 @@ export default function App() {
     setActiveId(null);
     setEditorContent("");
     setPreviousContent("");
+    setAppendixContent("");
+    setVersions([]);
     setMessages([]);
     setPlan(null);
     setPendingOutline(null);
@@ -230,7 +335,13 @@ export default function App() {
         papers: data.papers, words: data.words,
       });
     } else if (event === "complete") {
-      setEditorContent(data.text);
+      const { core, appendix } = splitReviewContent(data.text);
+      setEditorContent(core);
+      setAppendixContent(appendix);
+      setVersions((prev) => [...prev, {
+        content: core, appendix, timestamp: Date.now(),
+        label: `v${prev.length + 1} — Outline review`,
+      }]);
       setMessages((prev) => [
         ...prev.filter((m) => m.type !== "progress"),
         { id: uid(), role: "assistant", content: `Done: ${data.total_words} words, ${data.total_papers} papers (${data.time}s)`, timestamp: Date.now() },
@@ -472,7 +583,13 @@ export default function App() {
         if (!reviewText.trimStart().startsWith("# ")) {
           reviewText = `# ${question.trim()}\n\n${reviewText}`;
         }
-        setEditorContent(reviewText);
+        const { core, appendix } = splitReviewContent(reviewText);
+        setEditorContent(core);
+        setAppendixContent(appendix);
+        setVersions((prev) => [...prev, {
+          content: core, appendix, timestamp: Date.now(),
+          label: `v${prev.length + 1} — Initial review`,
+        }]);
 
         addMsg({
           role: "assistant",
@@ -520,8 +637,14 @@ export default function App() {
     const instruction = message.replace(/\[Selected:.*?\]\s*/s, "").trim();
     const data = await refineReview(instruction || message);
     if (data.text) {
+      const { core, appendix: newAppendix } = splitReviewContent(data.text);
       setPreviousContent(editorContent);
-      setEditorContent(data.text);
+      setEditorContent(core);
+      if (newAppendix) setAppendixContent(newAppendix);
+      setVersions((prev) => [...prev, {
+        content: core, appendix: newAppendix || appendixContent, timestamp: Date.now(),
+        label: `v${prev.length + 1} — Refined`,
+      }]);
       addMsg({
         role: "assistant",
         content: `Refined: ${data.word_count} words (${data.stats?.added || 0} added, ${data.stats?.removed || 0} removed). Review changes in the editor.`,
@@ -536,13 +659,32 @@ export default function App() {
 
   // --- Export ---
 
-  const handleExport = async (format: string) => {
+  const handleExport = async (format: string, includeAppendix = true, citeFormat: CitationFormat = "bracket") => {
+    if (format === "bibtex") {
+      try {
+        const data = await exportReview("bibtex");
+        const blob = new Blob([data.content], { type: "text/plain" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "review.bib";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (err: any) {
+        addMsg({ role: "assistant", content: `Export failed: ${err.message}` });
+      }
+      return;
+    }
     try {
-      const data = await exportReview(format);
-      const blob = new Blob([data.content], { type: "text/plain" });
+      let content = editorContent;
+      if (includeAppendix && appendixContent) {
+        content = content.trimEnd() + "\n\n" + appendixContent;
+      }
+      const refs = parseReferences(editorContent);
+      content = convertCitations(content, citeFormat, refs);
+      const blob = new Blob([content], { type: "text/plain" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `review.${format === "bibtex" ? "bib" : "md"}`;
+      a.download = "review.md";
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (err: any) {
@@ -580,12 +722,20 @@ export default function App() {
         <Editor
           content={editorContent}
           previousContent={previousContent}
+          appendixContent={appendixContent}
+          references={parseReferences(editorContent)}
+          versions={versions}
           onSelectionSend={setSelectionContext}
           onExport={handleExport}
           onAcceptChanges={() => setPreviousContent("")}
           onRevertChanges={() => {
             setEditorContent(previousContent);
             setPreviousContent("");
+          }}
+          onRestoreVersion={(v) => {
+            setPreviousContent(editorContent);
+            setEditorContent(v.content);
+            if (v.appendix) setAppendixContent(v.appendix);
           }}
         />
         <Chat
