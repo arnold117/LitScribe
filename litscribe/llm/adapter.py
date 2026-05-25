@@ -5,15 +5,15 @@ import logging
 import re
 from typing import Any
 
-from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import BaseChatModel
 
 logger = logging.getLogger(__name__)
 
 
 class ModelAdapter:
-    """Wraps ChatOpenAI to provide the same call/call_json interface as LLMRouter."""
+    """Wraps any LangChain chat model to provide the same call/call_json interface as LLMRouter."""
 
-    def __init__(self, model: ChatOpenAI):
+    def __init__(self, model: BaseChatModel):
         self.model = model
 
     async def call(self, messages: list[dict], task_type: str | None = None,

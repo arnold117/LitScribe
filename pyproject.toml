@@ -45,6 +45,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+anthropic = [
+    "langchain-anthropic>=0.3.0",
+]
+ollama = [
+    "langchain-ollama>=0.3.0",
+]
+all-providers = [
+    "langchain-anthropic>=0.3.0",
+    "langchain-ollama>=0.3.0",
+]
 dev = [
     "pytest",
     "pytest-asyncio",

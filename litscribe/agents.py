@@ -18,28 +18,66 @@ from litscribe.tools.status import PipelineState
 logger = logging.getLogger(__name__)
 
 
-def _build_model(config: Config) -> ChatOpenAI:
-    model_name = config.llm.default_model
-    if "/" in model_name:
-        model_name = model_name.split("/", 1)[1]
+def _build_model(config: Config) -> Any:
+    """Build a LangChain chat model based on the configured provider.
 
-    kwargs = dict(
-        model=model_name,
-        openai_api_key=config.llm.api_key,
-        openai_api_base=config.llm.api_base,
-        temperature=0.1,
-        timeout=300,
-        max_retries=2,
-    )
-    if "deepseek" in config.llm.api_base.lower() and any(
-        k in model_name.lower() for k in ("v4", "reasoner")
-    ):
-        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    Supported providers:
+      - "openai" (default): Any OpenAI-compatible endpoint (DeepSeek, Together, Groq, OpenRouter)
+      - "anthropic": Anthropic Claude (requires `langchain-anthropic`)
+      - "ollama": Local Ollama models (requires `langchain-ollama`)
+    """
+    provider = config.llm.provider.lower()
 
-    return ChatOpenAI(**kwargs)
+    if provider == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError:
+            raise ImportError(
+                "langchain-anthropic is required for the 'anthropic' provider. "
+                "Install it with: pip install langchain-anthropic"
+            )
+        return ChatAnthropic(
+            model=config.llm.default_model,
+            anthropic_api_key=config.llm.api_key,
+            temperature=0.1,
+            timeout=300,
+            max_retries=2,
+        )
+    elif provider == "ollama":
+        try:
+            from langchain_ollama import ChatOllama
+        except ImportError:
+            raise ImportError(
+                "langchain-ollama is required for the 'ollama' provider. "
+                "Install it with: pip install langchain-ollama"
+            )
+        return ChatOllama(
+            model=config.llm.default_model,
+            base_url=config.llm.api_base or "http://localhost:11434",
+            temperature=0.1,
+        )
+    else:  # "openai" or any OpenAI-compatible endpoint
+        model_name = config.llm.default_model
+        if "/" in model_name:
+            model_name = model_name.split("/", 1)[1]
+
+        kwargs = dict(
+            model=model_name,
+            openai_api_key=config.llm.api_key,
+            openai_api_base=config.llm.api_base,
+            temperature=0.1,
+            timeout=300,
+            max_retries=2,
+        )
+        if "deepseek" in config.llm.api_base.lower() and any(
+            k in model_name.lower() for k in ("v4", "reasoner")
+        ):
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+        return ChatOpenAI(**kwargs)
 
 
-def create_pipeline_tools(config: Config, state: PipelineState, model: ChatOpenAI, memory=None):
+def create_pipeline_tools(config: Config, state: PipelineState, model: Any, memory=None):
 
     @tool
     async def run_review(

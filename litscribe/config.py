@@ -12,6 +12,7 @@ load_dotenv()
 
 @dataclass
 class LLMConfig:
+    provider: str = "openai"  # openai | anthropic | ollama
     api_base: str = ""
     api_key: str = ""
     default_model: str = ""
@@ -56,6 +57,7 @@ class Config:
                 self._load_yaml(default_yaml)
 
     def _load_env(self):
+        self.llm.provider = os.getenv("LLM_PROVIDER", "openai").lower()
         self.llm.api_key = (
             os.getenv("llm-key", "")
             or os.getenv("LLM_API_KEY", "")
@@ -83,6 +85,8 @@ class Config:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         llm_data = data.get("llm", {})
+        if "provider" in llm_data:
+            self.llm.provider = llm_data["provider"].lower()
         if "default_model" in llm_data:
             self.llm.default_model = llm_data["default_model"]
         if "api_base" in llm_data:
