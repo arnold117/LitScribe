@@ -805,6 +805,7 @@ export default function App() {
       <main className="app-main">
         <Editor
           content={editorContent}
+          onContentChange={setEditorContent}
           previousContent={previousContent}
           appendixContent={appendixContent}
           references={references}

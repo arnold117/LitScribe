@@ -40,6 +40,7 @@ interface EditorProps {
   appendixContent: string;
   references: ReferenceEntry[];
   versions: ContentVersion[];
+  onContentChange: (markdown: string) => void;
   onSelectionSend: (text: string) => void;
   onExport: (format: string, includeAppendix?: boolean, citeFormat?: CitationFormat) => void;
   onAcceptChanges: () => void;
@@ -53,6 +54,7 @@ export default function Editor({
   appendixContent,
   references,
   versions,
+  onContentChange,
   onSelectionSend,
   onExport,
   onAcceptChanges,
@@ -144,11 +146,18 @@ export default function Editor({
     ],
     content: "",
     editable: true,
+    onUpdate: ({ editor }) => {
+      onContentChange((editor.storage as any).markdown.getMarkdown());
+    },
   });
 
   useEffect(() => {
-    if (editor && content) {
-      editor.commands.setContent(content);
+    if (!editor) return;
+    // Only push external changes in; skip when the prop merely echoes the
+    // editor's own onUpdate, otherwise every keystroke resets the cursor.
+    const current = (editor.storage as any).markdown.getMarkdown();
+    if (content !== current) {
+      editor.commands.setContent(content || "");
     }
   }, [editor, content]);
 
