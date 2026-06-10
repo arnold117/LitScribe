@@ -1,8 +1,8 @@
 # LitScribe
 
-AI-powered literature review engine with citation grounding and contradiction detection. Input a research question, get a comprehensive review with verified citations — in under 3 minutes.
+AI-native literature review workbench with citation grounding and contradiction detection. Ask a research question in the chat, review the proposed outline, and get a grounded literature review with verified citations — then keep editing it conversationally.
 
-> **86 files** · **10,300 lines** · **49 tests** · **16 API endpoints** · **12 CLI commands**
+> **~15K lines** (Python engine + React workbench) · **49 tests** · **14 CLI commands** · **19 API endpoints** · **6 search sources**
 
 ## What it does
 
@@ -10,18 +10,18 @@ AI-powered literature review engine with citation grounding and contradiction de
 You: "Review CRISPR knockout strategies in CHO cells for productivity improvement"
 
 LitScribe:
-  1. Plans research → 4 sub-topics with domain-specific queries
+  1. Plans research → proposes an editable section outline (skeleton-first)
+     → you confirm / toggle / reorder sections, add constraints
   2. Searches 6 academic databases → 50+ papers found
-  3. Filters + analyzes 12 most relevant papers (full-text when available)
+  3. Filters + analyzes the most relevant papers (full-text when available)
   4. Detects contradictions between papers
-  5. Builds knowledge graph (GraphRAG)
-  6. Writes review with parallel section generation
-  7. Reviewer ↔ Synthesizer debate (2 rounds)
-  8. Verifies every citation against source paper (grounding)
-  9. Self-evaluates quality, loops back if needed
+  5. Writes the review section-by-section with live progress
+  6. Reviewer ↔ Synthesizer debate (2 rounds)
+  7. Verifies every citation against source paper (grounding)
+  8. Self-evaluates quality, loops back if needed
 
-→ 1,500-2,000 word review with [@key] citations, BibTeX, comparison table, timeline
-→ Score: 0.65-0.82 | Grounding: 83-100% | Time: ~2 minutes
+→ Review with [@key] citations, BibTeX, comparison table, timeline
+→ Then refine it in chat ("更正式一点", "add a section on X") with version history
 ```
 
 ## What makes LitScribe different
@@ -64,13 +64,40 @@ cd LitScribe
 conda create -n litscribe python=3.12 && conda activate litscribe
 pip install -e ".[dev]"
 
-cp .env.example .env
-# Edit .env: set llm-key, llm-location, llm-model
+litscribe init              # Interactive setup wizard (writes .env)
+# or: cp .env.example .env and set llm-key, llm-location, llm-model
 
-litscribe chat              # Interactive — understands natural language
-litscribe review "CRISPR CHO knockout" -n 12  # Direct review
-litscribe serve             # Web UI at localhost:8000
+litscribe serve             # Web workbench at localhost:8000 (recommended)
+litscribe chat              # Terminal — understands natural language
+litscribe review "CRISPR CHO knockout" -n 12  # Direct CLI review
 ```
+
+The prebuilt frontend ships under `litscribe/api/static/dist`, so `litscribe serve`
+works out of the box. To develop the UI: `cd frontend && npm install && npm run dev`.
+
+## The Workbench
+
+`litscribe serve` opens a three-panel chat-first workbench (React + TipTap):
+
+```
+┌──────────────┬───────────────────────────┬──────────────────┐
+│  Sidebar     │  Editor (TipTap)          │  Chat            │
+│              │                           │                  │
+│ Sessions     │  Rich-text review with    │  Ask, plan,      │
+│ Versions     │  citation hover tooltips, │  refine.         │
+│ Files        │  track-changes diff,      │  Live progress,  │
+│ Graph        │  core / appendix split    │  Stop & Retry,   │
+│              │                           │  / commands      │
+└──────────────┴───────────────────────────┴──────────────────┘
+```
+
+- **Skeleton-first generation** — plan the outline, confirm it, then generate per-section
+- **Live progress** — see searching / reading / writing per section, with a Stop button
+- **Multi-turn refine** — edits resolve against recent conversation; every change is versioned
+- **Slash commands** — `/grill-me`, `/diagnose`, `/abstract`, `/consistency`, `/search`
+- **Sidebar tabs** — Sessions, Versions (restore any snapshot), Files (uploads + exports), Citation Graph
+- **Editor** — citation hover cards, word-level track-changes, APA / Vancouver / bracket export, core vs. appendix
+- **Retry** — failed requests (network, upstream LLM) offer one-click retry
 
 ## Architecture
 
@@ -93,11 +120,10 @@ sequenceDiagram
         P->>P: 3. Unpaywall (OA full-text lookup)
         P->>P: 4. Read (analyze each paper)
         P->>P: 5. Contradictions (pairwise)
-        P->>P: 6. GraphRAG (knowledge graph)
-        P->>P: 7. Synthesize (parallel sections)
-        P->>P: 8. Debate (reviewer ↔ synthesizer)
-        P->>P: 9. Ground (verify citations)
-        P->>P: 10. Review (self-evaluate)
+        P->>P: 6. Synthesize (parallel sections)
+        P->>P: 7. Debate (reviewer ↔ synthesizer)
+        P->>P: 8. Ground (verify citations)
+        P->>P: 9. Review (self-evaluate)
     end
 
     alt Score < 0.65
@@ -229,13 +255,31 @@ HMAC integrity on knowledge base (detect data poisoning), prompt injection filte
 
 *Self-review score (0-1). Grounding = % citations verified against source paper.*
 
+### Multi-Model Support
+LitScribe runs on any of three providers, selected via `LLM_PROVIDER`:
+- **openai** (default) — any OpenAI-compatible endpoint (DeepSeek, Qwen, OpenAI, …)
+- **anthropic** — Claude models (`pip install langchain-anthropic`)
+- **ollama** — local models, no API key (`pip install langchain-ollama`)
+
+### Writing Templates
+Beyond full reviews, 7 task templates reuse the pipeline with tailored prompts:
+`related-work` · `grant-background` · `research-proposal` · `abstract-generate` ·
+`abstract-rewrite` · `translation` · `rebuttal`.
+
+### Claude Code Skills
+A skills pack under `skills/` exposes LitScribe workflows inside Claude Code:
+`lit-discuss` · `lit-search` · `writing-diagnosis` · `bib-format` · `quick-abstract`.
+
 ## Configuration
 
 ```bash
-# .env — 3 required vars (any OpenAI-compatible endpoint)
+# .env — 3 required vars (default: any OpenAI-compatible endpoint)
 llm-key=sk-your-key
 llm-location=https://api.deepseek.com/
 llm-model=deepseek-v4-flash
+
+# Optional: switch provider
+LLM_PROVIDER=openai          # openai | anthropic | ollama
 
 # Optional (improve search coverage)
 NCBI_EMAIL=your@email.com
@@ -247,29 +291,35 @@ SEMANTIC_SCHOLAR_API_KEY=your-key
 
 | Command | Description |
 |---------|-------------|
+| `litscribe init` | Interactive setup wizard — writes `.env` |
 | `litscribe chat` | Interactive chat — understands intent, confirms before expensive ops |
 | `litscribe review "question"` | Direct pipeline with progress display |
+| `litscribe from-outline outline.md` | Generate a review from your own outline |
 | `litscribe draft file.md *.pdf` | Analyze your draft against references |
 | `litscribe outline *.pdf` | Suggest review structure from papers |
 | `litscribe augment "topic" *.pdf` | Your papers + online search → review |
 | `litscribe sessions` | List past reviews |
 | `litscribe export markdown` | Export to file |
 | `litscribe evaluate` | Benchmark across 5 domains |
-| `litscribe serve` | Web UI with SSE streaming |
+| `litscribe serve` | Web workbench with SSE streaming |
 | `litscribe skills` | View learned research skills |
 
 ## API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/api/plan` | Research plan → proposed outline skeleton |
 | POST | `/api/review` | SSE streaming review pipeline |
-| POST | `/api/refine` | Modify review (returns diff) |
+| POST | `/api/outline-review` | SSE per-section generation from an outline |
+| POST | `/api/upload-outline` | Parse uploaded .docx/.md/.txt outline |
+| POST | `/api/refine` | Modify review with chat history (returns diff) |
 | POST | `/api/chat` | Conversational endpoint |
 | POST | `/api/draft-review` | Analyze draft text |
 | POST | `/api/outline` | Suggest review from paper abstracts |
 | POST | `/api/compare-reviews` | Compare multiple past reviews |
-| GET | `/api/sessions` | List past reviews |
-| GET | `/api/sessions/{id}` | Session details |
+| POST | `/api/setup` | Save configuration from setup wizard |
+| GET | `/api/health` | Configuration status |
+| GET | `/api/sessions` · `/api/sessions/{id}` | List / view past reviews |
 | GET | `/api/share/{id}` | Shareable HTML page |
 | GET | `/api/claims` | Citation verification data |
 | GET | `/api/citation-network` | Paper relationship graph (Mermaid) |
@@ -288,11 +338,12 @@ SEMANTIC_SCHOLAR_API_KEY=your-key
 ## Project Structure
 
 ```
-litscribe/                          86 files, 10,300 lines
-├── agents.py                       DeepAgents supervisor (7 tools)
-├── config.py                       3 env vars
-├── cli/main.py                     12 CLI commands
-├── api/app.py                      16 API endpoints + Web UI
+litscribe/                          Python engine (~12K lines)
+├── agents.py                       DeepAgents supervisor + multi-provider model builder
+├── config.py                       env config (openai / anthropic / ollama)
+├── llm/adapter.py                  Uniform model interface
+├── cli/main.py                     14 CLI commands
+├── api/app.py                      19 API endpoints + serves the workbench
 ├── tools/
 │   ├── pipeline.py                 11-step deterministic pipeline
 │   ├── search.py                   6-source search + retry + cache
@@ -319,7 +370,14 @@ litscribe/                          86 files, 10,300 lines
 ├── evolution/                      3-tier memory + SkillEvolver
 ├── plugins/graphrag/               Entity extraction, Leiden communities
 ├── exporters/                      BibTeX, citation formatter, Pandoc
-└── prompts/                        All LLM prompts (10 files)
+└── prompts/                        LLM prompts + 7 writing templates
+
+frontend/                           React + TipTap workbench (~3K lines)
+├── src/App.tsx                     State, generation flows, persistence
+├── src/api.ts                      Typed API client + SSE reader
+└── src/components/                 Sidebar (4 tabs), Editor, Chat, DiffView, SetupWizard
+
+skills/                             Claude Code skills pack (5 skills)
 ```
 
 ## Development
