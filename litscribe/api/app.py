@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
@@ -64,6 +64,7 @@ class ReviewRequest(BaseModel):
 
 class RefineRequest(BaseModel):
     instruction: str
+    history: list[dict] = []
 
 
 class ChatRequest(BaseModel):
@@ -103,6 +104,14 @@ async def index():
     if legacy.exists():
         return legacy.read_text()
     return "<h1>LitScribe API</h1><p>See /docs for API documentation.</p>"
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon():
+    f = _dist_dir / "favicon.svg"
+    if f.exists():
+        return FileResponse(f, media_type="image/svg+xml")
+    raise HTTPException(404, "Not found")
 
 
 @app.get("/api/health")
@@ -262,6 +271,43 @@ async def run_review(req: ReviewRequest):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+class PlanRequest(BaseModel):
+    question: str
+    language: str = "en"
+
+
+@app.post("/api/plan")
+async def plan_review_skeleton(req: PlanRequest):
+    """Phase 1 of review generation: research plan → proposed outline skeleton.
+
+    The client shows the skeleton for confirmation, then generates the full
+    review through /api/outline-review with the (possibly edited) outline.
+    """
+    await check_rate_limit("plan")
+    global _state
+    config, model = _get_config()
+    from litscribe.tools.pipeline import step_plan
+
+    _state = PipelineState(research_question=req.question, language=req.language)
+    await step_plan(model, _state)
+
+    topics = [st.name for st in _state.plan.sub_topics] if _state.plan else []
+    zh = req.language == "zh"
+    titles = [
+        "引言" if zh else "Introduction",
+        *topics,
+        "总结与展望" if zh else "Conclusion and Future Directions",
+    ]
+    return {
+        "domain": _state.domain,
+        "sections": [
+            {"number": str(i + 1), "title": t, "level": 1, "enabled": True}
+            for i, t in enumerate(titles)
+        ],
+        "outline_text": "\n".join(f"{i + 1} {t}" for i, t in enumerate(titles)),
+    }
+
+
 @app.post("/api/refine")
 async def refine(req: RefineRequest):
     global _state
@@ -280,10 +326,22 @@ async def refine(req: RefineRequest):
         enriched = _enrich_analyses_with_papers(_state.analyses, _state.papers)
         papers_ctx = format_summaries_for_prompt(enriched, max_chars=5000)
 
+    # Fold recent conversation into the instruction so follow-up edits
+    # ("更正式一点", "改回上一版的语气") resolve against earlier turns.
+    instruction = req.instruction
+    if req.history:
+        ctx = "\n".join(
+            f"{h.get('role', '?')}: {h.get('content', '')}" for h in req.history[-6:]
+        )
+        instruction = (
+            f"Earlier conversation (for context only):\n{ctx}\n\n"
+            f"Current instruction: {req.instruction}"
+        )
+
     old_text = _state.synthesis.text
     logger.info(f"Refine: current review {_state.synthesis.word_count} words, calling LLM...")
     new_review = await refine_review(
-        model, _state.synthesis, req.instruction,
+        model, _state.synthesis, instruction,
         _state.research_question, papers_ctx, _state.language,
         config=config,
     )
@@ -639,7 +697,6 @@ async def run_outline_review_api(req: OutlineReviewRequest):
     config, model = _get_config()
 
     async def _run():
-        from litscribe.tools.outline_parser import parse_outline_text, outline_to_sections
         from litscribe.tools.outline_review import run_outline_review
         import tempfile, os
 
@@ -648,29 +705,43 @@ async def run_outline_review_api(req: OutlineReviewRequest):
         tmp.write(req.outline_text)
         tmp.close()
 
+        # Bridge run_outline_review's sync on_progress callback into this
+        # SSE generator so the client sees per-section search/read/write activity.
+        queue: asyncio.Queue = asyncio.Queue()
+
         def on_progress(event: str, data: dict):
-            pass  # handled below
+            queue.put_nowait((event, data))
 
         try:
-            roots = parse_outline_text(req.outline_text.splitlines())
-            sections = outline_to_sections(roots)
-            yield _sse("outline_parsed", {
-                "total_sections": len(sections),
-                "titles": [s["title"] for s in sections],
-            })
-
-            result = await run_outline_review(
+            task = asyncio.create_task(run_outline_review(
                 model, config, tmp.name,
                 max_papers_per_section=req.max_papers_per_section,
                 language=req.language,
-                on_progress=lambda e, d: None,
-            )
+                constraints=req.constraints,
+                section_filter=req.section_filter or None,
+                on_progress=on_progress,
+            ))
+
+            while not (task.done() and queue.empty()):
+                try:
+                    event, data = await asyncio.wait_for(queue.get(), timeout=0.3)
+                except asyncio.TimeoutError:
+                    continue
+                if event == "complete":
+                    continue  # final complete event below carries the full text
+                yield _sse(event, data)
+
+            result = task.result()
+            if result.get("error"):
+                yield _sse("error", {"message": result["error"]})
+                return
 
             yield _sse("complete", {
                 "text": result.get("text", ""),
                 "total_words": result.get("total_words", 0),
                 "total_papers": result.get("total_papers", 0),
                 "time": result.get("time", 0),
+                "coverage": result.get("coverage"),
                 "sections": [
                     {"title": s["title"], "words": s["word_count"], "papers": s["papers_count"]}
                     for s in result.get("sections", [])

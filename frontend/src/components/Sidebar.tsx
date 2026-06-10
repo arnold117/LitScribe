@@ -15,6 +15,7 @@ import {
   Download,
   Paperclip,
   ExternalLink,
+  Trash2,
 } from "lucide-react";
 import type { Conversation, ContentVersion, ReferenceEntry } from "../types";
 
@@ -45,6 +46,7 @@ interface SidebarProps {
   onNewReview: () => void;
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
   onOpenSettings: () => void;
   onRestoreVersion: (v: ContentVersion) => void;
 }
@@ -60,6 +62,7 @@ export default function Sidebar({
   onNewReview,
   onSelect,
   onRename,
+  onDelete,
   onOpenSettings,
   onRestoreVersion,
 }: SidebarProps) {
@@ -128,6 +131,7 @@ export default function Sidebar({
           onNewReview={onNewReview}
           onSelect={onSelect}
           onRename={onRename}
+          onDelete={onDelete}
         />
       )}
       {tab === "versions" && (
@@ -154,12 +158,14 @@ function SessionsTab({
   onNewReview,
   onSelect,
   onRename,
+  onDelete,
 }: {
   conversations: Conversation[];
   activeId: string | null;
   onNewReview: () => void;
   onSelect: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <>
@@ -179,6 +185,7 @@ function SessionsTab({
             active={activeId === c.id}
             onSelect={() => onSelect(c.id)}
             onRename={(title) => onRename(c.id, title)}
+            onDelete={() => onDelete(c.id)}
           />
         ))}
       </div>
@@ -191,19 +198,28 @@ function SessionItem({
   active,
   onSelect,
   onRename,
+  onDelete,
 }: {
   conv: Conversation;
   active: boolean;
   onSelect: () => void;
   onRename: (title: string) => void;
+  onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [draft, setDraft] = useState(conv.title);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
+
+  useEffect(() => {
+    if (!confirmingDelete) return;
+    const timer = setTimeout(() => setConfirmingDelete(false), 3000);
+    return () => clearTimeout(timer);
+  }, [confirmingDelete]);
 
   const commit = () => {
     const trimmed = draft.trim();
@@ -216,6 +232,17 @@ function SessionItem({
       className={`sidebar-session ${active ? "active" : ""}`}
       onClick={() => !editing && onSelect()}
     >
+      <button
+        className={`session-delete-btn ${confirmingDelete ? "confirming" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (confirmingDelete) onDelete();
+          else setConfirmingDelete(true);
+        }}
+        title={confirmingDelete ? "Click again to delete" : "Delete conversation"}
+      >
+        <Trash2 size={12} />
+      </button>
       {editing ? (
         <input
           ref={inputRef}

@@ -51,6 +51,7 @@ export function startReview(
   maxPapers: number,
   language: string,
   instructions: string,
+  signal?: AbortSignal,
 ) {
   return fetch(`${BASE}/api/review`, {
     method: "POST",
@@ -61,23 +62,40 @@ export function startReview(
       language,
       instructions,
     }),
+    signal,
   });
 }
 
-export async function refineReview(instruction: string) {
-  const res = await fetch(`${BASE}/api/refine`, {
+export async function planReview(question: string, language: string, signal?: AbortSignal) {
+  const res = await fetch(`${BASE}/api/plan`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruction }),
+    body: JSON.stringify({ question, language }),
+    signal,
   });
   return asJson(res);
 }
 
-export async function sendChat(message: string) {
+export async function refineReview(
+  instruction: string,
+  history: { role: string; content: string }[] = [],
+  signal?: AbortSignal,
+) {
+  const res = await fetch(`${BASE}/api/refine`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instruction, history }),
+    signal,
+  });
+  return asJson(res);
+}
+
+export async function sendChat(message: string, signal?: AbortSignal) {
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
+    signal,
   });
   return asJson(res);
 }
@@ -98,6 +116,7 @@ export function startOutlineReview(
   maxPapers: number,
   constraints = "",
   sectionFilter = "",
+  signal?: AbortSignal,
 ) {
   return fetch(`${BASE}/api/outline-review`, {
     method: "POST",
@@ -109,6 +128,7 @@ export function startOutlineReview(
       constraints,
       section_filter: sectionFilter,
     }),
+    signal,
   });
 }
 

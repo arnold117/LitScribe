@@ -13,12 +13,14 @@ import {
   GripVertical,
   Copy,
   Check,
+  Square,
 } from "lucide-react";
 import type { ChatMessage, PlanSection, PipelineStep, SearchPaper } from "../types";
 
 interface ChatProps {
   messages: ChatMessage[];
   onSend: (message: string, attachment?: File) => void;
+  onStop: () => void;
   onPlanUpdate: (sections: PlanSection[], constraints: string) => void;
   onPlanExecute: () => void;
   selectionContext: string;
@@ -26,9 +28,40 @@ interface ChatProps {
   loading: boolean;
 }
 
+const SLASH_COMMANDS = [
+  {
+    cmd: "/grill-me",
+    label: "质询我的研究思路 · adversarial questioning",
+    prompt:
+      "扮演一位严格但建设性的审稿人。针对当前综述（或我正在研究的问题），连续提出尖锐的问题：方法选择的依据、与已有工作的真正差异、潜在的薄弱环节、被忽略的反例。每轮提 3 个问题，等我回答后基于回答继续追问。",
+  },
+  {
+    cmd: "/diagnose",
+    label: "写作诊断 · writing diagnosis",
+    prompt:
+      "对当前综述做一次写作诊断：结构完整性、各节论证密度、引用分布是否均衡、过度 hedging 的表述、重复或冗余的内容。按优先级列出具体修改建议，标注所在章节。",
+  },
+  {
+    cmd: "/abstract",
+    label: "生成摘要 · abstract (EN + 中文)",
+    prompt: "为当前综述生成约 200 词的学术摘要：先英文版，再中文版。突出研究空白、综述范围与核心结论。",
+  },
+  {
+    cmd: "/consistency",
+    label: "跨节一致性检查 · consistency check",
+    prompt: "Check cross-section consistency",
+  },
+  {
+    cmd: "/search",
+    label: "文献搜索 · literature search",
+    prompt: "帮我搜索以下主题的最新文献，按相关性总结每篇的核心贡献：",
+  },
+];
+
 export default function Chat({
   messages,
   onSend,
+  onStop,
   onPlanUpdate,
   onPlanExecute,
   selectionContext,
@@ -67,11 +100,23 @@ export default function Chat({
     setInput("");
   };
 
+  const slashMatches =
+    input.startsWith("/") && !input.includes("\n")
+      ? SLASH_COMMANDS.filter((c) => c.cmd.startsWith(input.trim()))
+      : [];
+
+  const pickSlash = (c: (typeof SLASH_COMMANDS)[number]) => {
+    setInput(c.prompt);
+    inputRef.current?.focus();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      if (slashMatches.length > 0) pickSlash(slashMatches[0]);
+      else handleSubmit();
     }
+    if (e.key === "Escape" && slashMatches.length > 0) setInput("");
   };
 
   const handleFile = (file: File) => {
@@ -185,6 +230,16 @@ export default function Chat({
       </div>
 
       <div className="chat-input-area">
+        {slashMatches.length > 0 && (
+          <div className="slash-menu">
+            {slashMatches.map((c) => (
+              <button key={c.cmd} className="slash-item" onClick={() => pickSlash(c)}>
+                <span className="slash-cmd">{c.cmd}</span>
+                <span className="slash-label">{c.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {selectionContext && (
           <div className="chat-selection-badge">
             <span>
@@ -221,18 +276,28 @@ export default function Chat({
             placeholder={
               selectionContext
                 ? "What to do with this selection?"
-                : "Ask anything or drop a file..."
+                : 'Ask anything, type "/" for commands, or drop a file...'
             }
             rows={2}
             disabled={loading}
           />
-          <button
-            className="chat-send-btn"
-            onClick={handleSubmit}
-            disabled={loading || (!input.trim() && !selectionContext)}
-          >
-            <ArrowUp size={16} />
-          </button>
+          {loading ? (
+            <button
+              className="chat-send-btn chat-stop-btn"
+              onClick={onStop}
+              title="Stop generation"
+            >
+              <Square size={13} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              className="chat-send-btn"
+              onClick={handleSubmit}
+              disabled={!input.trim() && !selectionContext}
+            >
+              <ArrowUp size={16} />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -381,7 +446,7 @@ function PlanCard({
 }
 
 function ProgressCard({ data }: { data: any }) {
-  const { current, total, title, papers, words } = data || {};
+  const { current, total, title, papers, words, stage } = data || {};
   const pct = total > 0 ? Math.round((current / total) * 100) : 0;
 
   return (
@@ -398,6 +463,12 @@ function ProgressCard({ data }: { data: any }) {
           </span>
         )}
       </div>
+      {stage && (
+        <div className="progress-stage">
+          <Loader2 size={11} className="spin" />
+          <span>{stage}</span>
+        </div>
+      )}
     </div>
   );
 }

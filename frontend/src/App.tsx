@@ -4,10 +4,10 @@ import type { SidebarFile } from "./components/Sidebar";
 import Editor from "./components/Editor";
 import Chat from "./components/Chat";
 import SetupWizard from "./components/SetupWizard";
-import type { ChatMessage, PlanSection, PlanState, Conversation, PipelineStep, ReferenceEntry, ContentVersion, CitationFormat } from "./types";
+import type { ChatMessage, PlanSection, PlanState, Conversation, ReferenceEntry, ContentVersion, CitationFormat } from "./types";
 import {
   checkHealth,
-  startReview,
+  planReview,
   refineReview,
   sendChat,
   uploadOutline,
@@ -167,6 +167,17 @@ export default function App() {
   const stateRef = useRef({ messages, editorContent, previousContent, appendixContent, versions, plan, pendingOutline });
   stateRef.current = { messages, editorContent, previousContent, appendixContent, versions, plan, pendingOutline };
 
+  const abortRef = useRef<AbortController | null>(null);
+
+  const newAbortSignal = () => {
+    abortRef.current = new AbortController();
+    return abortRef.current.signal;
+  };
+
+  const handleStop = () => abortRef.current?.abort();
+
+  const isAbort = (err: any) => err?.name === "AbortError";
+
   useEffect(() => {
     checkHealth()
       .then((h) => { if (!h.configured) setShowSetup(true); })
@@ -274,6 +285,25 @@ export default function App() {
     setSelectionContext("");
   };
 
+  const handleDeleteConversation = (id: string) => {
+    setConversations((prev) => {
+      const updated = prev.filter((c) => c.id !== id);
+      saveConversations(updated);
+      return updated;
+    });
+    if (id === activeId) {
+      setActiveId(null);
+      setEditorContent("");
+      setPreviousContent("");
+      setAppendixContent("");
+      setVersions([]);
+      setMessages([]);
+      setPlan(null);
+      setPendingOutline(null);
+      setSelectionContext("");
+    }
+  };
+
   const handleNewReview = () => {
     persistConversation();
     setActiveId(null);
@@ -298,7 +328,7 @@ export default function App() {
       if (last?.type === "progress") {
         return [
           ...prev.slice(0, -1),
-          { ...last, content, data, timestamp: Date.now() },
+          { ...last, content, data: { ...last.data, ...data }, timestamp: Date.now() },
         ];
       }
       return [
@@ -335,10 +365,18 @@ export default function App() {
         plan.maxPapers,
         plan.constraints,
         sectionFilter,
+        newAbortSignal(),
       );
       await readSSE(res, handleOutlineEvent);
     } catch (err: any) {
-      addMsg({ role: "assistant", content: `Error: ${err.message}` });
+      if (isAbort(err)) {
+        setMessages((prev) => [
+          ...prev.filter((m) => m.type !== "progress"),
+          { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
+        ]);
+      } else {
+        addMsg({ role: "assistant", content: `Error: ${err.message}` });
+      }
     } finally {
       setLoading(false);
     }
@@ -350,15 +388,29 @@ export default function App() {
         ...prev.filter((m) => m.type !== "progress"),
         { id: uid(), role: "assistant", content: `Error: ${data.message}`, timestamp: Date.now() },
       ]);
+    } else if (event === "outline_parsed") {
+      const total = data.selected_sections ?? data.total_sections;
+      updateLastProgress(`Preparing ${total} sections`, {
+        current: 0, total, title: "Preparing", stage: "Parsing outline…",
+      });
     } else if (event === "section_start") {
       updateLastProgress(`[${data.index + 1}/${data.total}] ${data.title}`, {
         current: data.index + 1, total: data.total, title: data.title,
+        papers: undefined, words: undefined, stage: "Starting…",
       });
+    } else if (event === "section_search") {
+      updateLastProgress(`[${data.index + 1}] ${data.title}`, { stage: "Searching papers…" });
+    } else if (event === "section_read") {
+      updateLastProgress(`Reading papers`, { stage: `Reading ${data.papers} papers…` });
+    } else if (event === "section_synthesize") {
+      updateLastProgress(`[${data.index + 1}] ${data.title}`, { stage: "Writing section…" });
     } else if (event === "section_done") {
       updateLastProgress(`[${data.index + 1}/${data.total}] ${data.title}`, {
         current: data.index + 1, total: data.total, title: data.title,
-        papers: data.papers, words: data.words,
+        papers: data.papers, words: data.words, stage: "",
       });
+    } else if (event === "assembling") {
+      updateLastProgress("Assembling document", { stage: "Assembling & consistency pass…" });
     } else if (event === "complete") {
       const { core, appendix } = splitReviewContent(data.text);
       setEditorContent(core);
@@ -442,10 +494,17 @@ export default function App() {
       setLoading(true);
       try {
         if (isRefine && editorContent) await doRefine(message);
-        else if (isReview && !editorContent) await doStreamReview(message);
+        else if (isReview && !editorContent) await doPlanFirst(message);
         else await doChat(message);
       } catch (err: any) {
-        addMsg({ role: "assistant", content: `Error: ${err.message}` });
+        if (isAbort(err)) {
+          setMessages((prev) => [
+            ...prev.filter((m) => m.type !== "progress"),
+            { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
+          ]);
+        } else {
+          addMsg({ role: "assistant", content: `Error: ${err.message}` });
+        }
       } finally {
         setLoading(false);
       }
@@ -538,10 +597,17 @@ export default function App() {
     addMsg({ role: "user", content: `Generate all ${pendingOutline.sections.length} sections` });
 
     try {
-      const res = await startOutlineReview(pendingOutline.text, pendingOutline.language, 10, pendingOutline.constraints);
+      const res = await startOutlineReview(pendingOutline.text, pendingOutline.language, 10, pendingOutline.constraints, "", newAbortSignal());
       await readSSE(res, handleOutlineEvent);
     } catch (err: any) {
-      addMsg({ role: "assistant", content: `Error: ${err.message}` });
+      if (isAbort(err)) {
+        setMessages((prev) => [
+          ...prev.filter((m) => m.type !== "progress"),
+          { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
+        ]);
+      } else {
+        addMsg({ role: "assistant", content: `Error: ${err.message}` });
+      }
     } finally {
       setLoading(false);
     }
@@ -549,105 +615,31 @@ export default function App() {
 
   // --- Review / Refine / Chat ---
 
-  async function doStreamReview(question: string) {
-    const PIPELINE: PipelineStep[] = [
-      { name: "plan", label: "Planning research", status: "pending" },
-      { name: "search", label: "Searching papers", status: "pending" },
-      { name: "read", label: "Analyzing papers", status: "pending" },
-      { name: "contradictions", label: "Detecting contradictions", status: "pending" },
-      { name: "synthesize", label: "Writing review", status: "pending" },
-      { name: "ground", label: "Verifying citations", status: "pending" },
-      { name: "review", label: "Evaluating quality", status: "pending" },
-    ];
-
-    const stepsId = uid();
-    setMessages((prev) => [
-      ...prev,
-      { id: stepsId, role: "assistant", content: "", type: "steps", data: { steps: [...PIPELINE] }, timestamp: Date.now() },
-    ]);
-
-    const updateStep = (name: string, status: PipelineStep["status"], summary?: string, details?: any) => {
-      setMessages((prev) =>
-        prev.map((m) => {
-          if (m.id !== stepsId) return m;
-          const steps = (m.data?.steps || []).map((s: PipelineStep) => {
-            if (s.name === name) return { ...s, status, summary, details: details ?? s.details };
-            if (status === "active" && s.status === "active") return { ...s, status: "done" as const };
-            return s;
-          });
-          return { ...m, data: { steps }, timestamp: Date.now() };
-        }),
-      );
-    };
-
-    // Update conversation title with the question
+  // Skeleton-first flow: plan a section outline, let the user confirm/edit it
+  // in the plan card, then generate via the outline-review pipeline.
+  async function doPlanFirst(question: string) {
     updateConversationTitle(question);
 
     const isChinese = /[一-鿿]/.test(question);
     const language = isChinese ? "zh" : "en";
-    const res = await startReview(question, 15, language, "");
-    await readSSE(res, (event, data) => {
-      if (event === "error") {
-        addMsg({ role: "assistant", content: `Error: ${data.message}` });
-      } else if (event === "status") {
-        updateStep(data.step, "active");
-      } else if (event === "plan") {
-        updateStep("plan", "done", `${data.domain} — ${data.sub_topics?.length} topics`);
-      } else if (event === "search") {
-        updateStep("search", "done", `Found ${data.papers_found} papers`, { papers: data.papers });
-      } else if (event === "read") {
-        updateStep("read", "done", `${data.analyzed} papers analyzed`);
-      } else if (event === "contradictions") {
-        updateStep("contradictions", "done", data.count > 0 ? `${data.count} contradictions found` : "No contradictions");
-      } else if (event === "synthesis") {
-        updateStep("synthesize", "done", `${data.word_count} words, ${data.themes?.length} themes`);
-      } else if (event === "grounding") {
-        updateStep("ground", "done", `${data.verified}/${data.total} verified (${data.accuracy}%)`);
-      } else if (event === "review") {
-        updateStep("review", "done", `Score: ${data.score?.toFixed(2)}`);
-      } else if (event === "complete") {
-        let reviewText = data.text || "";
-        if (!reviewText.trimStart().startsWith("# ")) {
-          reviewText = `# ${question.trim()}\n\n${reviewText}`;
-        }
-        const { core, appendix } = splitReviewContent(reviewText);
-        setEditorContent(core);
-        setAppendixContent(appendix);
-        setVersions((prev) => [...prev, {
-          content: core, appendix, timestamp: Date.now(),
-          label: `v${prev.length + 1} — Initial review`,
-        }]);
+    const data = await planReview(question, language, newAbortSignal());
 
-        addMsg({
-          role: "assistant",
-          content: `Review complete: **${data.papers} papers**, **${data.word_count} words**, score **${data.score?.toFixed(2)}** (${data.time}s)`,
-        });
+    const planState: PlanState = {
+      sections: data.sections as PlanSection[],
+      constraints: "",
+      language,
+      maxPapers: 10,
+      outlineText: data.outline_text,
+    };
+    setPlan(planState);
 
-        addMsg({
-          role: "assistant",
-          content: "",
-          type: "actions",
-          data: {
-            text: "What would you like to do next?",
-            actions: [
-              { label: "Refine review", value: "Refine this review to improve clarity and flow" },
-              { label: "Export Markdown", value: "__export_md__" },
-              { label: "Export BibTeX", value: "__export_bib__" },
-            ],
-          },
-        });
-
-        setConversations((prev) => {
-          const updated = prev.map((c) =>
-            c.id === activeId
-              ? { ...c, title: question.slice(0, 60), reviewMeta: { papers: data.papers, words: data.word_count, score: data.score } }
-              : c,
-          );
-          saveConversations(updated);
-          return updated;
-        });
-      }
+    addMsg({
+      role: "assistant",
+      content: isChinese
+        ? `已规划综述骨架（领域：${data.domain || "通用"}，${data.sections.length} 节）。确认或调整章节后点击 **Generate** 开始逐节生成。`
+        : `Proposed skeleton ready (domain: ${data.domain || "general"}, ${data.sections.length} sections). Toggle or adjust sections below, then hit **Generate**.`,
     });
+    addMsg({ role: "assistant", content: "", type: "plan", data: planState });
   }
 
   function updateConversationTitle(title: string) {
@@ -662,7 +654,12 @@ export default function App() {
 
   async function doRefine(message: string) {
     const instruction = message.replace(/\[Selected:.*?\]\s*/s, "").trim();
-    const data = await refineReview(instruction || message);
+    // Recent text turns give the model context for follow-up edits ("再正式一点", "改回去")
+    const history = stateRef.current.messages
+      .filter((m) => (m.type === "text" || !m.type) && m.content && !m.content.startsWith("Error:"))
+      .slice(-6)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 1000) }));
+    const data = await refineReview(instruction || message, history, newAbortSignal());
     if (data.text) {
       const { core, appendix: newAppendix } = splitReviewContent(data.text);
       setPreviousContent(editorContent);
@@ -682,7 +679,7 @@ export default function App() {
   }
 
   async function doChat(message: string) {
-    const data = await sendChat(message);
+    const data = await sendChat(message, newAbortSignal());
     addMsg({ role: "assistant", content: data.response || data.error || "No response" });
   }
 
@@ -793,6 +790,7 @@ export default function App() {
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         onNewReview={handleNewReview}
         onSelect={handleSelectConversation}
+        onDelete={handleDeleteConversation}
         onRestoreVersion={handleRestoreVersion}
         onRename={(id, title) => {
           setConversations((prev) => {
@@ -823,6 +821,7 @@ export default function App() {
         <Chat
           messages={messages}
           onSend={handleSend}
+          onStop={handleStop}
           onPlanUpdate={handlePlanUpdate}
           onPlanExecute={handlePlanExecute}
           selectionContext={selectionContext}
