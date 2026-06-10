@@ -238,6 +238,218 @@ body {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* ── Sidebar tabs ── */
+
+.sidebar-tabs {
+  display: flex;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 0 7px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.sidebar-tab:hover { color: var(--text-secondary); }
+.sidebar-tab.active {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent);
+}
+
+.sidebar-tab-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* ── Versions tab ── */
+
+.sidebar-version {
+  padding: 10px 12px;
+  margin-bottom: 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.sidebar-version:hover { background: var(--bg-hover); }
+.sidebar-version.current { cursor: default; background: var(--bg-active); }
+
+.sidebar-version-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.sidebar-version-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-version-restore {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.sidebar-version:hover .sidebar-version-restore { color: var(--accent-hover); }
+
+/* ── Files tab ── */
+
+.sidebar-files-label { padding: 8px 8px 4px; }
+
+.sidebar-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 2px;
+  border-radius: var(--radius-sm);
+}
+.sidebar-file.clickable { cursor: pointer; transition: background 0.1s; }
+.sidebar-file.clickable:hover { background: var(--bg-hover); }
+
+.sidebar-file-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sidebar-file-info { flex: 1; min-width: 0; }
+
+.sidebar-file-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-file-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.sidebar-file-download {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.sidebar-file.clickable:hover .sidebar-file-download { opacity: 1; color: var(--accent-hover); }
+
+/* ── Graph tab ── */
+
+.sidebar-graph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.citation-graph { flex-shrink: 0; }
+
+.graph-edge {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.graph-node {
+  cursor: pointer;
+  stroke: transparent;
+  stroke-width: 6;
+  transition: r 0.1s;
+}
+.graph-node:hover { filter: brightness(1.3); }
+.graph-node.selected { stroke: var(--accent-dim); }
+
+.graph-center { fill: var(--accent); }
+
+.graph-center-label {
+  fill: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font);
+  pointer-events: none;
+}
+
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.graph-legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.graph-legend-bar {
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgb(82, 82, 91), rgb(129, 140, 248));
+}
+
+.graph-detail {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.graph-detail-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.graph-detail-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.graph-detail-venue {
+  margin-top: 2px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+.graph-detail-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+.graph-detail-link:hover { text-decoration: underline; }
+
 /* ══════════════════════════════════════════
    Editor
    ══════════════════════════════════════════ */

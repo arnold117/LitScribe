@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import Sidebar from "./components/Sidebar";
+import type { SidebarFile } from "./components/Sidebar";
 import Editor from "./components/Editor";
 import Chat from "./components/Chat";
 import SetupWizard from "./components/SetupWizard";
@@ -711,6 +712,59 @@ export default function App() {
     }
   };
 
+  const references = useMemo(() => parseReferences(editorContent), [editorContent]);
+
+  const sidebarFiles = useMemo<SidebarFile[]>(() => {
+    const list: SidebarFile[] = [];
+    for (const m of messages) {
+      if (m.attachment) {
+        list.push({
+          name: m.attachment.name,
+          kind: "upload",
+          detail: m.attachment.type || "uploaded file",
+        });
+      }
+    }
+    if (editorContent) {
+      list.push({
+        name: "review.md",
+        kind: "generated",
+        detail: `${(editorContent.length / 1024).toFixed(1)} KB · Markdown`,
+        onDownload: () => handleExport("markdown"),
+      });
+    }
+    if (appendixContent) {
+      list.push({
+        name: "appendix.md",
+        kind: "generated",
+        detail: `${(appendixContent.length / 1024).toFixed(1)} KB · supplementary`,
+        onDownload: () => {
+          const blob = new Blob([appendixContent], { type: "text/plain" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "appendix.md";
+          a.click();
+          URL.revokeObjectURL(a.href);
+        },
+      });
+    }
+    if (references.length > 0) {
+      list.push({
+        name: "references.bib",
+        kind: "generated",
+        detail: `${references.length} entries · BibTeX`,
+        onDownload: () => handleExport("bibtex"),
+      });
+    }
+    return list;
+  }, [messages, editorContent, appendixContent, references]);
+
+  const handleRestoreVersion = (v: ContentVersion) => {
+    setPreviousContent(editorContent);
+    setEditorContent(v.content);
+    if (v.appendix) setAppendixContent(v.appendix);
+  };
+
   return (
     <div className="app">
       {showSetup && (
@@ -724,9 +778,13 @@ export default function App() {
         conversations={conversations}
         activeId={activeId}
         collapsed={sidebarCollapsed}
+        versions={versions}
+        files={sidebarFiles}
+        references={references}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         onNewReview={handleNewReview}
         onSelect={handleSelectConversation}
+        onRestoreVersion={handleRestoreVersion}
         onRename={(id, title) => {
           setConversations((prev) => {
             const updated = prev.map((c) => c.id === id ? { ...c, title } : c);
@@ -742,7 +800,7 @@ export default function App() {
           content={editorContent}
           previousContent={previousContent}
           appendixContent={appendixContent}
-          references={parseReferences(editorContent)}
+          references={references}
           versions={versions}
           onSelectionSend={setSelectionContext}
           onExport={handleExport}
@@ -751,11 +809,7 @@ export default function App() {
             setEditorContent(previousContent);
             setPreviousContent("");
           }}
-          onRestoreVersion={(v) => {
-            setPreviousContent(editorContent);
-            setEditorContent(v.content);
-            if (v.appendix) setAppendixContent(v.appendix);
-          }}
+          onRestoreVersion={handleRestoreVersion}
         />
         <Chat
           messages={messages}
