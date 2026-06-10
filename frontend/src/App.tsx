@@ -178,6 +178,10 @@ export default function App() {
 
   const isAbort = (err: any) => err?.name === "AbortError";
 
+  // Last failed operation, retryable via the "__retry__" action without
+  // re-adding the user's message bubble.
+  const retryRef = useRef<(() => Promise<void>) | null>(null);
+
   useEffect(() => {
     checkHealth()
       .then((h) => { if (!h.configured) setShowSetup(true); })
@@ -322,6 +326,44 @@ export default function App() {
   const addMsg = (msg: Omit<ChatMessage, "id" | "timestamp">) =>
     setMessages((prev) => [...prev, { ...msg, id: uid(), timestamp: Date.now() }]);
 
+  const reportFailure = (message: string) => {
+    setMessages((prev) => [
+      ...prev.filter((m) => m.type !== "progress"),
+      { id: uid(), role: "assistant" as const, content: `Error: ${message}`, timestamp: Date.now() },
+      {
+        id: uid(),
+        role: "assistant" as const,
+        content: "",
+        type: "actions" as const,
+        data: {
+          text: "请求失败（网络或服务端错误）。",
+          actions: [{ label: "↻ Retry", value: "__retry__" }],
+        },
+        timestamp: Date.now(),
+      },
+    ]);
+  };
+
+  // Run a generation op with unified abort/failure handling; remembers it for retry.
+  const runOp = async (op: () => Promise<void>) => {
+    retryRef.current = op;
+    setLoading(true);
+    try {
+      await op();
+    } catch (err: any) {
+      if (isAbort(err)) {
+        setMessages((prev) => [
+          ...prev.filter((m) => m.type !== "progress"),
+          { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
+        ]);
+      } else {
+        reportFailure(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const updateLastProgress = (content: string, data?: any) =>
     setMessages((prev) => {
       const last = prev[prev.length - 1];
@@ -351,13 +393,12 @@ export default function App() {
     const enabled = plan.sections.filter((s) => s.enabled);
     if (!enabled.length) return;
 
-    setLoading(true);
     addMsg({
       role: "user",
       content: `Generate ${enabled.length} sections${plan.constraints ? ` (constraints: ${plan.constraints.slice(0, 80)}...)` : ""}`,
     });
 
-    try {
+    await runOp(async () => {
       const sectionFilter = enabled.map((s) => s.number).join(",");
       const res = await startOutlineReview(
         plan.outlineText,
@@ -368,26 +409,12 @@ export default function App() {
         newAbortSignal(),
       );
       await readSSE(res, handleOutlineEvent);
-    } catch (err: any) {
-      if (isAbort(err)) {
-        setMessages((prev) => [
-          ...prev.filter((m) => m.type !== "progress"),
-          { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
-        ]);
-      } else {
-        addMsg({ role: "assistant", content: `Error: ${err.message}` });
-      }
-    } finally {
-      setLoading(false);
-    }
+    });
   }, [plan]);
 
   function handleOutlineEvent(event: string, data: any) {
     if (event === "error") {
-      setMessages((prev) => [
-        ...prev.filter((m) => m.type !== "progress"),
-        { id: uid(), role: "assistant", content: `Error: ${data.message}`, timestamp: Date.now() },
-      ]);
+      reportFailure(data.message);
     } else if (event === "outline_parsed") {
       const total = data.selected_sections ?? data.total_sections;
       updateLastProgress(`Preparing ${total} sections`, {
@@ -463,6 +490,10 @@ export default function App() {
       if (message === "__generate_all__") { await generateAllFromOutline(); return; }
       if (message === "__export_md__") { await handleExport("markdown"); return; }
       if (message === "__export_bib__") { await handleExport("bibtex"); return; }
+      if (message === "__retry__") {
+        if (retryRef.current) await runOp(retryRef.current);
+        return;
+      }
 
       // Create conversation on first real message
       ensureConversation(message);
@@ -477,37 +508,18 @@ export default function App() {
       setMessages((prev) => [...prev, userMsg]);
 
       if (attachment) {
-        setLoading(true);
-        try {
-          await handleFileUpload(attachment, message);
-        } catch (err: any) {
-          addMsg({ role: "assistant", content: `Error: ${err.message}` });
-        } finally {
-          setLoading(false);
-        }
+        await runOp(() => handleFileUpload(attachment, message));
         return;
       }
 
       const isReview = /review|综述|generate|生成/i.test(message) && !message.startsWith("[Selected:");
       const isRefine = message.startsWith("[Selected:") || /改|修改|refine|rewrite|expand|缩减|展开/i.test(message);
 
-      setLoading(true);
-      try {
+      await runOp(async () => {
         if (isRefine && editorContent) await doRefine(message);
         else if (isReview && !editorContent) await doPlanFirst(message);
         else await doChat(message);
-      } catch (err: any) {
-        if (isAbort(err)) {
-          setMessages((prev) => [
-            ...prev.filter((m) => m.type !== "progress"),
-            { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
-          ]);
-        } else {
-          addMsg({ role: "assistant", content: `Error: ${err.message}` });
-        }
-      } finally {
-        setLoading(false);
-      }
+      });
     },
     [editorContent, activeId],
   );
@@ -593,24 +605,12 @@ export default function App() {
       outlineText: pendingOutline.text,
     });
 
-    setLoading(true);
     addMsg({ role: "user", content: `Generate all ${pendingOutline.sections.length} sections` });
 
-    try {
+    await runOp(async () => {
       const res = await startOutlineReview(pendingOutline.text, pendingOutline.language, 10, pendingOutline.constraints, "", newAbortSignal());
       await readSSE(res, handleOutlineEvent);
-    } catch (err: any) {
-      if (isAbort(err)) {
-        setMessages((prev) => [
-          ...prev.filter((m) => m.type !== "progress"),
-          { id: uid(), role: "assistant", content: "⏹ Generation stopped.", timestamp: Date.now() },
-        ]);
-      } else {
-        addMsg({ role: "assistant", content: `Error: ${err.message}` });
-      }
-    } finally {
-      setLoading(false);
-    }
+    });
   }
 
   // --- Review / Refine / Chat ---
