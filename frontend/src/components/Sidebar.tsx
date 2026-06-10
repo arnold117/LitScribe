@@ -67,6 +67,7 @@ export default function Sidebar({
   onRestoreVersion,
 }: SidebarProps) {
   const [tab, setTab] = useState<SidebarTab>("sessions");
+  const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
 
   if (collapsed) {
     return (
@@ -131,7 +132,7 @@ export default function Sidebar({
           onNewReview={onNewReview}
           onSelect={onSelect}
           onRename={onRename}
-          onDelete={onDelete}
+          onDelete={(id) => setDeleteTarget(conversations.find((c) => c.id === id) || null)}
         />
       )}
       {tab === "versions" && (
@@ -145,6 +146,58 @@ export default function Sidebar({
           <Settings size={15} />
           <span>Settings</span>
         </button>
+      </div>
+
+      {deleteTarget && (
+        <DeleteConfirmModal
+          conv={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => {
+            onDelete(deleteTarget.id);
+            setDeleteTarget(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function DeleteConfirmModal({
+  conv,
+  onCancel,
+  onConfirm,
+}: {
+  conv: Conversation;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+      if (e.key === "Enter") onConfirm();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, onConfirm]);
+
+  return (
+    <div className="setup-overlay" onClick={onCancel}>
+      <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="delete-modal-icon">
+          <Trash2 size={18} />
+        </div>
+        <div className="delete-modal-title">Delete conversation?</div>
+        <div className="delete-modal-name">"{conv.title || "Untitled"}"</div>
+        <div className="delete-modal-hint">
+          {conv.reviewMeta
+            ? `Including its review (${conv.reviewMeta.papers} papers, ${(conv.reviewMeta.words || 0).toLocaleString()} words). `
+            : ""}
+          This cannot be undone.
+        </div>
+        <div className="delete-modal-actions">
+          <button className="delete-modal-cancel" onClick={onCancel}>Cancel</button>
+          <button className="delete-modal-confirm" onClick={onConfirm}>Delete</button>
+        </div>
       </div>
     </div>
   );
@@ -207,19 +260,12 @@ function SessionItem({
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [draft, setDraft] = useState(conv.title);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
-
-  useEffect(() => {
-    if (!confirmingDelete) return;
-    const timer = setTimeout(() => setConfirmingDelete(false), 3000);
-    return () => clearTimeout(timer);
-  }, [confirmingDelete]);
 
   const commit = () => {
     const trimmed = draft.trim();
@@ -233,13 +279,12 @@ function SessionItem({
       onClick={() => !editing && onSelect()}
     >
       <button
-        className={`session-delete-btn ${confirmingDelete ? "confirming" : ""}`}
+        className="session-delete-btn"
         onClick={(e) => {
           e.stopPropagation();
-          if (confirmingDelete) onDelete();
-          else setConfirmingDelete(true);
+          onDelete();
         }}
-        title={confirmingDelete ? "Click again to delete" : "Delete conversation"}
+        title="Delete conversation"
       >
         <Trash2 size={12} />
       </button>
