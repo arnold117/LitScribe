@@ -6,9 +6,9 @@ import logging
 import time
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
@@ -34,6 +34,25 @@ async def check_rate_limit(endpoint: str):
     if len(times) >= RATE_LIMIT:
         raise HTTPException(429, "Rate limit exceeded. Try again in a minute.")
     times.append(now)
+
+
+def _error_message(exc: Exception) -> str:
+    """Readable message from an exception, surfacing upstream LLM provider errors."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return f"LLM provider error: {err['message']}"
+    msg = getattr(exc, "message", None)
+    if isinstance(msg, str) and msg:
+        return msg
+    return f"{type(exc).__name__}: {exc}"
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception(request: Request, exc: Exception):
+    logger.exception(f"Unhandled error on {request.url.path}")
+    return JSONResponse(status_code=500, content={"error": _error_message(exc)})
 
 
 class ReviewRequest(BaseModel):
@@ -143,7 +162,7 @@ async def run_review(req: ReviewRequest):
         language=req.language,
     )
 
-    async def stream():
+    async def _run():
         from litscribe.tools.pipeline import (
             step_plan, step_search, step_read, step_contradictions,
             step_synthesize, step_ground, step_review,
@@ -231,6 +250,14 @@ async def run_review(req: ReviewRequest):
             "papers": len(_state.papers),
             "time": round(elapsed, 1),
         })
+
+    async def stream():
+        try:
+            async for chunk in _run():
+                yield chunk
+        except Exception as exc:
+            logger.exception("Review pipeline failed")
+            yield _sse("error", {"message": _error_message(exc)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
@@ -611,7 +638,7 @@ async def run_outline_review_api(req: OutlineReviewRequest):
     await check_rate_limit("outline-review")
     config, model = _get_config()
 
-    async def stream():
+    async def _run():
         from litscribe.tools.outline_parser import parse_outline_text, outline_to_sections
         from litscribe.tools.outline_review import run_outline_review
         import tempfile, os
@@ -651,6 +678,14 @@ async def run_outline_review_api(req: OutlineReviewRequest):
             })
         finally:
             os.unlink(tmp.name)
+
+    async def stream():
+        try:
+            async for chunk in _run():
+                yield chunk
+        except Exception as exc:
+            logger.exception("Outline review failed")
+            yield _sse("error", {"message": _error_message(exc)})
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 

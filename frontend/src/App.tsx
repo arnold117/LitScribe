@@ -345,7 +345,12 @@ export default function App() {
   }, [plan]);
 
   function handleOutlineEvent(event: string, data: any) {
-    if (event === "section_start") {
+    if (event === "error") {
+      setMessages((prev) => [
+        ...prev.filter((m) => m.type !== "progress"),
+        { id: uid(), role: "assistant", content: `Error: ${data.message}`, timestamp: Date.now() },
+      ]);
+    } else if (event === "section_start") {
       updateLastProgress(`[${data.index + 1}/${data.total}] ${data.title}`, {
         current: data.index + 1, total: data.total, title: data.title,
       });
@@ -582,7 +587,9 @@ export default function App() {
     const language = isChinese ? "zh" : "en";
     const res = await startReview(question, 15, language, "");
     await readSSE(res, (event, data) => {
-      if (event === "status") {
+      if (event === "error") {
+        addMsg({ role: "assistant", content: `Error: ${data.message}` });
+      } else if (event === "status") {
         updateStep(data.step, "active");
       } else if (event === "plan") {
         updateStep("plan", "done", `${data.domain} — ${data.sub_topics?.length} topics`);
@@ -669,6 +676,8 @@ export default function App() {
         role: "assistant",
         content: `Refined: ${data.word_count} words (${data.stats?.added || 0} added, ${data.stats?.removed || 0} removed). Review changes in the editor.`,
       });
+    } else if (data.error) {
+      addMsg({ role: "assistant", content: `Error: ${data.error}` });
     }
   }
 

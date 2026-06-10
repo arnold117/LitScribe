@@ -2,9 +2,23 @@ import type { HealthStatus, Session } from "./types";
 
 const BASE = "";
 
+// Parse a response as JSON; surface non-JSON bodies (proxy errors, plain-text
+// 500s) and {"error": ...} payloads as readable Error messages.
+async function asJson(res: Response): Promise<any> {
+  const text = await res.text();
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`${res.status} ${res.statusText}${text ? `: ${text.slice(0, 200)}` : ""}`);
+  }
+  if (!res.ok && data?.error) throw new Error(data.error);
+  return data;
+}
+
 export async function checkHealth(): Promise<HealthStatus> {
   const res = await fetch(`${BASE}/api/health`);
-  return res.json();
+  return asJson(res);
 }
 
 export async function saveSetup(data: {
@@ -19,17 +33,17 @@ export async function saveSetup(data: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return asJson(res);
 }
 
 export async function fetchSessions(): Promise<Session[]> {
   const res = await fetch(`${BASE}/api/sessions`);
-  return res.json();
+  return asJson(res);
 }
 
 export async function fetchSession(id: string) {
   const res = await fetch(`${BASE}/api/sessions/${id}`);
-  return res.json();
+  return asJson(res);
 }
 
 export function startReview(
@@ -56,7 +70,7 @@ export async function refineReview(instruction: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ instruction }),
   });
-  return res.json();
+  return asJson(res);
 }
 
 export async function sendChat(message: string) {
@@ -65,7 +79,7 @@ export async function sendChat(message: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message }),
   });
-  return res.json();
+  return asJson(res);
 }
 
 export async function uploadOutline(file: File) {
@@ -75,7 +89,7 @@ export async function uploadOutline(file: File) {
     method: "POST",
     body: form,
   });
-  return res.json();
+  return asJson(res);
 }
 
 export function startOutlineReview(
@@ -100,7 +114,7 @@ export function startOutlineReview(
 
 export async function exportReview(format: string) {
   const res = await fetch(`${BASE}/api/export/${format}`);
-  return res.json();
+  return asJson(res);
 }
 
 export async function readSSE(
