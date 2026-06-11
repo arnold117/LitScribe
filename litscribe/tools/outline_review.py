@@ -54,6 +54,116 @@ def _build_search_question(section: dict, constraints: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Section role classification (structural vs topical)
+# ---------------------------------------------------------------------------
+
+# Unambiguous section names only — avoid generic words like 背景/概述 that may
+# legitimately appear in body section titles.
+_INTRO_KEYS = ("引言", "前言", "绪论", "introduction", "preface")
+_CONCL_KEYS = (
+    "结论", "结语", "总结", "小结", "展望",
+    "conclusion", "concluding", "summary", "future direction",
+    "future work", "outlook",
+)
+
+
+def _section_role(title: str) -> str:
+    """Classify a section as 'intro', 'conclusion', or 'body'.
+
+    Intro/conclusion are *structural* sections written from the body, not by
+    searching papers for their title (which yields meta-commentary about what
+    an introduction is, rather than an introduction to the actual topic).
+    """
+    t = title.strip().lower()
+    is_short = len(title.strip()) <= 14
+    if any(k in t for k in _CONCL_KEYS) and (is_short or "conclusion" in t or "future" in t):
+        return "conclusion"
+    if any(k in t for k in _INTRO_KEYS) and (is_short or "introduction" in t):
+        return "intro"
+    return "body"
+
+
+def _build_body_digest(results: list[dict], per_section_chars: int = 700) -> str:
+    """Condensed view of generated body sections, to ground intro/conclusion."""
+    parts = []
+    for r in results:
+        txt = (r.get("text") or "").strip()
+        if not txt or txt.startswith("["):
+            continue
+        snippet = txt[:per_section_chars]
+        parts.append(f"## {r['title']}\n{snippet}")
+    return "\n\n".join(parts)
+
+
+def _derive_topic(body_sections: list[dict], constraints: str = "") -> str:
+    titles = "、".join(s["title"] for s in body_sections) if body_sections else ""
+    return f"{constraints} {titles}".strip() if constraints else titles
+
+
+async def _generate_structural_section(
+    model, role: str, topic: str, body_digest: str,
+    prior_text: str, language: str, constraints: str,
+) -> str:
+    """Write an intro or conclusion from the assembled body (no paper search)."""
+    if language == "zh":
+        cons = f"全局约束：所有内容须紧扣「{constraints}」。\n" if constraints else ""
+        if role == "intro":
+            prompt = (
+                f"你正在为一篇文献综述撰写【引言】。\n"
+                f"综述主题涵盖：{topic}\n{cons}"
+                f"以下是正文各章节的内容摘要：\n{body_digest}\n\n"
+                f"请基于上述正文撰写引言：\n"
+                f"- 交代该研究主题的背景与重要性，引出本综述要梳理的问题\n"
+                f"- 简要概述综述的结构与各部分内容\n"
+                f"- 直接进入该具体主题，严禁写成“什么是引言/引言的作用/修辞空间”这类元论述\n"
+                f"- 只输出正文段落，不要任何标题行，不要参考文献列表\n"
+                f"- 全文使用中文，与正文风格一致"
+            )
+        else:
+            prior = f"\n引言部分内容如下，请与之呼应、避免重复：\n{prior_text}\n" if prior_text else ""
+            prompt = (
+                f"你正在为一篇文献综述撰写【结论与展望】。\n"
+                f"综述主题涵盖：{topic}\n{cons}"
+                f"以下是正文各章节的内容摘要：\n{body_digest}\n{prior}\n"
+                f"请基于上述内容撰写结论：\n"
+                f"- 总结贯穿各章节的主要发现与共识\n"
+                f"- 指出当前研究的空白、争议与局限\n"
+                f"- 提出未来研究方向，并与引言形成首尾呼应\n"
+                f"- 只输出正文段落，不要任何标题行，不要参考文献列表\n"
+                f"- 全文使用中文，与正文风格一致"
+            )
+    else:
+        cons = f"Global constraint: keep everything focused on '{constraints}'.\n" if constraints else ""
+        if role == "intro":
+            prompt = (
+                f"You are writing the INTRODUCTION of a literature review.\n"
+                f"The review covers: {topic}\n{cons}"
+                f"Here are summaries of the body sections:\n{body_digest}\n\n"
+                f"Write the introduction grounded in the body above:\n"
+                f"- Establish the background and importance of this specific topic and the questions the review addresses\n"
+                f"- Briefly outline the structure of the review\n"
+                f"- Go straight into the actual subject; do NOT write meta-commentary about what an introduction is\n"
+                f"- Output prose paragraphs only — no heading lines, no reference list\n"
+                f"- Write in English, consistent with the body"
+            )
+        else:
+            prior = f"\nThe introduction reads as follows; echo it and avoid repetition:\n{prior_text}\n" if prior_text else ""
+            prompt = (
+                f"You are writing the CONCLUSION of a literature review.\n"
+                f"The review covers: {topic}\n{cons}"
+                f"Here are summaries of the body sections:\n{body_digest}\n{prior}\n"
+                f"Write the conclusion grounded in the body above:\n"
+                f"- Synthesize the main findings and consensus across sections\n"
+                f"- Identify gaps, controversies, and limitations\n"
+                f"- Propose future directions, mirroring the introduction\n"
+                f"- Output prose paragraphs only — no heading lines, no reference list\n"
+                f"- Write in English, consistent with the body"
+            )
+    result = await model.ainvoke(prompt)
+    return _postprocess_section(result.content.strip(), role)
+
+
+# ---------------------------------------------------------------------------
 # Section filtering
 # ---------------------------------------------------------------------------
 
@@ -226,80 +336,108 @@ async def run_outline_review(
     all_papers: dict[str, Paper] = {}
     section_results: list[dict] = []
 
-    for i, section in enumerate(sections):
+    # Generate topical body sections first (search-anchored), then write the
+    # structural intro/conclusion from the assembled body — intro/conclusion
+    # depend on the body, and searching for "引言"/"Introduction" yields
+    # meta-commentary instead of a real section.
+    body_sections = [s for s in sections if _section_role(s["title"]) == "body"]
+    intro_sections = [s for s in sections if _section_role(s["title"]) == "intro"]
+    conclusion_sections = [s for s in sections if _section_role(s["title"]) == "conclusion"]
+    ordered = body_sections + intro_sections + conclusion_sections
+    total = len(ordered)
+
+    body_digest: str | None = None
+    topic = _derive_topic(body_sections, constraints)
+    intro_text = ""
+
+    for i, section in enumerate(ordered):
         section_title = section["title"]
         context_path = " > ".join(section["path"])
-        search_question = _build_search_question(section, constraints)
+        role = _section_role(section_title)
 
         emit("section_start", {
             "index": i,
-            "total": len(sections),
+            "total": total,
             "title": section_title,
             "path": context_path,
         })
 
-        state = PipelineState(
-            research_question=search_question,
-            language=language,
-        )
-
         try:
-            await step_plan(model, state)
-
-            emit("section_search", {"index": i, "title": section_title})
-            await step_search(model, state, config, max_papers=max_papers_per_section)
-
-            if len(state.papers) < 2:
-                broader_q = f"{constraints} {context_path}" if constraints else context_path
-                broader_state = PipelineState(
-                    research_question=broader_q,
+            if role == "body":
+                search_question = _build_search_question(section, constraints)
+                state = PipelineState(
+                    research_question=search_question,
                     language=language,
                 )
-                await step_plan(model, broader_state)
-                await step_search(model, broader_state, config, max_papers=max_papers_per_section)
-                state.papers.extend(broader_state.papers)
-                seen_ids = set()
-                deduped = []
-                for p in state.papers:
-                    if p.paper_id not in seen_ids:
-                        seen_ids.add(p.paper_id)
-                        deduped.append(p)
-                state.papers = deduped
+                await step_plan(model, state)
 
-            emit("section_read", {"index": i, "papers": len(state.papers)})
-            await step_read(model, state)
+                emit("section_search", {"index": i, "title": section_title})
+                await step_search(model, state, config, max_papers=max_papers_per_section)
 
-            constraint_instruction = ""
-            if constraints:
-                constraint_instruction = (
-                    f"- IMPORTANT CONSTRAINT: Focus specifically on {constraints}. "
-                    f"All discussion must be directly relevant to these subjects.\n"
+                if len(state.papers) < 2:
+                    broader_q = f"{constraints} {context_path}" if constraints else context_path
+                    broader_state = PipelineState(
+                        research_question=broader_q,
+                        language=language,
+                    )
+                    await step_plan(model, broader_state)
+                    await step_search(model, broader_state, config, max_papers=max_papers_per_section)
+                    state.papers.extend(broader_state.papers)
+                    seen_ids = set()
+                    deduped = []
+                    for p in state.papers:
+                        if p.paper_id not in seen_ids:
+                            seen_ids.add(p.paper_id)
+                            deduped.append(p)
+                    state.papers = deduped
+
+                emit("section_read", {"index": i, "papers": len(state.papers)})
+                await step_read(model, state)
+
+                constraint_instruction = ""
+                if constraints:
+                    constraint_instruction = (
+                        f"- IMPORTANT CONSTRAINT: Focus specifically on {constraints}. "
+                        f"All discussion must be directly relevant to these subjects.\n"
+                    )
+
+                instructions = (
+                    f"You are writing one section of a larger literature review document.\n"
+                    f"Document context: {context_path}\n"
+                    f"Current section: {section_title}\n\n"
+                    f"STRICT RULES:\n"
+                    f"{constraint_instruction}"
+                    f"- Write ONLY the review content for '{section_title}'. "
+                    f"Do NOT include any title/heading lines (no # or ## lines).\n"
+                    f"- Do NOT include 'References', '参考文献', '研究空白', '结论' or 'Conclusion' sections.\n"
+                    f"- Do NOT add introductory or concluding paragraphs — just the substantive review.\n"
+                    f"- All content must be directly relevant to the topic '{section_title}' "
+                    f"within the context of '{context_path}'. Do NOT discuss unrelated fields.\n"
+                    f"- Use consistent citation format: (Author et al., Year) in running text.\n"
+                    f"- Write in {'Chinese' if language == 'zh' else 'English'}."
                 )
 
-            instructions = (
-                f"You are writing one section of a larger literature review document.\n"
-                f"Document context: {context_path}\n"
-                f"Current section: {section_title}\n\n"
-                f"STRICT RULES:\n"
-                f"{constraint_instruction}"
-                f"- Write ONLY the review content for '{section_title}'. "
-                f"Do NOT include any title/heading lines (no # or ## lines).\n"
-                f"- Do NOT include 'References', '参考文献', '研究空白', '结论' or 'Conclusion' sections.\n"
-                f"- Do NOT add introductory or concluding paragraphs — just the substantive review.\n"
-                f"- All content must be directly relevant to the topic '{section_title}' "
-                f"within the context of '{context_path}'. Do NOT discuss unrelated fields.\n"
-                f"- Use consistent citation format: (Author et al., Year) in running text.\n"
-                f"- Write in {'Chinese' if language == 'zh' else 'English'}."
-            )
+                emit("section_synthesize", {"index": i, "title": section_title})
+                await step_synthesize(model, state, instructions)
 
-            emit("section_synthesize", {"index": i, "title": section_title})
-            await step_synthesize(model, state, instructions)
+                text = state.synthesis.text if state.synthesis else ""
+                text = _postprocess_section(text, section_title)
+                papers_count = len(state.papers)
 
-            text = state.synthesis.text if state.synthesis else ""
-            text = _postprocess_section(text, section_title)
+                for p in state.papers:
+                    all_papers[p.paper_id] = p
+            else:
+                # Structural section: synthesize from the body, no paper search.
+                if body_digest is None:
+                    body_digest = _build_body_digest(section_results)
 
-            for p in state.papers:
-                all_papers[p.paper_id] = p
+                emit("section_synthesize", {"index": i, "title": section_title})
+                text = await _generate_structural_section(
+                    model, role, topic, body_digest, intro_text, language, constraints,
+                )
+                if role == "intro":
+                    intro_text = text
+                papers_count = 0
 
             section_results.append({
                 "title": section_title,
@@ -307,14 +445,14 @@ async def run_outline_review(
                 "level": section["level"],
                 "path": section["path"],
                 "text": text,
-                "papers_count": len(state.papers),
+                "papers_count": papers_count,
                 "word_count": len(text.split()),
             })
 
             emit("section_done", {
                 "index": i,
                 "title": section_title,
-                "papers": len(state.papers),
+                "papers": papers_count,
                 "words": len(text.split()),
             })
 

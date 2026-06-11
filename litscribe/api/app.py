@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -293,6 +294,24 @@ async def plan_review_skeleton(req: PlanRequest):
 
     topics = [st.name for st in _state.plan.sub_topics] if _state.plan else []
     zh = req.language == "zh"
+
+    # The planner emits English sub-topic names even for Chinese questions
+    # (search queries must be English). Localize the section titles so the
+    # outline isn't a mix of 中文 + English headings.
+    if zh and topics and any(re.search(r"[A-Za-z]", t) for t in topics):
+        try:
+            joined = "\n".join(f"{i+1}. {t}" for i, t in enumerate(topics))
+            resp = await model.ainvoke(
+                "把下面的文献综述章节标题翻译成简洁、专业的中文学术标题，"
+                "保持顺序与编号，每行一个，只输出翻译结果：\n" + joined
+            )
+            lines = [l.strip() for l in resp.content.strip().split("\n") if l.strip()]
+            zh_titles = [re.sub(r"^\d+[.、)]\s*", "", l) for l in lines]
+            if len(zh_titles) == len(topics):
+                topics = zh_titles
+        except Exception as e:
+            logger.warning(f"Title localization failed, keeping originals: {e}")
+
     titles = [
         "引言" if zh else "Introduction",
         *topics,
