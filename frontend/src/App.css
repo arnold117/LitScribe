@@ -377,12 +377,120 @@ body {
 }
 
 .slash-label {
+  flex: 1;
   font-size: 12px;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.slash-tag {
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  color: var(--accent-hover);
+  background: var(--accent-dim);
+}
+
+.slash-del {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 3px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.slash-del:hover { color: var(--red); background: var(--red-dim); }
+
+.slash-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.slash-new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--accent-hover);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+}
+.slash-new:hover { background: var(--bg-hover); }
+
+/* ── Slash template editor ── */
+.slash-editor {
+  width: 440px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+.slash-editor-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 16px;
+}
+.slash-editor-field {
+  display: block;
+  margin-bottom: 14px;
+}
+.slash-editor-field span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 5px;
+}
+.slash-editor-field input,
+.slash-editor-field textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font);
+  resize: vertical;
+}
+.slash-editor-field input:focus,
+.slash-editor-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.slash-editor-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.slash-editor-actions button {
+  padding: 8px 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+}
+.slash-editor-cancel { background: var(--bg-surface); color: var(--text-secondary); }
+.slash-editor-cancel:hover { background: var(--bg-hover); color: var(--text); }
+.slash-editor-save { background: var(--accent); color: #fff; }
+.slash-editor-save:hover { background: var(--accent-hover); }
+.slash-editor-save:disabled { background: var(--bg-surface); color: var(--text-muted); cursor: not-allowed; }
 
 /* ── Sidebar tabs ── */
 

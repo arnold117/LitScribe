@@ -14,8 +14,23 @@ import {
   Copy,
   Check,
   Square,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import type { ChatMessage, PlanSection, PipelineStep, SearchPaper } from "../types";
+
+interface SlashTemplate { cmd: string; label: string; prompt: string; custom?: boolean }
+
+const CUSTOM_SLASH_KEY = "litscribe-slash-templates";
+
+function loadCustomSlash(): SlashTemplate[] {
+  try {
+    const raw = localStorage.getItem(CUSTOM_SLASH_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
 
 interface ChatProps {
   messages: ChatMessage[];
@@ -30,7 +45,7 @@ interface ChatProps {
   loading: boolean;
 }
 
-const SLASH_COMMANDS = [
+const SLASH_COMMANDS: SlashTemplate[] = [
   {
     cmd: "/grill-me",
     label: "质询我的研究思路 · adversarial questioning",
@@ -113,14 +128,34 @@ export default function Chat({
     setInput("");
   };
 
-  const slashMatches =
-    input.startsWith("/") && !input.includes("\n")
-      ? SLASH_COMMANDS.filter((c) => c.cmd.startsWith(input.trim()))
-      : [];
+  const [customSlash, setCustomSlash] = useState<SlashTemplate[]>(loadCustomSlash);
+  const [editingTpl, setEditingTpl] = useState(false);
 
-  const pickSlash = (c: (typeof SLASH_COMMANDS)[number]) => {
+  const persistCustom = (list: SlashTemplate[]) => {
+    setCustomSlash(list);
+    localStorage.setItem(CUSTOM_SLASH_KEY, JSON.stringify(list));
+  };
+
+  const allSlash = [...SLASH_COMMANDS, ...customSlash.map((c) => ({ ...c, custom: true }))];
+
+  const slashOpen = input.startsWith("/") && !input.includes("\n");
+  const slashMatches = slashOpen
+    ? allSlash.filter((c) => c.cmd.toLowerCase().startsWith(input.trim().toLowerCase()))
+    : [];
+
+  const pickSlash = (c: SlashTemplate) => {
     setInput(c.prompt);
     inputRef.current?.focus();
+  };
+
+  const deleteCustom = (cmd: string) =>
+    persistCustom(customSlash.filter((c) => c.cmd !== cmd));
+
+  const saveCustom = (tpl: SlashTemplate) => {
+    const cmd = tpl.cmd.startsWith("/") ? tpl.cmd : `/${tpl.cmd}`;
+    const next = customSlash.filter((c) => c.cmd !== cmd);
+    persistCustom([...next, { ...tpl, cmd }]);
+    setEditingTpl(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -245,15 +280,39 @@ export default function Chat({
       </div>
 
       <div className="chat-input-area">
-        {slashMatches.length > 0 && (
+        {slashOpen && (
           <div className="slash-menu">
             {slashMatches.map((c) => (
-              <button key={c.cmd} className="slash-item" onClick={() => pickSlash(c)}>
+              <div key={c.cmd} className="slash-item" onClick={() => pickSlash(c)}>
                 <span className="slash-cmd">{c.cmd}</span>
                 <span className="slash-label">{c.label}</span>
-              </button>
+                {c.custom && <span className="slash-tag">自定义</span>}
+                {c.custom && (
+                  <button
+                    className="slash-del"
+                    title="删除"
+                    onClick={(e) => { e.stopPropagation(); deleteCustom(c.cmd); }}
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
+              </div>
             ))}
+            {slashMatches.length === 0 && (
+              <div className="slash-empty">没有匹配的命令</div>
+            )}
+            <button className="slash-new" onClick={() => setEditingTpl(true)}>
+              <Plus size={12} />
+              <span>新建自定义命令</span>
+            </button>
           </div>
+        )}
+
+        {editingTpl && (
+          <SlashTemplateEditor
+            onSave={saveCustom}
+            onCancel={() => setEditingTpl(false)}
+          />
         )}
         {selectionContext && (
           <div className="chat-selection-badge">
@@ -313,6 +372,64 @@ export default function Chat({
               <ArrowUp size={16} />
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SlashTemplateEditor({
+  onSave,
+  onCancel,
+}: {
+  onSave: (t: SlashTemplate) => void;
+  onCancel: () => void;
+}) {
+  const [cmd, setCmd] = useState("/");
+  const [label, setLabel] = useState("");
+  const [prompt, setPrompt] = useState("");
+
+  const valid = cmd.replace(/^\//, "").trim().length > 0 && prompt.trim().length > 0;
+
+  return (
+    <div className="setup-overlay" onClick={onCancel}>
+      <div className="slash-editor" onClick={(e) => e.stopPropagation()}>
+        <div className="slash-editor-title">新建自定义命令</div>
+        <label className="slash-editor-field">
+          <span>命令（以 / 开头）</span>
+          <input
+            value={cmd}
+            onChange={(e) => setCmd(e.target.value)}
+            placeholder="/my-prompt"
+            autoFocus
+          />
+        </label>
+        <label className="slash-editor-field">
+          <span>说明（菜单里显示）</span>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="一句话描述这个命令做什么"
+          />
+        </label>
+        <label className="slash-editor-field">
+          <span>Prompt（选中后填入输入框）</span>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={5}
+            placeholder="例如：把当前综述改写成面向大众的科普风格，避免术语…"
+          />
+        </label>
+        <div className="slash-editor-actions">
+          <button className="slash-editor-cancel" onClick={onCancel}>取消</button>
+          <button
+            className="slash-editor-save"
+            disabled={!valid}
+            onClick={() => onSave({ cmd: cmd.trim(), label: label.trim() || cmd.trim(), prompt: prompt.trim() })}
+          >
+            保存
+          </button>
         </div>
       </div>
     </div>
