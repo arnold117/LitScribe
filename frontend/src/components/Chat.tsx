@@ -25,6 +25,8 @@ interface ChatProps {
   onPlanExecute: () => void;
   selectionContext: string;
   onClearSelection: () => void;
+  seedInput?: string;
+  onSeedConsumed?: () => void;
   loading: boolean;
 }
 
@@ -66,6 +68,8 @@ export default function Chat({
   onPlanExecute,
   selectionContext,
   onClearSelection,
+  seedInput,
+  onSeedConsumed,
   loading,
 }: ChatProps) {
   const [input, setInput] = useState("");
@@ -81,6 +85,15 @@ export default function Chat({
   useEffect(() => {
     if (selectionContext) inputRef.current?.focus();
   }, [selectionContext]);
+
+  // Prefill from onboarding example (fills box, user reviews & hits enter)
+  useEffect(() => {
+    if (seedInput) {
+      setInput(seedInput);
+      inputRef.current?.focus();
+      onSeedConsumed?.();
+    }
+  }, [seedInput]);
 
   const handleSubmit = () => {
     const text = input.trim();

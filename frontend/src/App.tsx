@@ -4,6 +4,7 @@ import type { SidebarFile } from "./components/Sidebar";
 import Editor from "./components/Editor";
 import Chat from "./components/Chat";
 import SetupWizard from "./components/SetupWizard";
+import Onboarding from "./components/Onboarding";
 import type { ChatMessage, PlanSection, PlanState, Conversation, ReferenceEntry, ContentVersion, CitationFormat } from "./types";
 import {
   checkHealth,
@@ -164,6 +165,8 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  const [showOnboard, setShowOnboard] = useState(false);
+  const [seedInput, setSeedInput] = useState("");
 
   // Ref to always have latest state in async callbacks
   const stateRef = useRef({ messages, editorContent, previousContent, appendixContent, versions, plan, pendingOutline });
@@ -186,9 +189,20 @@ export default function App() {
 
   useEffect(() => {
     checkHealth()
-      .then((h) => { if (!h.configured) setShowSetup(true); })
+      .then((h) => {
+        if (!h.configured) {
+          setShowSetup(true);
+        } else if (conversations.length === 0 && !localStorage.getItem("litscribe-onboarded")) {
+          setShowOnboard(true);
+        }
+      })
       .catch(() => {});
   }, []);
+
+  const dismissOnboard = () => {
+    localStorage.setItem("litscribe-onboarded", "1");
+    setShowOnboard(false);
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -782,6 +796,13 @@ export default function App() {
         />
       )}
 
+      {showOnboard && !showSetup && (
+        <Onboarding
+          onClose={dismissOnboard}
+          onPickExample={(q) => { setSeedInput(q); dismissOnboard(); }}
+        />
+      )}
+
       <Sidebar
         conversations={conversations}
         activeId={activeId}
@@ -829,6 +850,8 @@ export default function App() {
           onPlanExecute={handlePlanExecute}
           selectionContext={selectionContext}
           onClearSelection={() => setSelectionContext("")}
+          seedInput={seedInput}
+          onSeedConsumed={() => setSeedInput("")}
           loading={loading}
         />
       </main>

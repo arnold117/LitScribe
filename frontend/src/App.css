@@ -1258,6 +1258,135 @@ body {
   position: relative;
 }
 
+/* ── Onboarding ── */
+
+.onboard-modal {
+  width: 540px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  position: relative;
+}
+
+.onboard-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.onboard-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
+.onboard-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.onboard-steps {
+  margin: 22px 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.onboard-step {
+  display: grid;
+  grid-template-columns: 22px 32px 1fr;
+  align-items: start;
+  gap: 12px;
+}
+
+.onboard-step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.onboard-step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-hover);
+}
+
+.onboard-step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onboard-step-desc {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.onboard-examples-label {
+  margin: 22px 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.onboard-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.onboard-example {
+  text-align: left;
+  padding: 9px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.onboard-example:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.onboard-start {
+  width: 100%;
+  margin-top: 20px;
+  padding: 11px 0;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.onboard-start:hover { background: var(--accent-hover); }
+
 .setup-close {
   position: absolute;
   top: 12px;
