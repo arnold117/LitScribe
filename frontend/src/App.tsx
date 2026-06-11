@@ -75,7 +75,9 @@ function parseReferences(text: string): ReferenceEntry[] {
   if (!refSection) return entries;
   const refLines = refSection[1].split("\n").filter((l) => l.trim());
   for (const line of refLines) {
-    const m = line.match(/^\[([^\]]+)\]:\s*(.+?)\s*\((\d{4})\)\.\s*(.+)/);
+    // Tolerate both canonical "[key]: Authors (Year). Title" and list-style
+    // "- [key] Authors (Year). Title" (optional leading dash, optional colon).
+    const m = line.match(/^\s*-?\s*\[([^\]]+)\]:?\s*(.+?)\s*\((\d{4})\)\.\s*(.+)/);
     if (m) {
       const rest = m[4];
       const venueMatch = rest.match(/\*(.+?)\*\./);

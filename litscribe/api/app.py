@@ -17,6 +17,7 @@ from pathlib import Path
 from litscribe.config import Config
 from litscribe.agents import _build_model
 from litscribe.tools.status import PipelineState
+from litscribe.models.review import ReviewOutput
 
 logger = logging.getLogger(__name__)
 
@@ -713,6 +714,7 @@ class OutlineReviewRequest(BaseModel):
 @app.post("/api/outline-review")
 async def run_outline_review_api(req: OutlineReviewRequest):
     await check_rate_limit("outline-review")
+    global _state
     config, model = _get_config()
 
     async def _run():
@@ -754,6 +756,19 @@ async def run_outline_review_api(req: OutlineReviewRequest):
             if result.get("error"):
                 yield _sse("error", {"message": result["error"]})
                 return
+
+            # Populate global state so a follow-up /api/refine has a review to
+            # work on — the skeleton-first flow generates via this endpoint, so
+            # without this refine always 400'd ("No review to refine").
+            global _state
+            first_line = next((l.strip() for l in req.outline_text.splitlines() if l.strip()), "")
+            topic = re.sub(r"^\d+[.、)\s]+", "", first_line) or "literature review"
+            _state = PipelineState(research_question=topic, language=req.language)
+            _state.synthesis = ReviewOutput(
+                text=result.get("text", ""),
+                word_count=result.get("total_words", 0),
+                language=req.language,
+            )
 
             yield _sse("complete", {
                 "text": result.get("text", ""),

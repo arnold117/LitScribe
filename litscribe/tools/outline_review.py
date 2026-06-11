@@ -67,6 +67,18 @@ _CONCL_KEYS = (
 )
 
 
+def _count_words(text: str) -> int:
+    """CJK-aware word count matching the frontend (each CJK char + each Latin word).
+
+    `len(text.split())` undercounts Chinese drastically (no spaces), so the
+    chat 'Done: N words' disagreed with the editor/version display. This keeps
+    every surface consistent.
+    """
+    cjk = len(re.findall(r"[一-鿿㐀-䶿]", text))
+    latin = len(re.sub(r"[一-鿿㐀-䶿]", "", text).split())
+    return cjk + latin
+
+
 def _section_role(title: str) -> str:
     """Classify a section as 'intro', 'conclusion', or 'body'.
 
@@ -446,14 +458,14 @@ async def run_outline_review(
                 "path": section["path"],
                 "text": text,
                 "papers_count": papers_count,
-                "word_count": len(text.split()),
+                "word_count": _count_words(text),
             })
 
             emit("section_done", {
                 "index": i,
                 "title": section_title,
                 "papers": papers_count,
-                "words": len(text.split()),
+                "words": _count_words(text),
             })
 
         except Exception as e:
@@ -471,7 +483,7 @@ async def run_outline_review(
     emit("assembling", {"sections": len(section_results)})
     full_text = _assemble_document(roots, section_results, list(all_papers.values()))
     full_text = _postprocess_document(full_text)
-    total_words = len(full_text.split())
+    total_words = _count_words(full_text)
     elapsed = time.time() - t0
 
     # Coverage tracking
@@ -716,6 +728,6 @@ def _assemble_document(
             authors += " et al."
         venue = f" *{p.venue}*." if p.venue else ""
         doi = f" doi:{p.doi}" if p.doi else ""
-        parts.append(f"- [{key}] {authors} ({p.year}). {p.title}.{venue}{doi}")
+        parts.append(f"[{key}]: {authors} ({p.year}). {p.title}.{venue}{doi}")
 
     return "\n".join(parts)
