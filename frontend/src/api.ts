@@ -132,6 +132,11 @@ export function startOutlineReview(
   });
 }
 
+export async function fetchWritingAnalysis() {
+  const res = await fetch(`${BASE}/api/writing-analysis`);
+  return asJson(res);
+}
+
 export async function exportReview(format: string) {
   const res = await fetch(`${BASE}/api/export/${format}`);
   return asJson(res);

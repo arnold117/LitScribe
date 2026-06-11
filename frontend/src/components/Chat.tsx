@@ -208,6 +208,8 @@ export default function Chat({
               <ActionsCard data={msg.data} onAction={(a) => onSend(a)} />
             ) : msg.type === "grounding" ? (
               <GroundingCard data={msg.data} />
+            ) : msg.type === "analysis" ? (
+              <AnalysisCard data={msg.data} />
             ) : (
               <div className="chat-msg-content">
                 {msg.attachment && (
@@ -519,6 +521,56 @@ function CoverageCard({ data }: { data: any }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function AnalysisCard({ data }: { data: any }) {
+  if (!data) return null;
+  const maxCites = Math.max(1, ...(data.per_section || []).map((s: any) => s.citations));
+  const flags: { label: string; tone: string }[] = data.flags || [];
+
+  const metrics = [
+    { label: "字数", value: data.word_count?.toLocaleString() },
+    { label: "句数", value: data.sentence_count },
+    { label: "平均句长", value: data.avg_sentence_length },
+    { label: "词汇多样性", value: data.lexical_diversity },
+    { label: "引用数", value: data.citation_count },
+    { label: "引用密度/千字", value: data.citation_density },
+    { label: "带引用句占比", value: `${Math.round((data.cited_sentence_ratio || 0) * 100)}%` },
+    { label: "模糊措辞", value: data.hedge_count },
+  ];
+
+  return (
+    <div className="card card-analysis">
+      <div className="analysis-header">写作分析 · Writing Analysis</div>
+      <div className="analysis-grid">
+        {metrics.map((m) => (
+          <div className="analysis-metric" key={m.label}>
+            <span className="analysis-num">{m.value}</span>
+            <span className="analysis-label">{m.label}</span>
+          </div>
+        ))}
+      </div>
+      {data.per_section?.length > 0 && (
+        <div className="analysis-dist">
+          <div className="analysis-dist-title">引用分布</div>
+          {data.per_section.map((s: any, i: number) => (
+            <div className="analysis-bar-row" key={i}>
+              <span className="analysis-bar-label" title={s.title}>{s.title}</span>
+              <div className="analysis-bar-track">
+                <div className="analysis-bar-fill" style={{ width: `${(s.citations / maxCites) * 100}%` }} />
+              </div>
+              <span className="analysis-bar-num">{s.citations}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="analysis-flags">
+        {flags.map((f, i) => (
+          <span key={i} className={`analysis-flag ${f.tone}`}>{f.label}</span>
+        ))}
+      </div>
     </div>
   );
 }

@@ -623,6 +623,14 @@ async def get_readability():
     return await assess_readability(model, _state.synthesis.text)
 
 
+@app.get("/api/writing-analysis")
+async def get_writing_analysis():
+    if not _state or not _state.synthesis:
+        raise HTTPException(400, "No review available")
+    from litscribe.tools.analytics import analyze_writing
+    return analyze_writing(_state.synthesis.text)
+
+
 class MultiReviewRequest(BaseModel):
     session_ids: list[str]
 

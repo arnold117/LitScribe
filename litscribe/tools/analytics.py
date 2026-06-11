@@ -14,6 +14,104 @@ from litscribe.models.review import ReviewOutput
 logger = logging.getLogger(__name__)
 
 
+# ─── Writing Analysis (quantitative, deterministic) ────────
+
+# Matches in-text citations across styles:
+#   [Author, 2020] / (Author et al., 2020) / [@key] /
+#   全角中文 作者（2020） 与 （作者, 2020）— any (half/full-width) paren containing a year
+_CITE_RE = re.compile(
+    r"\[[^\[\]]{0,40}?(?:19|20)\d{2}[a-z]?\]"
+    r"|[（(][^（()）]{0,40}?(?:19|20)\d{2}[a-z]?[)）]"
+    r"|\[@[\w;,\s-]+\]"
+)
+_HEDGES = (
+    "可能", "也许", "或许", "似乎", "倾向于", "在一定程度上", "大概", "据推测", "有望",
+    "may", "might", "could", "possibly", "perhaps", "suggests that", "appears to",
+    "seems to", "relatively", "somewhat", "to some extent",
+)
+_CONNECTIVES = (
+    "然而", "因此", "此外", "相反", "综上", "尽管", "不仅", "并且", "首先", "其次", "最后", "总之",
+    "however", "therefore", "moreover", "in contrast", "furthermore", "nevertheless",
+    "consequently", "in summary", "by contrast", "thus",
+)
+
+
+def _cjk_aware_tokens(text: str) -> list[str]:
+    """Each CJK char is a token; Latin runs split on whitespace."""
+    tokens = re.findall(r"[一-鿿㐀-䶿]", text)
+    tokens += [w.lower() for w in re.sub(r"[一-鿿㐀-䶿]", " ", text).split() if w.isalpha()]
+    return tokens
+
+
+def analyze_writing(text: str) -> dict:
+    """Compute quantitative writing metrics over a review (no LLM)."""
+    # Strip the References section so it doesn't skew prose metrics.
+    body = re.split(r"\n#{1,3}\s*(References|参考文献)\b", text)[0]
+
+    sentences = [s for s in re.split(r"(?<=[。！？!?])\s*|\n{2,}", body) if s.strip()]
+    paragraphs = [p for p in re.split(r"\n{2,}", body) if p.strip()]
+    tokens = _cjk_aware_tokens(body)
+    total = len(tokens) or 1
+    unique = len(set(tokens))
+
+    cites = _CITE_RE.findall(body)
+    hedges = sum(body.lower().count(h.lower()) for h in _HEDGES)
+    connectives = sum(body.lower().count(c.lower()) for c in _CONNECTIVES)
+
+    sent_lens = [len(_cjk_aware_tokens(s)) for s in sentences] or [0]
+
+    # Citation distribution per section heading
+    per_section = []
+    for m in re.finditer(r"^#{1,3}\s+(.+)$", body, re.M):
+        start = m.end()
+        nxt = re.search(r"^#{1,3}\s+", body[start:], re.M)
+        seg = body[start: start + (nxt.start() if nxt else len(body))]
+        title = re.sub(r"^[\d.、\s]+", "", m.group(1)).strip()
+        per_section.append({"title": title, "citations": len(_CITE_RE.findall(seg))})
+
+    cjk_chars = len(re.findall(r"[一-鿿㐀-䶿]", body))
+    is_cjk = cjk_chars > total * 0.3
+    avg_sent = round(sum(sent_lens) / len(sent_lens), 1)
+    cite_density = round(len(cites) / total * 1000, 1)
+    hedge_density = round(hedges / total * 1000, 1)
+    lex = round(unique / total, 3)
+
+    # Language-aware qualitative flags (CJK sentences are counted in chars, so
+    # they run ~2x longer than English word counts; char-level TTR is also
+    # naturally lower for Chinese, so we don't flag diversity for CJK).
+    flags: list[dict] = []
+    if avg_sent > (75 if is_cjk else 34):
+        flags.append({"label": "句子偏长，可考虑拆分", "tone": "warn"})
+    if hedge_density > 12:
+        flags.append({"label": "模糊措辞偏多", "tone": "warn"})
+    if cite_density < 6:
+        flags.append({"label": "引用密度偏低", "tone": "warn"})
+    if not is_cjk and lex < 0.35:
+        flags.append({"label": "用词重复度较高", "tone": "warn"})
+    if not flags:
+        flags.append({"label": "各项指标均衡", "tone": "good"})
+
+    return {
+        "language": "zh" if is_cjk else "en",
+        "word_count": total,
+        "sentence_count": len(sentences),
+        "paragraph_count": len(paragraphs),
+        "avg_sentence_length": avg_sent,
+        "longest_sentence": max(sent_lens),
+        "lexical_diversity": lex,
+        "citation_count": len(cites),
+        "citation_density": cite_density,  # per 1000 words
+        "cited_sentence_ratio": round(
+            sum(1 for s in sentences if _CITE_RE.search(s)) / (len(sentences) or 1), 2
+        ),
+        "hedge_count": hedges,
+        "hedge_density": hedge_density,
+        "connective_count": connectives,
+        "per_section": per_section,
+        "flags": flags,
+    }
+
+
 # ─── Citation Network Graph ────────────────────────────────
 
 def build_citation_network(papers: list[Paper], key_map: dict[str, str] | None = None) -> dict:

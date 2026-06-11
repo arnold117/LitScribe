@@ -1207,6 +1207,74 @@ body {
 /* Grounding card */
 .card-grounding { padding: 12px 14px; }
 .grounding-header { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+
+/* ── Writing analysis card ── */
+.card-analysis { padding: 12px 14px; }
+.analysis-header { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px 8px;
+}
+.analysis-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.analysis-num { font-size: 16px; font-weight: 700; color: var(--accent-hover); }
+.analysis-label { font-size: 10px; color: var(--text-muted); text-align: center; }
+
+.analysis-dist { margin-top: 14px; }
+.analysis-dist-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.analysis-bar-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 24px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.analysis-bar-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.analysis-bar-track {
+  height: 6px;
+  background: var(--bg-surface);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.analysis-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+.analysis-bar-num { font-size: 11px; color: var(--text-muted); text-align: right; }
+
+.analysis-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.analysis-flag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+}
+.analysis-flag.good { color: var(--green); background: var(--green-dim); }
+.analysis-flag.warn { color: var(--yellow); background: var(--yellow-dim); }
 .grounding-stats { display: flex; gap: 16px; }
 .grounding-stat { display: flex; flex-direction: column; align-items: center; }
 .grounding-num { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }

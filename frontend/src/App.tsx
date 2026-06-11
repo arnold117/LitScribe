@@ -14,6 +14,7 @@ import {
   uploadOutline,
   startOutlineReview,
   exportReview,
+  fetchWritingAnalysis,
   readSSE,
 } from "./api";
 import "./App.css";
@@ -478,6 +479,7 @@ export default function App() {
         data: {
           text: "What's next?",
           actions: [
+            { label: "写作分析", value: "__writing_analysis__" },
             { label: "Check consistency", value: "Check cross-section consistency" },
             { label: "Export Markdown", value: "__export_md__" },
             { label: "Coverage report", value: "Show coverage report" },
@@ -508,6 +510,18 @@ export default function App() {
       if (message === "__export_bib__") { await handleExport("bibtex"); return; }
       if (message === "__retry__") {
         if (retryRef.current) await runOp(retryRef.current);
+        return;
+      }
+      if (message === "__writing_analysis__") {
+        setLoading(true);
+        try {
+          const data = await fetchWritingAnalysis();
+          addMsg({ role: "assistant", content: "", type: "analysis", data });
+        } catch (err: any) {
+          reportFailure(err.message);
+        } finally {
+          setLoading(false);
+        }
         return;
       }
 

@@ -3,7 +3,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
-  type?: "text" | "plan" | "progress" | "coverage" | "actions" | "grounding" | "steps";
+  type?: "text" | "plan" | "progress" | "coverage" | "actions" | "grounding" | "steps" | "analysis";
   data?: any;
   attachment?: { name: string; type: string };
 }
