@@ -1012,6 +1012,22 @@ body {
   color: var(--accent);
 }
 
+.chat-empty-templates {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.chat-empty-templates:hover { color: var(--accent-hover); }
+
 .chat-msg { margin-bottom: 16px; }
 
 .chat-msg-role {

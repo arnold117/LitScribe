@@ -16,6 +16,7 @@ import {
   Square,
   Plus,
   Trash2,
+  FileText,
 } from "lucide-react";
 import type { ChatMessage, PlanSection, PipelineStep, SearchPaper } from "../types";
 
@@ -217,6 +218,10 @@ export default function Chat({
                 Transformers for time series
               </button>
             </div>
+            <button className="chat-empty-templates" onClick={() => onSend("__templates__")}>
+              <FileText size={13} />
+              <span>写作模板（翻译 / 润色等）</span>
+            </button>
           </div>
         )}
         {messages.map((msg) => (
