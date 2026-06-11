@@ -5,6 +5,7 @@ import Editor from "./components/Editor";
 import Chat from "./components/Chat";
 import SetupWizard from "./components/SetupWizard";
 import Onboarding from "./components/Onboarding";
+import TemplatesModal from "./components/TemplatesModal";
 import type { ChatMessage, PlanSection, PlanState, Conversation, ReferenceEntry, ContentVersion, CitationFormat } from "./types";
 import {
   checkHealth,
@@ -15,6 +16,7 @@ import {
   startOutlineReview,
   exportReview,
   fetchWritingAnalysis,
+  applyTemplate,
   readSSE,
 } from "./api";
 import "./App.css";
@@ -167,6 +169,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showOnboard, setShowOnboard] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [seedInput, setSeedInput] = useState("");
 
   // Ref to always have latest state in async callbacks
@@ -480,6 +483,7 @@ export default function App() {
           text: "What's next?",
           actions: [
             { label: "写作分析", value: "__writing_analysis__" },
+            { label: "写作模板", value: "__templates__" },
             { label: "Check consistency", value: "Check cross-section consistency" },
             { label: "Export Markdown", value: "__export_md__" },
             { label: "Coverage report", value: "Show coverage report" },
@@ -512,6 +516,7 @@ export default function App() {
         if (retryRef.current) await runOp(retryRef.current);
         return;
       }
+      if (message === "__templates__") { setShowTemplates(true); return; }
       if (message === "__writing_analysis__") {
         setLoading(true);
         try {
@@ -795,6 +800,14 @@ export default function App() {
     return list;
   }, [messages, editorContent, appendixContent, references]);
 
+  const handleApplyTemplate = (id: string, instructions: string, wordCount: number) => {
+    addMsg({ role: "user", content: `应用模板: ${id}` });
+    runOp(async () => {
+      const data = await applyTemplate(id, instructions, wordCount, newAbortSignal());
+      addMsg({ role: "assistant", content: data.text || "(empty)" });
+    });
+  };
+
   const handleRestoreVersion = (v: ContentVersion) => {
     setPreviousContent(editorContent);
     setEditorContent(v.content);
@@ -814,6 +827,14 @@ export default function App() {
         <Onboarding
           onClose={dismissOnboard}
           onPickExample={(q) => { setSeedInput(q); dismissOnboard(); }}
+        />
+      )}
+
+      {showTemplates && (
+        <TemplatesModal
+          hasReview={!!editorContent}
+          onClose={() => setShowTemplates(false)}
+          onApply={handleApplyTemplate}
         />
       )}
 

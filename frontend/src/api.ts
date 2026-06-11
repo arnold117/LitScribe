@@ -132,6 +132,35 @@ export function startOutlineReview(
   });
 }
 
+export async function fetchTemplates() {
+  const res = await fetch(`${BASE}/api/templates`);
+  return asJson(res);
+}
+
+export async function applyTemplate(id: string, instructions: string, wordCount: number, signal?: AbortSignal) {
+  const res = await fetch(`${BASE}/api/templates/${id}/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instructions, word_count: wordCount }),
+    signal,
+  });
+  return asJson(res);
+}
+
+export async function createTemplate(id: string, label: string, prompt: string) {
+  const res = await fetch(`${BASE}/api/templates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, label, prompt }),
+  });
+  return asJson(res);
+}
+
+export async function deleteTemplate(id: string) {
+  const res = await fetch(`${BASE}/api/templates/${id}`, { method: "DELETE" });
+  return asJson(res);
+}
+
 export async function fetchWritingAnalysis() {
   const res = await fetch(`${BASE}/api/writing-analysis`);
   return asJson(res);

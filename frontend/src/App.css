@@ -430,6 +430,83 @@ body {
 }
 .slash-new:hover { background: var(--bg-hover); }
 
+/* ── Writing templates modal ── */
+.tpl-modal {
+  width: 480px;
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  position: relative;
+}
+.tpl-title { font-size: 17px; font-weight: 700; color: var(--text); }
+.tpl-sub { margin-top: 6px; margin-bottom: 16px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+.tpl-sub code {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--bg-surface); padding: 1px 4px; border-radius: 3px; color: var(--accent-hover);
+}
+
+.tpl-list { display: flex; flex-direction: column; gap: 4px; }
+.tpl-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background 0.1s;
+}
+.tpl-item:hover { background: var(--bg-hover); }
+.tpl-item.disabled { opacity: 0.45; cursor: not-allowed; }
+.tpl-item-icon { flex-shrink: 0; color: var(--text-muted); }
+.tpl-item-label { flex: 1; font-size: 13px; color: var(--text); }
+.tpl-tag { font-size: 9px; padding: 1px 5px; border-radius: 8px; color: var(--accent-hover); background: var(--accent-dim); }
+.tpl-need { font-size: 9px; padding: 1px 5px; border-radius: 8px; color: var(--text-muted); background: var(--bg-surface); }
+.tpl-del { display: flex; padding: 3px; background: none; border: none; color: var(--text-muted); cursor: pointer; border-radius: 4px; }
+.tpl-del:hover { color: var(--red); background: var(--red-dim); }
+
+.tpl-new {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; margin-top: 14px; padding: 9px 0;
+  background: var(--bg-surface); border: 1px dashed var(--border);
+  border-radius: var(--radius-sm); color: var(--accent-hover);
+  font-size: 13px; font-weight: 600; font-family: var(--font); cursor: pointer;
+}
+.tpl-new:hover { background: var(--bg-hover); }
+
+.tpl-back {
+  display: flex; align-items: center; gap: 3px;
+  margin-bottom: 12px; padding: 0; background: none; border: none;
+  color: var(--text-muted); font-size: 12px; font-family: var(--font); cursor: pointer;
+}
+.tpl-back:hover { color: var(--text); }
+
+.tpl-field { display: block; margin-bottom: 14px; }
+.tpl-field span { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
+.tpl-field input, .tpl-field textarea {
+  width: 100%; padding: 8px 10px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text);
+  font-size: 13px; font-family: var(--font); resize: vertical;
+}
+.tpl-field input:focus, .tpl-field textarea:focus { outline: none; border-color: var(--accent); }
+
+.tpl-field-inline { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.tpl-field-inline span { font-size: 12px; color: var(--text-secondary); }
+.tpl-field-inline input {
+  width: 100px; padding: 6px 10px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text); font-size: 13px; font-family: var(--font);
+}
+
+.tpl-run {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; padding: 11px 0;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: var(--radius-sm); font-size: 14px; font-weight: 600;
+  font-family: var(--font); cursor: pointer; transition: background 0.15s;
+}
+.tpl-run:hover { background: var(--accent-hover); }
+.tpl-run:disabled { background: var(--bg-surface); color: var(--text-muted); cursor: not-allowed; }
+
 /* ── Slash template editor ── */
 .slash-editor {
   width: 440px;

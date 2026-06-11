@@ -631,6 +631,65 @@ async def get_writing_analysis():
     return analyze_writing(_state.synthesis.text)
 
 
+# ── Writing templates ──────────────────────────────────────
+
+class TemplateApplyRequest(BaseModel):
+    instructions: str = ""
+    word_count: int = 800
+
+
+class TemplateCreateRequest(BaseModel):
+    id: str
+    label: str
+    prompt: str
+
+
+@app.get("/api/templates")
+async def list_templates_api():
+    config, _ = _get_config()
+    from litscribe.tools.templates_run import list_templates
+    return {"templates": list_templates(config.data_dir)}
+
+
+@app.post("/api/templates")
+async def create_template_api(req: TemplateCreateRequest):
+    config, _ = _get_config()
+    from litscribe.tools.templates_run import load_custom, save_custom
+    tid = re.sub(r"[^a-z0-9-]", "-", req.id.strip().lower()) or "custom"
+    custom = load_custom(config.data_dir)
+    custom[tid] = {"label": req.label.strip() or tid, "prompt": req.prompt}
+    save_custom(config.data_dir, custom)
+    return {"id": tid, "ok": True}
+
+
+@app.delete("/api/templates/{template_id}")
+async def delete_template_api(template_id: str):
+    config, _ = _get_config()
+    from litscribe.tools.templates_run import load_custom, save_custom
+    custom = load_custom(config.data_dir)
+    if template_id not in custom:
+        raise HTTPException(404, "Custom template not found (built-ins can't be deleted)")
+    del custom[template_id]
+    save_custom(config.data_dir, custom)
+    return {"ok": True}
+
+
+@app.post("/api/templates/{template_id}/apply")
+async def apply_template_api(template_id: str, req: TemplateApplyRequest):
+    config, model = _get_config()
+    from litscribe.tools.templates_run import apply_template, list_templates
+    needs = next((t for t in list_templates(config.data_dir) if t["id"] == template_id), None)
+    if needs is None:
+        raise HTTPException(404, f"Unknown template: {template_id}")
+    papers = _state.papers if (_state and needs["needs_papers"]) else []
+    if needs["needs_papers"] and not papers:
+        raise HTTPException(400, "This template needs a review's papers — run a review first.")
+    text = await apply_template(
+        model, template_id, papers, req.instructions, req.word_count, config.data_dir,
+    )
+    return {"text": text}
+
+
 class MultiReviewRequest(BaseModel):
     session_ids: list[str]
 
