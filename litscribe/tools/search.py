@@ -10,6 +10,14 @@ logger = logging.getLogger(__name__)
 
 _search_cache: dict[str, list[Paper]] = {}
 
+# Sources that handle Chinese queries well; English-only sources should skip
+# CJK queries (sending the raw Chinese question to them returns junk).
+_CJK_SOURCES = {"cnki", "wanfang"}
+
+
+def _has_cjk(s: str) -> bool:
+    return any("一" <= c <= "鿿" for c in s)
+
 
 async def search_all_sources(
     queries: list[str],
@@ -63,7 +71,12 @@ async def search_all_sources(
     async def _search_source(svc) -> list[Paper]:
         svc_papers: list[Paper] = []
         consecutive_fails = 0
-        for query in queries_to_use:
+        # English-only sources skip CJK queries (raw Chinese → junk results)
+        if svc.source_name in _CJK_SOURCES:
+            svc_queries = queries_to_use
+        else:
+            svc_queries = [q for q in queries_to_use if not _has_cjk(q)] or queries_to_use
+        for query in svc_queries:
             cache_key = f"{svc.source_name}:{query}"
             if cache_key in _search_cache:
                 svc_papers.extend(_search_cache[cache_key])

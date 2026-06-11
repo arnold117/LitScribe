@@ -118,29 +118,42 @@ async def step_search(model: ChatOpenAI, state: PipelineState, config: Config, m
 
     papers = await search_all_sources(unique[:6], config, max_per_source=max_papers, domain=state.domain)
 
-    # Keyword relevance filter: keep papers whose title or abstract
-    # contains at least one core term from the first 3 queries
-    core_terms = set()
-    for q in unique[:3]:
-        for word in q.lower().split():
-            if len(word) >= 4 and word not in {"with", "from", "that", "this", "have", "been", "their", "using", "based", "study", "analysis", "approach", "method", "novel", "recent", "review", "paper", "results"}:
-                core_terms.add(word)
+    # Coarse keyword prefilter (English terms only; CJK whole-phrases never
+    # substring-match English abstracts). Terms are IDF-weighted so common
+    # words (power, time, model) don't let off-topic papers rank high on
+    # coincidental matches — the real ranking is the LLM selection below.
+    _STOP = {"with", "from", "that", "this", "have", "been", "their", "using",
+             "based", "study", "analysis", "approach", "method", "novel",
+             "recent", "review", "paper", "results"}
+    core_terms = {
+        w for q in unique[:3] for w in q.lower().split()
+        if len(w) >= 4 and w not in _STOP and not any("一" <= c <= "鿿" for c in w)
+    }
 
     if core_terms:
+        import math
+        texts = [f"{p.title} {p.abstract or ''}".lower() for p in papers]
+        df = {t: sum(1 for txt in texts if t in txt) or 1 for t in core_terms}
+        n = len(papers) or 1
+        weight = {t: math.log(1 + n / df[t]) for t in core_terms}
+
         def _relevance(p):
             text = f"{p.title} {p.abstract or ''}".lower()
-            return sum(1 for term in core_terms if term in text)
+            return sum(weight[t] for t in core_terms if t in text)
 
         papers.sort(key=_relevance, reverse=True)
-        min_match = 2 if len(core_terms) >= 4 else 1
         before = len(papers)
-        filtered = [p for p in papers if _relevance(p) >= min_match]
-        papers = filtered if len(filtered) >= 5 else papers[:max_papers]
+        matched = [p for p in papers if _relevance(p) > 0]
+        # keep a generous candidate pool for the LLM; only fall back to raw
+        # order if almost nothing matched
+        papers = matched if len(matched) >= 5 else papers
         if len(papers) != before:
-            logger.info(f"  Keyword filter: {before} → {len(papers)} (min {min_match} terms from {list(core_terms)[:5]})")
+            logger.info(f"  Keyword prefilter: {before} → {len(papers)} (weighted terms {list(core_terms)[:5]})")
 
-    # LLM-based paper selection: if too many papers, let LLM pick the most relevant
-    if len(papers) > max_papers and len(papers) > 10:
+    # LLM-based paper selection is the primary relevance gate: whenever there
+    # are more candidates than we need, let the LLM pick the most relevant
+    # (the keyword prefilter only coarsely ranked/trimmed the pool).
+    if len(papers) > max_papers:
         from litscribe.prompts.utils import format_papers_for_prompt
         papers_text = format_papers_for_prompt([p.model_dump() for p in papers[:30]], max_chars=10000)
         select_prompt = (
